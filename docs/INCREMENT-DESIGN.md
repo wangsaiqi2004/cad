@@ -80,7 +80,7 @@ export function isRemembered(tool, versionId)
 export function clearRemembered()
 ```
 
-**硬约束（本轮为「约定式」，结构性收口列 V1.1，见 §11.6）**：页面只把 `confirmGate()` 的**返回值**原样传进 `confirmed` 字段（5 处：`chat.js:164/180/196`、`results.js:181`、`wizard.js:121`），且必须 `await` 后 `if (!approved) return` 再调工具。可执行不变量：`grep -rn "confirmed: true" app/src/renderer/pages/` → **必须为 0**（不允许字面量）。另：不得读文件、不得拼路径、不得碰 `window.reno` 之外的任何宿主能力。
+**硬约束（本轮为「约定式」）**：页面只把 `confirmGate()` 的**返回值**原样传入 `confirmed`，**不得构造 `true`**；5 处为 `chat.js:164/180/196`、`results.js:181`、`wizard.js:121`，且必须 `await` 后 `if (!approved) return` 再调工具。结构性收口（`confirmTool`）+ 可执行不变量见 §11.6（V1.1 第一项）。另：不得读文件、不得拼路径、不得碰 `window.reno` 之外的任何宿主能力。
 
 ---
 
@@ -246,3 +246,5 @@ dist/本地装修设计Agent-win32-x64/
 3. **新增通道已批准（2026-11-07 主理人拍板）**：`getVersionPreview`（只读读 `plan.svg` / `image`）+ `reno:open`（主进程 `shell.openPath`，入参只允许 `{kind, versionId}`，渲染层永不接触路径）——两者都进正向白名单 `DESKTOP_TOOLS`（21 → 22 项）、走 L1–L5 权限门并写审计，`CONFIRM_REQUIRED` 保持 4 项不变。P-6 **不降级**。
 4. **PDF 保真度（本文档已更正 2026-11-07）**：原先写「`plan.svg` 文本全为 ASCII + `²`，实测无中文」是**错的**——我只查了前 6 条 `<text>`（房间名 / 面积 / 尺寸），漏了标题栏。真实情况：**每条 `plan.svg` 恰好 1 条中文**（`验收项目·两室一厅`、`一键链路演示` 等，即项目名），`skippedTexts=1`，PDF 标题栏该行为空。已定：不渲染中文（不做字体嵌入），在 `方案说明.txt` 与 `manifest.cad.pdf.note` 写明；`CAD边界声明.txt` 7 条不动（增第 8 条须 PM 走正式记录）。`<pattern>` 同样降级为纯色。
 5. **向导第 3 步的隐式副作用**：`submitRequirements` 会 `newVersion()` + 建 Task 并推进到 `AWAITING_CALIBRATION`（不可回退到 `DRAFT`）。用户在向导中途返回改需求会留下一个 `AWAITING_CALIBRATION` 空 Task。建议 T03 实现为「第 3 步提交后禁止回退到第 1/2 步，只允许前进或取消」，并把该交互写入 `README.md`。
+6. **V1.1 第一项（由工程师实施）**：`confirmTool` 收口——页面不得出现 `confirmed` 字面量或字段，`confirmed` 改由 `confirmGate` 内部构造；落地后启用可执行不变量 `grep -rc "confirmed" app/src/renderer/pages/` 必须为 0（**现在做不到**：5 处必然要传 `confirmed: approved`，故本轮维持约定式，不强推）。
+7. **已知工具缺陷（脚本未修，本轮由 QA 侧全量扫描临时覆盖）**：`qa/acceptance.mjs` 三处 `walk` 扩展名缺 `.js`（`:186` `['.mjs','.cjs','.ts','.tsx']`、`:292` `['.mjs','.cjs']`、`:481` `['.mjs']`）→ 渲染层整层不可见，`renderer/main.js:59` 那个 1.5s 安全窗口因此长期未被发现。修法（下轮）：补 `.js` + IDEM-02 白名单仅放 `chat.js:214` + 正向断言「renderer 内 `.js` 的 `setInterval` 命中数 = 白名单条数」。
