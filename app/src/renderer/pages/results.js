@@ -39,6 +39,17 @@ export function mount(ctx) {
 
   /** 拉版本列表。 */
   async function refresh() {
+    if (!store.projectId) {
+      fill(listHost, [emptyState({
+        title: '还没有打开项目',
+        hint: '请先到首页打开一个已有项目，或新建一个项目；生成过方案后这里才会出现版本。',
+        actionText: '回首页',
+        onAction: () => go('#/home'),
+      })]);
+      fill(previewHost, []);
+      fill(actionHost, []);
+      return;
+    }
     fill(listHost, [loading()]);
     const result = await call('getVersions', {});
     if (!result.ok) {
@@ -178,7 +189,7 @@ export function mount(ctx) {
       forbidden: ['不打包任何密钥', '不改写已有文件', '不覆盖上一次导出的交付包'],
     });
     if (!ok) { toast('已取消', 'info'); return; }
-    const result = await call('packageAndFinish', { confirmed: true });
+    const result = await call('packageAndFinish', { confirmed: ok });
     if (!result.ok) { toast(result.message, 'bad'); return; }
     toast('交付包已生成', 'ok');
     await refreshDelivery();

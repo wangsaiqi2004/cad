@@ -161,7 +161,7 @@ export function mount(ctx) {
       chargeNote: data.chargeNote || '本次请求可能产生费用，费用由公司自己的账户承担。',
     });
     if (!approved) { toast('已取消，没有发起任何请求', 'info'); return; }
-    const result = await call('confirmImageSubmission', { confirmed: true, approved: true });
+    const result = await call('confirmImageSubmission', { confirmed: approved, approved: true });
     if (!result.ok) { toast(result.message, 'bad'); await refresh(); return; }
     const testDouble = result.data?.testDouble === true;
     toast(testDouble ? '已按流程完成一次验证（未连接真实服务商）' : '效果图已生成', testDouble ? 'warn' : 'ok');
@@ -177,7 +177,7 @@ export function mount(ctx) {
       forbidden: ['不打包任何密钥', '不改写已有版本的文件', '不覆盖上一次导出的交付包'],
     });
     if (!approved) { toast('已取消', 'info'); return; }
-    const result = await call('packageAndFinish', { confirmed: true });
+    const result = await call('packageAndFinish', { confirmed: approved });
     if (!result.ok) { toast(result.message, 'bad'); return; }
     toast('交付包已生成，可在结果页查看', 'ok');
     go('#/results');
@@ -193,7 +193,7 @@ export function mount(ctx) {
       forbidden: ['不删除、不覆盖旧版本', '不访问项目目录以外的文件'],
     });
     if (!approved) { toast('已取消', 'info'); return; }
-    const result = await call('redo', { confirmed: true });
+    const result = await call('redo', { confirmed: approved });
     if (!result.ok) { toast(result.message, 'bad'); return; }
     patch({ versionId: result.data?.versionId || store.versionId, taskId: result.data?.taskId || '' });
     toast('已开始生成新版本，旧版本保留', 'ok');

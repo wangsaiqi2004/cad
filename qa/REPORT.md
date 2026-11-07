@@ -1,7 +1,7 @@
 # QA 独立黑盒验收与回归报告
 
 > QA 工程师：严过关（Yan）｜脚本：`qa/acceptance.mjs`｜语言：中文
-> 生成时间：2026-11-07T08:39:26.236Z｜本报告由脚本依据本次**真实执行结果**自动生成，不虚构任何通过。
+> 生成时间：2026-11-07T08:44:10.540Z｜本报告由脚本依据本次**真实执行结果**自动生成，不虚构任何通过。
 
 ## 0. 执行环境与边界
 
@@ -58,9 +58,9 @@
 ### APP-01 [PASS] 工程师验收脚本真实执行（记录退出码）
 
 - 检查方式：真实调用
-- 命令=node app/scripts/acceptance.mjs（cwd=app，EXIT=0，耗时=51967ms）
+- 命令=node app/scripts/acceptance.mjs（cwd=app，EXIT=0，耗时=26917ms）
 - IS_PASS=YES，自述验收结果=32/32 通过，失败 0
-- stdout 尾部=try 抛 E_TIMEOUT_UNKNOWN，界面提示「可能已产生费用」 ✓ 上次明确失败后，仅用户显式重试生成新幂等键 — 旧键=idem_54feb34d91e… → 新键=idem_retry_rd8e8bd48…（仅显式触发） --- ⑪ 重做 = 新 Task + 新 versionId，旧版本保留 --- ✓ 重做生成新 Task / 新版本，旧成果哈希不变 — 旧=v001（哈希不变）→ 新=v002, 共 2 个版本 ============================================================ 验收结果：32/32 通过，失败 0 …
+- stdout 尾部=try 抛 E_TIMEOUT_UNKNOWN，界面提示「可能已产生费用」 ✓ 上次明确失败后，仅用户显式重试生成新幂等键 — 旧键=idem_54feb34d91e… → 新键=idem_retry_r13e4a9bf…（仅显式触发） --- ⑪ 重做 = 新 Task + 新 versionId，旧版本保留 --- ✓ 重做生成新 Task / 新版本，旧成果哈希不变 — 旧=v001（哈希不变）→ 新=v002, 共 2 个版本 ============================================================ 验收结果：32/32 通过，失败 0 …
 - stderr 尾部=(空)
 - 说明：工程师脚本内含明确标注的测试替身（mock-image-server）：能力测试与生图为 mock 验证流程，真实端点待联调
 
@@ -95,7 +95,7 @@
 ### PERM-05 [PASS] 越权请求审计留痕（真实产物）
 
 - 检查方式：产物检查
-- 文件=app\.runtime\boundary-audit.ndjson，字节=2562，sha256=9025beff382cbbb7…
+- 文件=app\.runtime\boundary-audit.ndjson，字节=2562，sha256=540c509093454e19…
 - 审计记录=10，denied=8，中文拒绝理由=8
 - 被拒工具=system_run_command, run_script, read_file_any, apply_operations, export_dxf
 
@@ -155,17 +155,17 @@
 ### IDEM-05 [PASS] chargeSubmittedCount 在真实链路中仅自增一次
 
 - 检查方式：产物检查
-- manifest.json: 5948 B，chargeSubmittedCount=1
+- manifest.json: 5924 B，chargeSubmittedCount=1
 - idempotency.json 记录数=1
-- idempotencyKey=idem_2be2ed08d4916aa02f7…
+- idempotencyKey=idem_2a79e802553934f5a13…
 
 ### STATE-01 [PASS] 状态变更与任务事件日志 1:1（每条转移可核对）
 
 - 检查方式：产物检查
-- 文件=app\.runtime\acceptance-projects\prj_bc37a88005b5\task-log.ndjson，字节=14359，sha256=a7bcd5a631d18caf…
+- 文件=app\.runtime\acceptance-projects\prj_30afe8192d65\task-log.ndjson，字节=14359，sha256=04acc84d3ddb4271…
 - 日志行=46，state_transition=11，audit task_state=11
 - 每条转移含 from/to 且 state 一致=true
-- 任务文件=2，taskId=task_ee07481c1bde447a, task_7df8a88370c34ac0
+- 任务文件=2，taskId=task_28a5e0733d7042de, task_88f816a13ffb4195
 - 说明：命名说明：架构记为 events.ndjson，实现落盘名为 task-log.ndjson（NDJSON 事件日志），语义等价
 
 ### STATE-02 [PASS] AWAITING_CALIBRATION 必经且真实停住（非自动推进）
@@ -178,7 +178,7 @@
 ### STATE-03 [PASS] 重做 = 新 taskId + 新 versionId，旧版本不被覆盖
 
 - 检查方式：产物检查
-- taskId 数=2（task_ee07481c1bde447a, task_7df8a88370c34ac0），redo 事件=2
+- taskId 数=2（task_28a5e0733d7042de, task_88f816a13ffb4195），redo 事件=2
 - 版本目录=["v001","v002"]
 - 当前版本 plan.dxf sha256=37db9fa72fa830c2…
 - 说明：旧版本哈希不变由工程师验收脚本第 ⑪ 项断言，QA 另在 CAD-03 核对交付包内哈希一致性
@@ -198,23 +198,23 @@
 - 检查方式：接口级行为探针
 - 状态转移日志=11/11，非法跳跃(DRAFT→STRUCTURE_READY)被拒=true
 - 重做新 taskId=true，新 versionId=v002，旧 Task 仍在=true(v001)
-- 阻塞态展示={"taskId":"task_c1a59e4e75bd4613","versionId":"v002","state":"AWAITING_CALIBRATION","stateLabel":"等待尺寸确认","subProgress":{"done":0,"total":0,"unit":"待确认项"},"showPercent":false,"showEta":false,"waitingF
+- 阻塞态展示={"taskId":"task_c0b471a227f84d38","versionId":"v002","state":"AWAITING_CALIBRATION","stateLabel":"等待尺寸确认","subProgress":{"done":0,"total":0,"unit":"待确认项"},"showPercent":false,"showEta":false,"waitingF
 - 校准：起始待确认=6，isComplete=false，finalize 被阻断=true（中文=true）
 - 仅确认 1 项后仍阻塞=true，全部确认后 isComplete=true 且 finalize 成功=true
 
 ### SECRET-01 [PASS] secrets.json 为密文（不含任何 Key 明文）
 
 - 检查方式：产物检查
-- 文件=app\.runtime\userdata\secrets.json，字节=205，sha256=dfda0fb3fa3e857f…
+- 文件=app\.runtime\userdata\secrets.json，字节=205，sha256=a0513b5178bfc207…
 - 密文条目=2，均符合 base64/DPAPI 密文形态=true
 - 测试替身 Key 片段命中=0/4
-- 密文前缀=djEwZnp5JDuy, djEwkXkPom6j
+- 密文前缀=djEwvq+n92u0, djEw6hgt+/VW
 
 ### SECRET-02 [PASS] settings.json / 日志 / 对话 / 交付包 全文检索 Key 片段命中数 = 0
 
 - 检查方式：产物检查 + 真实调用(zip_scan.py)
 - 检索文件数=69，测试替身 Key 片段=4 个（test-double-ke…, test-double-ke…, pipeline-text-…, pipeline-image…）
-- 落盘文件命中=0，交付包 ZIP 命中=0（ZIP sha256=5cb4e66fdcec61fd…）
+- 落盘文件命中=0，交付包 ZIP 命中=0（ZIP sha256=3763b7f230450bf4…）
 - 命中明细=无
 - 说明：本项使用【测试替身 Key】验证脱敏流程；本机无客户 API Key，真实端点联调待用户提供
 
@@ -232,15 +232,15 @@
 - env 已移除 ELECTRON_RUN_AS_NODE / NODE_OPTIONS
 - isEncryptionAvailable=true，roundtripOK=true
 - backend=n/a: getSelectedStorageBackend is not a function，electron=44.7.0，node=24.21.0
-- 密文 57 B，hex 头=7631300d2bb4650c5e5b5b63，明文泄漏(base64/latin1)=false/false
+- 密文 57 B，hex 头=763130ab346dddd07dcc90c0，明文泄漏(base64/latin1)=false/false
 - 响应文件=qa\.work\run\safe-storage.response.json（334 B）
 
 ### CAD-01 [PASS] 交付 DXF：ezdxf.readfile() + audit() 0 errors + AC1015 + 六类元素齐全
 
 - 检查方式：真实调用(ezdxf)
-- 命令="C:/Users/wang/AppData/Local/Temp/reno-repo-audit/cad/_venv_acp/Scripts/python.exe" "C:\Users\wang\Documents\ChatGPT\cad制图skills+网站\qa\dxf_audit.py" "C:\Users\wang\Documents\ChatGPT\cad制图skills+网站\app\.runtime\acceptance-projects\prj_bc37a88005b5\versions\v001\plan.dxf"
-- EXIT=0，耗时=1248ms
-- 文件=app\.runtime\acceptance-projects\prj_bc37a88005b5\versions\v001\plan.dxf，字节=24155，sha256=37db9fa72fa830c2…
+- 命令="C:/Users/wang/AppData/Local/Temp/reno-repo-audit/cad/_venv_acp/Scripts/python.exe" "C:\Users\wang\Documents\ChatGPT\cad制图skills+网站\qa\dxf_audit.py" "C:\Users\wang\Documents\ChatGPT\cad制图skills+网站\app\.runtime\acceptance-projects\prj_30afe8192d65\versions\v001\plan.dxf"
+- EXIT=0，耗时=1421ms
+- 文件=app\.runtime\acceptance-projects\prj_30afe8192d65\versions\v001\plan.dxf，字节=24155，sha256=37db9fa72fa830c2…
 - ezdxf.readfile() 可读=true，audit errors=0，fixes=5
 - $ACADVER=AC1015，dxfversion=AC1015
 - 实体={"LINE":32,"TEXT":4,"INSERT":7,"HATCH":2,"DIMENSION":2}
@@ -266,7 +266,7 @@
 ### CAD-04 [PASS] 交付包含 DXF+SVG+PDF+效果图占位+边界声明+版本记录
 
 - 检查方式：产物检查 + 真实调用(zip_scan.py)
-- ZIP=app\.runtime\acceptance-projects\deliveries\交付包-v001.zip，字节=418560，sha256=5cb4e66fdcec61fd…
+- ZIP=app\.runtime\acceptance-projects\deliveries\交付包-v001.zip，字节=418512，sha256=3763b7f230450bf4…
 - 条目数=18，清单=plan.dxf, plan.svg, plan.pdf, plan.arch, plan.determinism-check.dxf, ops.json, drawing.opencalque, drawing-working.dxf, drawing-from-delivery-dxf.opencalque, drawing-roundtrip.dxf, structured-plan.json, image-record.json, manifest.json, image/render-v001.png, CAD边界声明.txt, 方案说明.txt, 版本记录.txt, 脱敏自检报告.json
 - 逐项：DXF=true；SVG=true；PDF=true；效果图占位=true；边界声明=true；版本记录=true
 
@@ -319,23 +319,23 @@
 
 | # | 用途 | EXIT | 耗时(ms) | 命令 |
 |---|---|---|---|---|
-| 1 | 工程师验收脚本 npm test 等价命令 | 0 | 51967 | `node "scripts\acceptance.mjs"` |
-| 2 | QA 独立行为探针 | 0 | 894 | `node "C:\Users\wang\Documents\ChatGPT\cad制图skills+网站\qa\lib\probe-runtime.mjs" "C:\Users\wang\Documents\ChatGPT\cad制图skills+网站\app" "C:\Users\wang\Documents\ChatGPT\cad制图skills+网站\qa\.work\run\probe"` |
-| 3 | 交付包 ZIP 全文检索 | 0 | 363 | `"C:/Users/wang/AppData/Local/Temp/reno-repo-audit/cad/_venv_acp/Scripts/python.exe" "C:\Users\wang\Documents\ChatGPT\cad制图skills+网站\qa\lib\zip_scan.py" "C:\Users\wang\Documents\ChatGPT\cad制图skills+网站\app\.runtime\accepta` |
-| 4 | ezdxf 审计产品交付 plan.dxf | 0 | 1248 | `"C:/Users/wang/AppData/Local/Temp/reno-repo-audit/cad/_venv_acp/Scripts/python.exe" "C:\Users\wang\Documents\ChatGPT\cad制图skills+网站\qa\dxf_audit.py" "C:\Users\wang\Documents\ChatGPT\cad制图skills+网站\app\.runtime\acceptance` |
-| 5 | 交付包清单 | 0 | 347 | `"C:/Users/wang/AppData/Local/Temp/reno-repo-audit/cad/_venv_acp/Scripts/python.exe" "C:\Users\wang\Documents\ChatGPT\cad制图skills+网站\qa\lib\zip_scan.py" "C:\Users\wang\Documents\ChatGPT\cad制图skills+网站\app\.runtime\accepta` |
-| 6 | 交付包 UI 禁用词扫描 | 0 | 364 | `"C:/Users/wang/AppData/Local/Temp/reno-repo-audit/cad/_venv_acp/Scripts/python.exe" "C:\Users\wang\Documents\ChatGPT\cad制图skills+网站\qa\lib\zip_scan.py" "C:\Users\wang\Documents\ChatGPT\cad制图skills+网站\app\.runtime\accepta` |
-| 7 | archlang compile #1 | 0 | 2223 | `npx -y tsx "C:\Users\wang\Documents\ChatGPT\cad制图skills+网站\vendor\archlang\src\cli.ts" compile "C:\Users\wang\Documents\ChatGPT\cad制图skills+网站\vendor\archlang\examples\one-room.arch" -o "C:\Users\wang\Documents\ChatGPT\c` |
-| 8 | archlang compile #2 | 0 | 2226 | `npx -y tsx "C:\Users\wang\Documents\ChatGPT\cad制图skills+网站\vendor\archlang\src\cli.ts" compile "C:\Users\wang\Documents\ChatGPT\cad制图skills+网站\vendor\archlang\examples\one-room.arch" -o "C:\Users\wang\Documents\ChatGPT\c` |
-| 9 | ezdxf 审计上游基线 DXF | 0 | 1203 | `"C:/Users/wang/AppData/Local/Temp/reno-repo-audit/cad/_venv_acp/Scripts/python.exe" "C:\Users\wang\Documents\ChatGPT\cad制图skills+网站\qa\dxf_audit.py" "C:\Users\wang\Documents\ChatGPT\cad制图skills+网站\qa\.work\run\dual-engin` |
-| 10 | opencalque import | 0 | 2674 | `npx -y pnpm@9.14.2 --silent opencalque import "C:\Users\wang\Documents\ChatGPT\cad制图skills+网站\qa\.work\run\dual-engine\qa-roundtrip.opencalque" "C:\Users\wang\Documents\ChatGPT\cad制图skills+网站\qa\.work\run\dual-engine\qa-` |
-| 11 | opencalque describe | 0 | 2836 | `npx -y pnpm@9.14.2 --silent opencalque describe "C:\Users\wang\Documents\ChatGPT\cad制图skills+网站\qa\.work\run\dual-engine\qa-roundtrip.opencalque"` |
-| 12 | opencalque validate | 0 | 2810 | `npx -y pnpm@9.14.2 --silent opencalque validate "C:\Users\wang\Documents\ChatGPT\cad制图skills+网站\qa\.work\run\dual-engine\qa-roundtrip.opencalque"` |
-| 13 | opencalque check | 0 | 3025 | `npx -y pnpm@9.14.2 --silent opencalque check "C:\Users\wang\Documents\ChatGPT\cad制图skills+网站\qa\.work\run\dual-engine\qa-roundtrip.opencalque"` |
-| 14 | opencalque dxf | 0 | 3783 | `npx -y pnpm@9.14.2 --silent opencalque dxf "C:\Users\wang\Documents\ChatGPT\cad制图skills+网站\qa\.work\run\dual-engine\qa-roundtrip.opencalque" --out "C:\Users\wang\Documents\ChatGPT\cad制图skills+网站\qa\.work\run\dual-engine\` |
-| 15 | opencalque new | 0 | 3415 | `npx -y pnpm@9.14.2 --silent opencalque new "C:\Users\wang\Documents\ChatGPT\cad制图skills+网站\qa\.work\run\dual-engine\qa-fresh.opencalque" "QA 空文档" --force` |
-| 16 | opencalque apply(空文档) | 0 | 2984 | `npx -y pnpm@9.14.2 --silent opencalque apply "C:\Users\wang\Documents\ChatGPT\cad制图skills+网站\qa\.work\run\dual-engine\qa-fresh.opencalque" "C:\Users\wang\Documents\ChatGPT\cad制图skills+网站\vendor\opencalque\examples\studio` |
-| 17 | opencalque apply(已有内容文档·预期 EXIT=1) | 1 | 2944 | `npx -y pnpm@9.14.2 --silent opencalque apply "C:\Users\wang\Documents\ChatGPT\cad制图skills+网站\qa\.work\run\dual-engine\qa-fresh.opencalque" "C:\Users\wang\Documents\ChatGPT\cad制图skills+网站\vendor\opencalque\examples\studio` |
+| 1 | 工程师验收脚本 npm test 等价命令 | 0 | 26917 | `node "scripts\acceptance.mjs"` |
+| 2 | QA 独立行为探针 | 0 | 890 | `node "C:\Users\wang\Documents\ChatGPT\cad制图skills+网站\qa\lib\probe-runtime.mjs" "C:\Users\wang\Documents\ChatGPT\cad制图skills+网站\app" "C:\Users\wang\Documents\ChatGPT\cad制图skills+网站\qa\.work\run\probe"` |
+| 3 | 交付包 ZIP 全文检索 | 0 | 388 | `"C:/Users/wang/AppData/Local/Temp/reno-repo-audit/cad/_venv_acp/Scripts/python.exe" "C:\Users\wang\Documents\ChatGPT\cad制图skills+网站\qa\lib\zip_scan.py" "C:\Users\wang\Documents\ChatGPT\cad制图skills+网站\app\.runtime\accepta` |
+| 4 | ezdxf 审计产品交付 plan.dxf | 0 | 1421 | `"C:/Users/wang/AppData/Local/Temp/reno-repo-audit/cad/_venv_acp/Scripts/python.exe" "C:\Users\wang\Documents\ChatGPT\cad制图skills+网站\qa\dxf_audit.py" "C:\Users\wang\Documents\ChatGPT\cad制图skills+网站\app\.runtime\acceptance` |
+| 5 | 交付包清单 | 0 | 391 | `"C:/Users/wang/AppData/Local/Temp/reno-repo-audit/cad/_venv_acp/Scripts/python.exe" "C:\Users\wang\Documents\ChatGPT\cad制图skills+网站\qa\lib\zip_scan.py" "C:\Users\wang\Documents\ChatGPT\cad制图skills+网站\app\.runtime\accepta` |
+| 6 | 交付包 UI 禁用词扫描 | 0 | 351 | `"C:/Users/wang/AppData/Local/Temp/reno-repo-audit/cad/_venv_acp/Scripts/python.exe" "C:\Users\wang\Documents\ChatGPT\cad制图skills+网站\qa\lib\zip_scan.py" "C:\Users\wang\Documents\ChatGPT\cad制图skills+网站\app\.runtime\accepta` |
+| 7 | archlang compile #1 | 0 | 2329 | `npx -y tsx "C:\Users\wang\Documents\ChatGPT\cad制图skills+网站\vendor\archlang\src\cli.ts" compile "C:\Users\wang\Documents\ChatGPT\cad制图skills+网站\vendor\archlang\examples\one-room.arch" -o "C:\Users\wang\Documents\ChatGPT\c` |
+| 8 | archlang compile #2 | 0 | 2440 | `npx -y tsx "C:\Users\wang\Documents\ChatGPT\cad制图skills+网站\vendor\archlang\src\cli.ts" compile "C:\Users\wang\Documents\ChatGPT\cad制图skills+网站\vendor\archlang\examples\one-room.arch" -o "C:\Users\wang\Documents\ChatGPT\c` |
+| 9 | ezdxf 审计上游基线 DXF | 0 | 1378 | `"C:/Users/wang/AppData/Local/Temp/reno-repo-audit/cad/_venv_acp/Scripts/python.exe" "C:\Users\wang\Documents\ChatGPT\cad制图skills+网站\qa\dxf_audit.py" "C:\Users\wang\Documents\ChatGPT\cad制图skills+网站\qa\.work\run\dual-engin` |
+| 10 | opencalque import | 0 | 2977 | `npx -y pnpm@9.14.2 --silent opencalque import "C:\Users\wang\Documents\ChatGPT\cad制图skills+网站\qa\.work\run\dual-engine\qa-roundtrip.opencalque" "C:\Users\wang\Documents\ChatGPT\cad制图skills+网站\qa\.work\run\dual-engine\qa-` |
+| 11 | opencalque describe | 0 | 2964 | `npx -y pnpm@9.14.2 --silent opencalque describe "C:\Users\wang\Documents\ChatGPT\cad制图skills+网站\qa\.work\run\dual-engine\qa-roundtrip.opencalque"` |
+| 12 | opencalque validate | 0 | 3014 | `npx -y pnpm@9.14.2 --silent opencalque validate "C:\Users\wang\Documents\ChatGPT\cad制图skills+网站\qa\.work\run\dual-engine\qa-roundtrip.opencalque"` |
+| 13 | opencalque check | 0 | 3039 | `npx -y pnpm@9.14.2 --silent opencalque check "C:\Users\wang\Documents\ChatGPT\cad制图skills+网站\qa\.work\run\dual-engine\qa-roundtrip.opencalque"` |
+| 14 | opencalque dxf | 0 | 3010 | `npx -y pnpm@9.14.2 --silent opencalque dxf "C:\Users\wang\Documents\ChatGPT\cad制图skills+网站\qa\.work\run\dual-engine\qa-roundtrip.opencalque" --out "C:\Users\wang\Documents\ChatGPT\cad制图skills+网站\qa\.work\run\dual-engine\` |
+| 15 | opencalque new | 0 | 3040 | `npx -y pnpm@9.14.2 --silent opencalque new "C:\Users\wang\Documents\ChatGPT\cad制图skills+网站\qa\.work\run\dual-engine\qa-fresh.opencalque" "QA 空文档" --force` |
+| 16 | opencalque apply(空文档) | 0 | 3014 | `npx -y pnpm@9.14.2 --silent opencalque apply "C:\Users\wang\Documents\ChatGPT\cad制图skills+网站\qa\.work\run\dual-engine\qa-fresh.opencalque" "C:\Users\wang\Documents\ChatGPT\cad制图skills+网站\vendor\opencalque\examples\studio` |
+| 17 | opencalque apply(已有内容文档·预期 EXIT=1) | 1 | 2871 | `npx -y pnpm@9.14.2 --silent opencalque apply "C:\Users\wang\Documents\ChatGPT\cad制图skills+网站\qa\.work\run\dual-engine\qa-fresh.opencalque" "C:\Users\wang\Documents\ChatGPT\cad制图skills+网站\vendor\opencalque\examples\studio` |
 
 ## 4. 【真实调用】与【测试替身 / mock】严格区分
 

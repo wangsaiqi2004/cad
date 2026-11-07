@@ -5,7 +5,7 @@
 
 import { register, start, observe, go, current } from './core/router.js';
 import { call, info, isSmoke } from './core/toolClient.js';
-import { store, patch } from './core/store.js';
+import { store, patch, subscribe } from './core/store.js';
 import { confirmGate, clearRemembered } from './core/confirm.js';
 import { badge, toast } from './core/ui.js';
 import { mount as mountHome } from './pages/home.js';
@@ -54,14 +54,33 @@ observe((path) => {
   document.body.dataset.route = path.replace(/^#\//, '');
 });
 
-// 「记住本次选择」只在同一版本内有效，换版本即失效。
+// 「记住本次选择」只在同一版本内有效：版本一变立刻失效。
+// 用 store 订阅而不是定时器轮询 —— 定时器既会拖到 1.5 秒才失效（窗口期内 P-7 会被静默跳过），
+// 也违反「不用定时器驱动界面状态」的约定。
 let lastVersion = store.versionId;
-setInterval(() => {
+subscribe(() => {
   if (store.versionId !== lastVersion) {
     lastVersion = store.versionId;
     clearRemembered();
   }
-}, 1500);
+});
+
+// 兜底：任何页面抛出的未捕获异常都显示出来，绝不留一个空白页面让人猜。
+function showFatal(message) {
+  const view = document.getElementById('view');
+  if (!view) return;
+  const box = document.createElement('div');
+  box.className = 'notice notice-bad';
+  box.textContent = `界面出错：${message}`;
+  view.prepend(box);
+}
+window.addEventListener('error', (event) => {
+  showFatal(String(event?.message || '未知错误'));
+});
+window.addEventListener('unhandledrejection', (event) => {
+  const reason = event?.reason;
+  showFatal(String(reason?.message || reason || '未知错误'));
+});
 
 register('#/home', mountHome);
 register('#/settings', mountSettings);

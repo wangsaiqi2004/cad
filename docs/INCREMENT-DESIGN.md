@@ -15,25 +15,25 @@
 **目录定为 `app/src/renderer/`（不是 `desktop/renderer/`）**——QA `acceptance.mjs:760-761` 的 UI-01 扫描路径写死为 `app/src/renderer`，放 desktop 子目录只会「因扫不到而 PASS」= 假通过。
 主进程**唯一改动**：`main.cjs` 的 `loadFile` 改 `path.join(DESKTOP_DIR, '..', 'renderer', 'index.html')`；旧 `desktop/index.html` 删除。
 
-| 文件 | 职责 | 行数 |
+| 文件 | 职责 | 行数（实际） |
 |---|---|---|
-| `renderer/index.html` | 骨架：`<header>` + `<main id="app">` + `<div id="toast">` + `<script type="module" src="./main.js">` | ~30 |
-| `renderer/styles.css` | 设计令牌（浅色、14px、微软雅黑）+ 组件样式（卡/表/步骤条/徽标/模态/Toast） | ~150 |
-| `renderer/main.js` | 启动：初始化 store → 挂载路由 → 拉 `getHome` → 起冒烟分流 | ~70 |
-| `renderer/core/router.js` | hash 路由表 + `mount/unmount` 生命周期 + 页签高亮 | ~70 |
-| `renderer/core/store.js` | 会话状态（projectId/versionId/taskId/badge/step）+ 订阅通知 | ~70 |
-| `renderer/core/toolClient.js` | 包装 `window.reno.call`：统一失败文案、`code!==0` 不改状态、返回 `{ok,data,message}` | ~55 |
-| `renderer/core/ui.js` | `el/toast/emptyState/errorBox/badge/field/table/kv/pre`（全部 `textContent`，禁 `innerHTML` 拼接用户数据） | ~140 |
-| `renderer/core/confirm.js` | **P-7 权限确认弹窗**：允许范围 / 禁止项 / 允许·拒绝 / 记住本次选择 | ~95 |
-| `renderer/pages/home.js` | P-1 首页 | ~110 |
-| `renderer/pages/settings.js` | P-2 模型设置 + 能力矩阵 | ~160 |
-| `renderer/pages/wizard.js` | P-3 项目向导（5 步状态机） | ~200 |
-| `renderer/pages/calibration.js` | P-4 户型校准 | ~160 |
-| `renderer/pages/chat.js` | P-5 对话 / 任务状态 | ~150 |
-| `renderer/pages/results.js` | P-6 结果 / 版本 / 预览 | ~150 |
-| `renderer/smoke.js` | 页内冒烟（`smoke-desktop.mjs` 依赖，能力必须等价迁移） | ~70 |
+| `renderer/index.html` | 骨架：`<header>` + `<main id="app">` + `<div id="toast">` + `<script type="module" src="./main.js">` | 28 |
+| `renderer/styles.css` | 设计令牌（浅色、14px、微软雅黑）+ 组件样式（卡/表/步骤条/徽标/模态/Toast） | 262 |
+| `renderer/main.js` | 启动：初始化 store → 挂载路由 → 拉 `getHome` → 起冒烟分流 | 102 |
+| `renderer/core/router.js` | hash 路由表 + `mount/unmount` 生命周期 + 页签高亮 | 106 |
+| `renderer/core/store.js` | 会话状态（projectId/versionId/taskId/badge/step）+ 订阅通知 | 58 |
+| `renderer/core/toolClient.js` | 包装 `window.reno.call`：统一失败文案、`code!==0` 不改状态、返回 `{ok,data,message}` | 57 |
+| `renderer/core/ui.js` | `el/toast/emptyState/errorBox/badge/field/table/kv/pre`（全部 `textContent`，禁 `innerHTML` 拼接用户数据） | 171 |
+| `renderer/core/confirm.js` | **P-7 权限确认弹窗**：允许范围 / 禁止项 / 允许·拒绝 / 记住本次选择 | 86 |
+| `renderer/pages/home.js` | P-1 首页 | 155 |
+| `renderer/pages/settings.js` | P-2 模型设置 + 能力矩阵 | 177 |
+| `renderer/pages/wizard.js` | P-3 项目向导（5 步状态机） | 290 |
+| `renderer/pages/calibration.js` | P-4 户型校准 | 232 |
+| `renderer/pages/chat.js` | P-5 对话 / 任务状态 | 226 |
+| `renderer/pages/results.js` | P-6 结果 / 版本 / 预览 | 194 |
+| `renderer/smoke.js` | 页内冒烟（`smoke-desktop.mjs` 依赖，能力必须等价迁移） | 56 |
 
-单文件均 < 400 行。**删掉**现有 309 行内联脚本与内联 `<style>`。
+**已由主理人直接实现**：15 个文件、合计 2200 行、单文件均 < 400 行（`wizard` 290 最长）。旧 `desktop/index.html` 309 行内联脚本与内联 `<style>` 已删除。
 
 ### 1.1 工具返回字段速查（工程师直接抄，均已按真实实现核对）
 
@@ -74,12 +74,13 @@ export function emptyState(title, hint, actionText, onAction)
 export function errorBox(message, nextSteps)
 export function badge(text, kind)         // kind 决定配色
 
-// core/confirm.js —— P-7，唯一允许传 confirmed:true 的地方
+// core/confirm.js —— P-7
 export function confirmGate({ tool, title, allowScope[], forbidden[], chargeNote }) // → Promise<boolean>
 export function isRemembered(tool, versionId)
+export function clearRemembered()
 ```
 
-**硬约束**：渲染层的 `confirmed: true` 只能出现在 `confirm.js` 内部；不得读文件、不得拼路径、不得碰 `window.reno` 之外的任何宿主能力。
+**硬约束（本轮为「约定式」，结构性收口列 V1.1，见 §11.6）**：页面只把 `confirmGate()` 的**返回值**原样传进 `confirmed` 字段（5 处：`chat.js:164/180/196`、`results.js:181`、`wizard.js:121`），且必须 `await` 后 `if (!approved) return` 再调工具。可执行不变量：`grep -rn "confirmed: true" app/src/renderer/pages/` → **必须为 0**（不允许字面量）。另：不得读文件、不得拼路径、不得碰 `window.reno` 之外的任何宿主能力。
 
 ---
 
@@ -91,13 +92,13 @@ export function isRemembered(tool, versionId)
 | **P-2** 设置 | `getSettings`、`saveSettings`、`testCapabilities`、`getFormatMatrix` | 表单 | `public.groups.textVision/imageGen{provider,apiBaseUrl,modelName,apiKeyMasked}`、`providerPresets`、`capabilities.items[cap]{enabled,badge,reason}`、`securityNote`、格式表 `matrix[]` | 未测试：5 项均「未测试」；`unsupported` 显示「该端点不支持 X 能力」+ `CAPABILITY_DISABLES` 说明禁用哪一步；失败显示 `reason` | 保存 / 测试均**不需要**（不发付费请求，只验能力） |
 | **P-3** 向导 | `newProject`、`ingestFiles`、`submitRequirements` | 见 §4 | 步骤条 5 步；`ingestFiles` 的 `accepted[]`/`rejected[{name,reason}]`；8 字段 + 候选值（`requiresConfirmation` 标「待确认」） | 格式不支持：逐条列出 `reason`，**不静默丢弃**；无候选值：提示「未提取到候选值，请手工填写」 | 无（`submitRequirements` 不产生费用、不写成果） |
 | **P-4** 校准 | `getCalibration`、`applyCalibration` | `pending[]`、两点坐标（底图 `<img>` 上点击取像素坐标）、已知距离 mm、逐项确认值 | `pending[{id,label,hint}]` 逐条；`complete`；比例换算结果 `mmPerPixel` | `pending.length>0` → 标题「等待尺寸确认：N 项」+「确认并继续」**disabled**，**不显示百分比** | 无 |
-| **P-5** 对话 | `getTaskStatus`（轮询 2s）、`getCalibration`、`getSubmissionPrompt`、`confirmImageSubmission`、`redo` | 项目上下文 | `stateLabel`、`displayText`、`subProgress{done,total,unit}`（`showPercent/showEta` 恒 false 时**不画进度条**）、`log.slice(-40)` 折叠「运行记录」、`waitingForUser` | 阻塞态：黄条「等待你操作：…」+「去校准」按钮，**不显示百分比**；失败：`errorCode` + `nextSteps` | `confirmImageSubmission`、`redo` |
+| **P-5** 对话 | `getTaskStatus`（轮询 **2.5s**，`chat.js:214`，`unmount` 必 `clearInterval`）、`getCalibration`、`getSubmissionPrompt`、`confirmImageSubmission`、`redo` | 项目上下文 | `stateLabel`、`displayText`、`subProgress{done,total,unit}`（`showPercent/showEta` 恒 false 时**不画进度条**）、`log.slice(-40)` 折叠「运行记录」、`waitingForUser` | 阻塞态：黄条「等待你操作：…」+「去校准」按钮，**不显示百分比**；失败：`errorCode` + `nextSteps` | `confirmImageSubmission`、`redo`（`confirmed` 取 `confirmGate` 返回值） |
 | **P-6** 结果 | `getVersions`、`getVersionPreview`（新增只读）、`exportDelivery`、`packageAndFinish`、`reno.open`（IPC） | 版本列表 | `versions[{versionId,manifest.cad.sha256,manifest.image.present}]`、`currentVersionId`、预览 SVG（`<img src="data:image/svg+xml;charset=utf-8,...">`）、`imageDataUrl`、`exportDelivery.paths.length` | 无效果图：显式「本版本无效果图」+ 原因；无 PDF：「本版本未生成 PDF 预览」；打开 CAD 失败：PRD 原文「未检测到可用 CAD 程序，可导出 DXF 后用 DXF 阅读器打开」，**不显示成功态** | `packageAndFinish` |
 | **P-7** 弹窗 | — | `CONFIRM_REQUIRED` 命中 | 标题 / 允许范围 3 条（仅本次 / 仅本项目路径 / 仅此版本） / 禁止项 3 条（不改旧版本 / 不访问项目外 / 不外发你未确认的内容）/ 费用提示 / 「记住本次选择」 | 拒绝 → `toast('已拒绝，任务状态未改变')`，**不发** `confirmed` | 本体 |
 
-`getVersionPreview` 是唯一新增工具：只读、进白名单、走 L1-L5、写审计；返回 `{versionId, svgText, imageDataUrl, files:{dxf:string,svg:string|null,pdf:string|null}}`（路径只给主进程用，渲染层只用 `svgText`/`imageDataUrl`）。`DESKTOP_TOOLS` 由 21 项变 22 项，`CONFIRM_REQUIRED` 不变（仍 4 项）。
+`getVersionPreview` 是唯一新增工具（已落地，`DESKTOP_TOOLS` 由 21 → **22** 项，`CONFIRM_REQUIRED` 仍 4 项）：只读、走 L1–L5、写审计；返回 `{versionId, svgText, imageDataUrl, files, manifest}`，其中 **`files{dxf,svg,pdf,drawing}` 默认是布尔**，**绝对路径与 `versionDir` 仅在 `includePaths:true` 时返回**（只有主进程打开本地程序时传，渲染层永不传 → 渲染层拿不到路径）。`svgText` 有 6 MB 上限、`imageDataUrl` 有 12 MB 上限。
 
-**P-6「打开本地 CAD」**：新增 IPC `reno:open`，入参仅 `{kind:'dxf'|'pdf'|'folder', versionId}`；主进程内部调 `getVersionPreview` 取绝对路径后 `shell.openPath`，**渲染层永远拿不到路径**。`shell.openPath` 返回非空错误串 → 走上面的降级文案。
+**P-6「打开本地 CAD」**：IPC `reno:open`（`main.cjs:120`），入参仅 `{kind:'dxf'|'pdf'|'folder', versionId}`；主进程内部调 `getVersionPreview({versionId, includePaths:true})` 取绝对路径后 `shell.openPath`（`:136`），**渲染层永远拿不到路径**（preload 只暴露 `open(payload)`）。`shell.openPath` 返回非空错误串 → 走下面的降级文案。
 
 ---
 
@@ -216,34 +217,31 @@ dist/本地装修设计Agent-win32-x64/
 
 **架构约束（不是配置问题，别再去试参数）**：`runElectronHost` 是 `spawn(exe, [secret-host.cjs, req, resp])`。开发态 `electron.exe` 是裸运行时，会把脚本当入口执行；一旦 exe 变成 packaged app，它**忽略传入脚本、直接启动自己的应用**，安全凭据宿主永远不写响应 → `E_TIMEOUT`。`ELECTRON_RUN_AS_NODE` 不能用来绕（那会让 safeStorage 不可用），所以**打包后的 Electron 不能当脚本解释器用**。
 
-→ **结论（写死，本轮不再尝试）**：**本轮可交付形态是「工作区 + 启动器」**（`npm run desktop` / `launch-desktop.mjs`）；打包版 `dist/` **标记为实验性、不作为交付物**，`启动说明.txt` 首行写明「实验性预览，完整功能请用工作区形态」。（后续可选修法，本轮不做：dist 内额外带一份**未打包的裸 `electron.exe`** 副本专供凭据宿主，与 packaged 主程序分开。）
+→ **结论（写死，本轮不再尝试）**：**本轮可交付形态是「工作区 + 启动器」**（双击仓库根 `启动本地装修设计Agent.cmd` → `launch-desktop.mjs`；该文件已存在，**勿新增**，打包时须复制到 dist 根）；打包版 `dist/` **标记为实验性、不作为交付物**，`启动说明.txt` 首行写明「实验性预览，完整功能请用工作区形态」。（后续可选修法，本轮不做：dist 内额外带一份**未打包的裸 `electron.exe`** 副本专供凭据宿主，与 packaged 主程序分开——但出图仍需系统 node。）
 
 `package.mjs` **必须真实打印两档逐目录体积与总大小**，`--slim` 打完后跑一次 dist 内 `RENO_DESKTOP_SMOKE=1` 冒烟（冒烟 PASS 即达标，**不再要求 dist 内跑通完整出图**）；再用 `verifyZip` 校验 zip 结构。启动：双击 `electron.exe`（或改名副本）。
 
 **为什么 `resources/vendor/`**：`enginePaths.mjs:23` 的 `WORKSPACE_ROOT = src/core/../../../`，在 `resources/app/src/core/` 下正好等于 `resources/` → 引擎路径**开箱即得，无需改代码**；`RUNTIME_DIR` = `resources/app/.runtime`（写权限正常，安装目录勿放 `Program Files`）。
 
-**必须同时改 `runArchlang` / `runOpenCalque`（无新依赖、~25 行）**：优先用本地可执行文件，找不到才退回 `npx`：
+**`runArchlang` / `runOpenCalque` 已改为本地 tsx 直跑（已实测，非待办）**：`node <tsx>/dist/cli.mjs <引擎 cli.ts> <args>`，`npx -y` 仅兜底。用 `dist/cli.mjs` 而非 `.bin/tsx.cmd`，绕开 Windows `.cmd` 的 shell 转义与 EINVAL。新增导出 `resolveLocalTsx(ocHome)`（顺序：ocHome 平铺 → app 自身 devDependency → ocHome 的 pnpm `tsx@<ver>`）与 `nodeExecutable()`（**绝不用 `electron.exe` 当 node**，与 §9 那条 packaged 结论同源；dist 内会退回 PATH 上的 `node`）。实测：`archlang --version` 1.57.0、`opencalque --version` 1.6.0 均 EXIT=0；`acceptance` 32/32、12 项引擎步骤全 0；耗时 54s→26s（省掉 npx 联网解析）。**推论：dist 内出图仍需系统装有 node，不要在任何说明里写「dist 装上就能出图」。**
 
-- archlang：`"<ocHome>/node_modules/.bin/tsx" "<alHome>/src/cli.ts" …`（实测该 tsx 存在）；
-- opencalque：`"<ocHome>/node_modules/.bin/tsx" "<ocHome>/packages/cli/src/cli.ts" …`，`cwd=ocHome`（`vendor/opencalque/package.json` 的 `opencalque` 脚本就是这么跑的）。
-
-不改这两处 = 打包版在无外网客户机上一定出不了图（`npx -y pnpm@9.14.2` 需联网下载）。`--slim` 下 opencalque 探测不到时 `projectWorkingDocument` 应**降级**（不抛死），交付说明标注「本版本未生成可编辑工作文档」。**但本轮打包版整体只作实验性预览，此降级仅为不让预览崩掉，不作为交付质量承诺。**
+**`--slim` 不出图，直接报错，不做降级放行**（**主理人 2026-11-07 书面否决，本节为终态**）：`--slim` 不含出图引擎，调用出图**保持抛死**并在界面文案说明「精简版不含出图引擎」——报错是正确行为，不是缺陷。**不加 `allowDegraded`、不加 `manifest.cad.degraded`、不碰 `generateCad()` 的闸门。** 裁决理由（比"护栏设计"更彻底）：**只要代码里存在「吞掉空结果」的分支，将来一定有人误用**；曾讨论过的「显式开关 + 完整形态永不传」只把风险从"必然"降为"取决于后人守约"，仍属隐患，一并撤回。**不用代码兜底，用文案说明。**
 
 ## 10. 任务列表（按实现顺序，每组一次可完成）
 
 | ID | 批次 | 任务 | 文件 | 依赖 | 验收点 |
 | --- | --- | --- | --- | --- | --- |
 | **T01** | 第一批（在跑） | 修 4 项缺陷 + 出 PDF | `config/httpAdapter.mjs`、`config/capabilityMatrix.mjs`、`core/types.mjs`、`project/requirements.mjs`、`packaging/delivery.mjs`、`packaging/pdfFromSvg.mjs`(新)、`security/secretStore.mjs`、`orchestrator/pipeline.mjs`（+14 行）。**PRD 措辞由 PM 执行，不动 `docs/PRD.md`** | — | `node qa/acceptance.mjs` → IDEM-06/CAD-04/UI-01 全 PASS；`npm run verify` 仍 32/32；交付包出现 `plan.pdf` 且 `%PDF-1.4` 头可读；`app/.runtime` 下 `.request.json`/`.response.json` 残留 = 0 |
-| **T02** | 第二批 | 渲染层地基 + P-1 + P-2 + 冒烟迁移 | `desktop/main.cjs`（loadFile 改指 `../renderer/index.html`）、`renderer/index.html`、`renderer/styles.css`、`renderer/main.js`、`renderer/core/{router,store,toolClient,ui,confirm}.js`、`renderer/pages/{home,settings}.js`、`renderer/smoke.js`；**删除** `desktop/index.html` | T01 | `npm run smoke:desktop` → verdict=PASS、步骤数≥9；启动可见首页徽标 + 最近项目空态、设置页两组配置 + 5 项能力徽标；`grep` 禁用词命中 0 |
-| **T03** | 第二批 | P-3 向导 + P-4 校准 | `renderer/pages/wizard.js`、`renderer/pages/calibration.js`、`renderer/core/ui.js`（补步骤条/表单组件） | T02 | 手工走完 5 步：新建→传 1 个 PDF→填需求→`pending=6` 时「确认并继续」disabled→逐项确认到 0→勾选→P-7 允许→`confirmAndBuild` 成功；`getTaskStatus` 停在 `AWAITING_CALIBRATION` 时 UI 不显示百分比 |
-| **T04** | 第二批 | P-5 对话 + P-6 结果 + 预览通道 | `renderer/pages/chat.js`、`renderer/pages/results.js`、`desktop/coreHost.mjs`（+`getVersionPreview` 只读工具）、`desktop/main.cjs`（+`reno:open` 与 `getVersionPreview` 转发） | T03 | 阻塞态黄条 + 「去校准」跳转；`redo`/`confirmImageSubmission`/`packageAndFinish` 三个按钮都必须先过 P-7（拒绝时不发 `confirmed`，审计无 `allowed` 记录）；P-6 显示 SVG 预览、版本列表、「打开本地 CAD」失败时显示降级文案 |
-| **T05** | 收尾 | 启动器 + 打包（实验性）+ GitHub + 端到端 | `scripts/package.mjs`(新，`--slim` 默认 / `--full`)、`core/enginePaths.mjs`（本地 tsx 优先）、`启动器.cmd`（工作区形态启动）、`README.md`（启动说明）、`.gitignore`（`dist/`） | T04 | **工作区形态跑通完整链路**：`npm run desktop` → P-1…P-7 全流程 → 出 `plan.dxf/svg/pdf` + 交付包（这是交付口径）；`node scripts/package.mjs --slim` 打印两档体积 + **dist 内冒烟 PASS + 首行标注「实验性预览」**（不以 dist 出图为验收项）；`git tag v0.2.0` + push |
+| **T02** | 第二批 | 渲染层地基 + P-1 + P-2 + 冒烟迁移 | `desktop/main.cjs`（loadFile 改指 `../renderer/index.html`）、`renderer/index.html`、`renderer/styles.css`、`renderer/main.js`、`renderer/core/{router,store,toolClient,ui,confirm}.js`、`renderer/pages/{home,settings}.js`、`renderer/smoke.js`；**删除** `desktop/index.html` | T01 | ✅ **已完成（主理人直接实现）**。证据口径：`smoke:desktop` verdict=PASS **11 步** + `app/scripts/capture-ui.mjs` 的 CDP 截图 `app/.runtime/ui-shots/{home,settings}.png`。**验收以 CDP 截图为准，不设"工程师手点走查"** |
+| **T03** | 第二批 | P-3 向导 + P-4 校准 | `renderer/pages/wizard.js`（290 行）、`renderer/pages/calibration.js`（232 行）、`renderer/core/ui.js`（步骤条/表单组件） | T02 | ✅ **已完成（主理人直接实现）**。证据：CDP 截图 `ui-shots/{wizard,calibration}.png`；`pending>0` 时「确认并继续」disabled |
+| **T04** | 第二批 | P-5 对话 + P-6 结果 + 预览通道 | `renderer/pages/chat.js`（226 行）、`renderer/pages/results.js`（194 行）、`desktop/coreHost.mjs`（+`getVersionPreview`）、`desktop/main.cjs`（+`reno:open`） | T03 | ✅ **已完成（主理人直接实现）**。证据：CDP 截图 `ui-shots/{chat,results}.png`；三个受控动作必经 P-7（`confirmed` 取 `confirmGate` 返回值） |
+| **T05** | 收尾 | 启动器核对 + 打包（实验性）+ GitHub + 端到端 | `scripts/package.mjs`(新，`--slim` 默认 / `--full`)、`core/enginePaths.mjs`（本地 tsx 直跑，**已完成**）、`启动本地装修设计Agent.cmd`（**已存在，勿新增**；打包时须复制到 dist 根）、`README.md`（启动说明）、`.gitignore`（`dist/`） | T04 | **工作区形态跑通完整链路**：双击 `启动本地装修设计Agent.cmd` → P-1…P-7 全流程 → 出 `plan.dxf/svg/pdf` + 交付包（这是交付口径）；`package.mjs --slim` 打印两档体积 + **dist 内冒烟 PASS + 首行标注「实验性预览」**（不以 dist 出图为验收项）；`git tag v0.2.0` + push |
 
 ---
 
 ## 11. 风险与待明确事项
 
-1. **打包形态不可用（已实测，已转为结论而非风险）**：packaged Electron **不能当脚本解释器**（`spawn(exe,[secret-host.cjs…])` 会启动应用而非执行脚本）→ 凭据宿主 `E_TIMEOUT`；再叠加 `npx` 联网依赖与 `--slim` 无出图引擎，**打包版整体不具备交付能力**。处置：本轮交付形态 =「**工作区 + 启动器**」，`dist/` 标记实验性、不作为交付物，T05 验收改为「工作区跑通完整链路 + dist 冒烟 PASS 且首行标注实验性」。仍保留的真风险：`npx -y tsx` / `npx -y pnpm@9.14.2` 在客户机无外网必挂 → `enginePaths` 必须先改本地 tsx 直跑，**工作区形态也必须跑通一次完整出图**（这条不能省，它才是交付口径）。
+1. **打包形态不可用（已实测，已转为结论而非风险）**：packaged Electron **不能当脚本解释器**（`spawn(exe,[secret-host.cjs…])` 会启动应用而非执行脚本）→ 凭据宿主 `E_TIMEOUT`；且 dist 内出图还要系统装 node（`nodeExecutable()` 退回 PATH），**打包版整体不具备交付能力**。处置：本轮交付形态 =「**工作区 + 启动器**」（`启动本地装修设计Agent.cmd` 已存在），`dist/` 标记实验性、不作为交付物；T05 验收 = 工作区跑通完整链路 + dist 冒烟 PASS 且首行标注实验性。**原「npx 联网」风险已消除**：本地 tsx 直跑已实现并实测（`archlang`/`opencalque --version` EXIT=0、acceptance 32/32、12 项引擎步骤全 0、54s→26s），现无压在交付上的技术风险，只剩 GUI 自身待验收。
 2. **UI-01 的二次暴露**：渲染层已按 QA 真实扫描路径落位 `app/src/renderer/`（不再有「扫不到而 PASS」）。但正则会命中**含中文行里的任何 `JSON` 字样**（如 `'解析 JSON 失败'`、`JSON.stringify` 写在同一行中文文案里），T02–T04 每次提交前都要跑 §7 的 grep，命中数必须为 0。
 3. **新增通道已批准（2026-11-07 主理人拍板）**：`getVersionPreview`（只读读 `plan.svg` / `image`）+ `reno:open`（主进程 `shell.openPath`，入参只允许 `{kind, versionId}`，渲染层永不接触路径）——两者都进正向白名单 `DESKTOP_TOOLS`（21 → 22 项）、走 L1–L5 权限门并写审计，`CONFIRM_REQUIRED` 保持 4 项不变。P-6 **不降级**。
 4. **PDF 保真度（本文档已更正 2026-11-07）**：原先写「`plan.svg` 文本全为 ASCII + `²`，实测无中文」是**错的**——我只查了前 6 条 `<text>`（房间名 / 面积 / 尺寸），漏了标题栏。真实情况：**每条 `plan.svg` 恰好 1 条中文**（`验收项目·两室一厅`、`一键链路演示` 等，即项目名），`skippedTexts=1`，PDF 标题栏该行为空。已定：不渲染中文（不做字体嵌入），在 `方案说明.txt` 与 `manifest.cad.pdf.note` 写明；`CAD边界声明.txt` 7 条不动（增第 8 条须 PM 走正式记录）。`<pattern>` 同样降级为纯色。

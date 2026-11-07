@@ -4,7 +4,7 @@
  */
 
 import { el, fill, badge, emptyState, notice, kv, loading, toast } from '../core/ui.js';
-import { patch, store } from '../core/store.js';
+import { patch, store, resetProject } from '../core/store.js';
 
 /** 状态徽标配色：只有「全部可用」才是绿的，未配置必须显眼。 */
 function badgeKind(text) {
@@ -124,6 +124,8 @@ export function mount(ctx) {
       return;
     }
     const opened = result.data?.project || project;
+    // 先清空项目级状态：否则会带着上一个项目的 taskId 进新项目，工作台会去轮询别人的任务。
+    resetProject();
     patch({
       projectId: opened.projectId,
       projectName: opened.name || '',

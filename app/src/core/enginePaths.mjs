@@ -3,11 +3,13 @@
  * 上游引擎根目录解析与外部进程调用封装。
  *
  * 真实调用（本机已逐条实测 EXIT=0）：
- *  - opencalque CLI：`npx -y pnpm@9.14.2 --silent opencalque <cmd>`，cwd = vendor/opencalque
- *  - archlang CLI：`npx -y tsx <archlang>/src/cli.ts <cmd>`，cwd = vendor/archlang（零运行期依赖）
- *  - Electron safeStorage host：直接 spawn electron.exe（必须清除 ELECTRON_RUN_AS_NODE）
+ *  - **优先本地 tsx 直跑**：`node <…>/node_modules/tsx/dist/cli.mjs <引擎 cli.ts> <args>`
+ *    ——客户机无外网时必须走这条路，`npx -y` 会因下载失败而 EXIT≠0；
+ *  - 找不到本地 tsx 才退回 `npx -y tsx <archlang>/src/cli.ts <cmd>` / `npx -y pnpm@9.14.2 opencalque <cmd>`；
+ *  - Electron safeStorage host：直接 spawn electron.exe（必须清除 ELECTRON_RUN_AS_NODE）。
  *
- * Windows 下 npx/pnpm 是 .cmd，Node spawn 必须 shell:true（实测 shell:false 返回 EINVAL）。
+ * Windows 下 npx/pnpm 是 .cmd，Node spawn 必须 shell:true（实测 shell:false 返回 EINVAL）；
+ * 本地 tsx 用「node + cli.mjs」而不是 `.bin/tsx.cmd`，绕开 .cmd/.ps1 的 shell 转义与 EINVAL。
  * 所有命令行参数都由本模块构造，绝不接受 Agent 传入的原始命令字符串。
  * @module core/enginePaths
  */
@@ -168,6 +170,46 @@ export function vendorReady() {
 }
 
 /**
+ * 解析本地 tsx 的真实入口（`…/tsx/dist/cli.mjs`），供两个引擎直跑。
+ * 顺序：ocHome 平铺布局 → app 自身 devDependency → ocHome 的 pnpm 布局（`tsx@<ver>`）。
+ * 用 `node + cli.mjs` 而不是 `.bin/tsx.cmd`，绕开 Windows 下 .cmd 的 shell 转义与 EINVAL。
+ * 找不到返回 `null`，调用方退回 `npx`（需联网，客户机无外网时会失败）。
+ * @param {string} [ocHome]
+ * @returns {string|null}
+ */
+export function resolveLocalTsx(ocHome) {
+  const home = ocHome || resolveEnginePaths().ocHome;
+  const flat = [
+    path.join(home, 'node_modules', 'tsx', 'dist', 'cli.mjs'),
+    path.join(APP_ROOT, 'node_modules', 'tsx', 'dist', 'cli.mjs'),
+  ];
+  for (const candidate of flat) {
+    try { if (fs.statSync(candidate).isFile()) return candidate; } catch { /* 继续找 */ }
+  }
+  // pnpm 布局：node_modules/.pnpm/tsx@4.23.15/node_modules/tsx/dist/cli.mjs
+  try {
+    const pnpmDir = path.join(home, 'node_modules', '.pnpm');
+    for (const name of fs.readdirSync(pnpmDir)) {
+      if (!name.startsWith('tsx@')) continue;
+      const candidate = path.join(pnpmDir, name, 'node_modules', 'tsx', 'dist', 'cli.mjs');
+      try { if (fs.statSync(candidate).isFile()) return candidate; } catch { /* 继续找 */ }
+    }
+  } catch { /* 不是 pnpm 布局 */ }
+  return null;
+}
+
+/**
+ * 运行 `node` 的可执行文件。
+ * 工作区形态下 `process.execPath` 就是 node.exe；万一将来跑在 Electron 里（execPath 是 electron.exe），
+ * 退回 PATH 上的 `node` —— 绝不拿 electron.exe 当 node 用（那会启动应用而不是执行脚本）。
+ * @returns {string}
+ */
+export function nodeExecutable() {
+  const base = path.basename(process.execPath).toLowerCase();
+  return base.startsWith('node') ? process.execPath : 'node';
+}
+
+/**
  * 执行一条固定构造的命令行。
  * @param {string} commandLine 完整命令行（由本模块构造）
  * @param {{cwd?:string,timeoutMs?:number,env?:Record<string,string|undefined>,input?:string}} [opts]
@@ -215,24 +257,34 @@ export function runCommand(commandLine, opts = {}) {
 
 /**
  * 调用 opencalque CLI（真实引擎，不重写 DXF 解析器）。
+ * 优先本地 tsx 直跑 `<ocHome>/packages/cli/src/cli.ts`；找不到本地 tsx 才 `npx`（需联网）。
  * @param {string[]} args
  * @param {{timeoutMs?:number,cwd?:string}} [opts]
  */
 export function runOpenCalque(args, opts = {}) {
   const paths = resolveEnginePaths();
-  const line = `npx -y pnpm@9.14.2 --silent opencalque ${args.map(quoteArg).join(' ')}`;
+  const tsxCli = resolveLocalTsx(paths.ocHome);
+  const ocCli = path.join(paths.ocHome, 'packages', 'cli', 'src', 'cli.ts');
+  const useLocal = Boolean(tsxCli) && fs.existsSync(ocCli);
+  const line = useLocal
+    ? `${quoteArg(nodeExecutable())} ${quoteArg(String(tsxCli))} ${quoteArg(ocCli)} ${args.map(quoteArg).join(' ')}`
+    : `npx -y pnpm@9.14.2 --silent opencalque ${args.map(quoteArg).join(' ')}`;
   return runCommand(line, { cwd: opts.cwd || paths.ocHome, timeoutMs: opts.timeoutMs || 180000 });
 }
 
 /**
- * 调用 archlang CLI（真实引擎，零运行期依赖，npx tsx 直跑 src/cli.ts）。
+ * 调用 archlang CLI（零运行期依赖）。
+ * 优先本地 tsx 直跑 `<alHome>/src/cli.ts`；找不到本地 tsx 才 `npx -y tsx`（需联网）。
  * @param {string[]} args
  * @param {{timeoutMs?:number,cwd?:string}} [opts]
  */
 export function runArchlang(args, opts = {}) {
   const paths = resolveEnginePaths();
   const cli = path.join(paths.alHome, 'src', 'cli.ts');
-  const line = `npx -y tsx ${quoteArg(cli)} ${args.map(quoteArg).join(' ')}`;
+  const tsxCli = resolveLocalTsx(paths.ocHome);
+  const line = tsxCli
+    ? `${quoteArg(nodeExecutable())} ${quoteArg(tsxCli)} ${quoteArg(cli)} ${args.map(quoteArg).join(' ')}`
+    : `npx -y tsx ${quoteArg(cli)} ${args.map(quoteArg).join(' ')}`;
   return runCommand(line, { cwd: opts.cwd || paths.alHome, timeoutMs: opts.timeoutMs || 180000 });
 }
 

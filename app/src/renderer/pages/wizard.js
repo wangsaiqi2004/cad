@@ -7,7 +7,7 @@
 
 import { el, fill, badge, notice, toast, field, input, steps, table, loading, kv } from '../core/ui.js';
 import { buildCalibrationPanel } from './calibration.js';
-import { patch, store } from '../core/store.js';
+import { patch, store, resetProject } from '../core/store.js';
 
 const STEP_TITLES = ['基本信息', '资料上传', '需求确认', '户型校准', '确认提交'];
 
@@ -89,6 +89,8 @@ export function mount(ctx) {
         const result = await call('newProject', state.project);
         if (!result.ok) { toast(result.message, 'bad'); return; }
         const project = result.data?.project || {};
+        // 新项目不继承上一个项目的版本 / 任务：先清空，避免结果页显示别的项目的版本。
+        resetProject();
         patch({ projectId: project.projectId, projectName: project.name, client: project.client });
         toast('项目已创建', 'ok');
       } else {
@@ -116,7 +118,7 @@ export function mount(ctx) {
         forbidden: ['不改动历史版本', '不访问项目目录以外的文件', '不生成整套施工图'],
       });
       if (!approved) { toast('已取消，任务仍停在等待确认', 'info'); return; }
-      const result = await call('confirmAndBuild', { confirmed: true });
+      const result = await call('confirmAndBuild', { confirmed: approved });
       if (!result.ok) { toast(result.message, 'bad'); return; }
       toast('方案已生成', 'ok');
       go('#/chat');

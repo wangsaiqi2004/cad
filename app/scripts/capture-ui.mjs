@@ -150,7 +150,21 @@ async function main() {
 
     for (const route of ROUTES) {
       await cdp.send('Runtime.evaluate', { expression: `location.hash = ${JSON.stringify(route)}` });
-      await sleep(900);
+      // 页面自己会拉数据，别用固定等待时间赌：等「正在读取」消失或超时再截。
+      for (let i = 0; i < 40; i += 1) {
+        const ready = await cdp.send('Runtime.evaluate', {
+          expression: `(() => {
+            const v = document.getElementById('view');
+            if (!v) return false;
+            const text = (v.innerText || '').trim();
+            return text.length > 0 && !text.includes('正在读取') && !text.includes('正在拉取');
+          })()`,
+          returnByValue: true,
+        });
+        if (ready?.result?.value === true) break;
+        await sleep(250);
+      }
+      await sleep(300);
       const shot = await cdp.send('Page.captureScreenshot', { format: 'png', captureBeyondViewport: false });
       const name = route.replace(/[#/]/g, '').replace(/[^a-zA-Z0-9_-]/g, '') || 'home';
       const file = path.join(OUT_DIR, `${name}.png`);
