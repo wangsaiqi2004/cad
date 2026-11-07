@@ -34,19 +34,20 @@ export function buildCalibrationPanel(opts) {
   };
 
   const pins = el('div');
-  const image = opts.backgroundUrl ? el('img', { src: opts.backgroundUrl, alt: '户型底图' }) : null;
+  const hasImage = Boolean(opts.backgroundUrl);
+  const image = hasImage ? el('img', { src: opts.backgroundUrl, alt: '户型底图' }) : null;
   const pickLayer = el('div.pick-layer');
   const canvasBox = el('div.canvas-box', null, image
     ? [image, pickLayer, pins]
     : [el('div.placeholder', null, [
       el('div', { text: '这个项目没有可显示的底图' }),
-      el('div.hint', { style: 'margin-top:6px', text: '没有底图时仍可凭量房记录完成比例与尺寸确认，但两点比例需要人工填写。' }),
+      el('div.hint', { style: 'margin-top:6px', text: '没有底图时不换算图片比例：直接按你在右边填写的开间 / 进深建模（1 毫米 = 1 毫米），尺寸全部来自你的量房记录。' }),
     ])]);
 
   const scaleStatus = el('div.hint');
   const pendingHost = el('div');
   const completeBar = el('div.row', { style: 'margin-top:14px' }, [
-    el('button.btn.btn-primary', { text: '确认并继续', disabled: true, onclick: () => void apply() }),
+    el('button.btn.btn-primary', { text: '保存这次校准', disabled: true, onclick: () => void apply() }),
   ]);
   const applyBtn = completeBar.querySelector('button');
 
@@ -78,6 +79,10 @@ export function buildCalibrationPanel(opts) {
 
   /** 比例预览：显示每像素多少毫米，让用户自己判断是否离谱。 */
   function updateScaleStatus() {
+    if (!hasImage) {
+      fill(scaleStatus, ['没有底图：不换算图片比例，直接按开间 / 进深建模。']);
+      return;
+    }
     const mm = Number(state.knownMm);
     if (!state.p1 || !state.p2) {
       fill(scaleStatus, ['请先在左侧底图上点两个已知距离的点。']);
@@ -120,28 +125,35 @@ export function buildCalibrationPanel(opts) {
         el('div.pending-hint', { text: item.hint || '' }),
       ])));
     applyBtn.disabled = !canSubmit(pending);
-    applyBtn.textContent = state.complete ? '已完成校准' : '应用校准并刷新';
+    applyBtn.textContent = state.complete ? '校准已完成' : '保存这次校准';
   }
 
-  /** 能否提交：两点齐 + 距离填了 + 4 项都勾了。 */
+  /** 能否提交：有底图要两点 + 距离，无底图只要有开间进深；两种情况都必须勾完 4 项。 */
   function canSubmit() {
     if (state.complete) return false;
-    const hasScale = Boolean(state.p1 && state.p2 && Number(state.knownMm) > 0);
-    const allChecked = CHECK_ITEMS.every((item) => state.checks[item.id] === true);
     const dimsOk = Number(state.width) >= 2000 && Number(state.depth) >= 2000;
+    const allChecked = CHECK_ITEMS.every((item) => state.checks[item.id] === true);
+    if (!hasImage) return dimsOk && allChecked;
+    const hasScale = Boolean(state.p1 && state.p2 && Number(state.knownMm) > 0);
     return hasScale && allChecked && dimsOk;
   }
 
-  /** 提交校准。 */
+  /** 提交校准。无底图时按「1 毫米 = 1 毫米」把进深当作两点距离，比例恒为 1。 */
   async function apply() {
     const confirmations = {};
     for (const item of CHECK_ITEMS) if (state.checks[item.id]) confirmations[item.id] = '员工已核对';
+    const depth = Number(state.depth);
+    const p1 = hasImage ? state.p1 : { x: 0, y: 0 };
+    const p2 = hasImage ? state.p2 : { x: depth, y: 0 };
+    const knownDistanceMm = hasImage ? Number(state.knownMm) : depth;
     const result = await call('applyCalibration', {
-      p1: state.p1,
-      p2: state.p2,
-      knownDistanceMm: Number(state.knownMm),
+      p1,
+      p2,
+      knownDistanceMm,
       confirmations,
-      dimensions: { width: Number(state.width), depth: Number(state.depth) },
+      dimensions: { width: Number(state.width), depth },
+      // 有底图 = 两点已知距离；无底图 = 用户直接给的尺寸，两者在记录里必须分得清。
+      scaleSource: hasImage ? 'user_provided_known_distance' : 'user_provided_dimensions',
       confirmedBy: '量房员工',
     });
     if (!result.ok) {
@@ -182,15 +194,26 @@ export function buildCalibrationPanel(opts) {
   const node = el('div', null, [
     el('div.calib-wrap', null, [
       el('div.card', null, [
-        el('div.card-title', null, [el('h3', { text: '第一步：在底图上定比例' })]),
+        el('div.card-title', null, [el('h3', { text: hasImage ? '第一步：在底图上定比例' : '第一步：确认底图状态' })]),
         canvasBox,
-        el('div.row', { style: 'margin-top:10px' }, [
-          el('button.btn.btn-sm', {
-            text: '重新选两点',
-            onclick: () => { state.p1 = null; state.p2 = null; fill(pins, []); updateScaleStatus(); applyBtn.disabled = !canSubmit(); },
+        hasImage
+          ? el('div.row', { style: 'margin-top:10px' }, [
+            el('button.btn.btn-sm', {
+              text: '重新选两点',
+              onclick: () => { state.p1 = null; state.p2 = null; fill(pins, []); updateScaleStatus(); applyBtn.disabled = !canSubmit(); },
+            }),
+          ])
+          : null,
+        hasImage
+          ? field({ label: '这两点之间的真实距离', unit: '毫米', control: knownInput, hint: '用卷尺量出来的实际长度，不是图上像素。' })
+          : notice({
+            kind: 'warn',
+            title: '没有底图，所以不换算图片比例',
+            lines: [
+              '请直接在右边填写开间与进深（单位毫米），软件按 1 毫米 = 1 毫米 建模。',
+              '如果你想让比例来自底图，请回到第 2 步上传一张户型图。',
+            ],
           }),
-        ]),
-        field({ label: '这两点之间的真实距离', unit: '毫米', control: knownInput, hint: '用卷尺量出来的实际长度，不是图上像素。' }),
         scaleStatus,
       ]),
       el('div.card', null, [

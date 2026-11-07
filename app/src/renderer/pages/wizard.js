@@ -24,7 +24,7 @@ const REQUIREMENT_FORM = [
 
 /** @param {import('../core/router.js').PageContext} ctx */
 export function mount(ctx) {
-  const { call, go, confirmGate } = ctx;
+  const { call, go, confirmTool } = ctx;
   const view = document.getElementById('view');
 
   const state = {
@@ -110,15 +110,13 @@ export function mount(ctx) {
       state.step = 4; render(); return;
     }
     if (state.step === 4) {
-      const approved = await confirmGate({
-        tool: 'confirmAndBuild',
+      const result = await confirmTool('confirmAndBuild', {}, {
         title: '开始生成平面方案？',
         subtitle: '确认后会写图纸成果，并生成一个新的版本目录。',
         allowScope: ['按已确认的尺寸与需求生成墙、门窗、家具、标注', '写入当前版本目录', '同时生成可交互工作文档'],
         forbidden: ['不改动历史版本', '不访问项目目录以外的文件', '不生成整套施工图'],
-      });
-      if (!approved) { toast('已取消，任务仍停在等待确认', 'info'); return; }
-      const result = await call('confirmAndBuild', { confirmed: approved });
+      }, call);
+      if (result.cancelled) { toast('已取消，任务仍停在等待确认', 'info'); return; }
       if (!result.ok) { toast(result.message, 'bad'); return; }
       toast('方案已生成', 'ok');
       go('#/chat');
@@ -253,7 +251,7 @@ export function mount(ctx) {
         ['项目名称', state.project.name || store.projectName || '—'],
         ['房间用途', state.requirements.roomUses || '—'],
         ['风格', state.requirements.style || '未填写'],
-        ['校准状态', badge('已完成', 'ok')],
+        ['本次校准', state.calibrationDone ? badge('已完成', 'ok') : badge('未完成', 'warn')],
       ]),
       el('div', { style: 'margin-top:16px' }, [
         notice({

@@ -11,7 +11,7 @@ import { patch, store } from '../core/store.js';
 
 /** @param {import('../core/router.js').PageContext} ctx */
 export function mount(ctx) {
-  const { call, go, confirmGate } = ctx;
+  const { call, go, confirmTool } = ctx;
   const view = document.getElementById('view');
 
   const listHost = el('div');
@@ -182,14 +182,12 @@ export function mount(ctx) {
 
   /** 出包（需要确认）。 */
   async function packageIt() {
-    const ok = await confirmGate({
-      tool: 'packageAndFinish',
+    const result = await confirmTool('packageAndFinish', {}, {
       title: '确认生成交付包？',
       allowScope: ['把当前版本成果整理成交付包', '附带边界声明、方案说明与版本记录', '导出前做密钥明文自检'],
       forbidden: ['不打包任何密钥', '不改写已有文件', '不覆盖上一次导出的交付包'],
-    });
-    if (!ok) { toast('已取消', 'info'); return; }
-    const result = await call('packageAndFinish', { confirmed: ok });
+    }, call);
+    if (result.cancelled) { toast('已取消', 'info'); return; }
     if (!result.ok) { toast(result.message, 'bad'); return; }
     toast('交付包已生成', 'ok');
     await refreshDelivery();

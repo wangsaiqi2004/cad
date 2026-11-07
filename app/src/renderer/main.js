@@ -6,7 +6,7 @@
 import { register, start, observe, go, current } from './core/router.js';
 import { call, info, isSmoke } from './core/toolClient.js';
 import { store, patch, subscribe } from './core/store.js';
-import { confirmGate, clearRemembered } from './core/confirm.js';
+import { confirmGate, confirmTool, clearRemembered } from './core/confirm.js';
 import { badge, toast } from './core/ui.js';
 import { mount as mountHome } from './pages/home.js';
 import { mount as mountSettings } from './pages/settings.js';
@@ -21,6 +21,7 @@ globalThis.__renoCall = call;
 globalThis.__renoStore = store;
 globalThis.__renoPatch = patch;
 globalThis.__renoConfirm = confirmGate;
+globalThis.__renoConfirmTool = confirmTool;
 
 const NAV = [
   { path: '#/home', label: '首页' },

@@ -88,6 +88,7 @@ export async function render(params = {}) {
     go,
     patch: globalThis.__renoPatch,
     confirmGate: globalThis.__renoConfirm,
+    confirmTool: globalThis.__renoConfirmTool,
   };
   try {
     active = mount(ctx) || null;

@@ -263,6 +263,8 @@ export class Pipeline {
     const s = this._requireProject();
     await s.calibration.setScale({
       p1: input.p1, p2: input.p2, knownDistanceMm: input.knownDistanceMm,
+      // 无底图时用户在界面上直接给开间进深，比例来源要与「底图两点」区分开，不许混淆。
+      scaleSource: input.scaleSource,
       confirmedBy: input.confirmedBy || '量房员工',
     });
     for (const [id, value] of Object.entries(input.confirmations || {})) {

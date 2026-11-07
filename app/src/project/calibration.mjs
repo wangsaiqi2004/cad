@@ -21,9 +21,12 @@ export const CALIBRATION_ITEMS = Object.freeze([
   { id: 'structuralWalls', label: '结构墙判断待确认', hint: '确认承重墙 / 可拆墙判断', required: true },
 ]);
 
+/** 合法比例来源：前者是底图两点 + 已知距离，后者是无底图时用户直接给的开间进深。 */
+export const SCALE_SOURCES = Object.freeze(['user_provided_known_distance', 'user_provided_dimensions']);
+
 /**
  * 两点已知距离校准。**尺度来源必须是用户提供的已知距离**。
- * @param {{p1:{x:number,y:number},p2:{x:number,y:number},knownDistanceMm:number,imageWidthPx?:number,imageHeightPx?:number}} input
+ * @param {{p1:{x:number,y:number},p2:{x:number,y:number},knownDistanceMm:number,imageWidthPx?:number,imageHeightPx?:number,scaleSource?:string}} input
  * @returns {{mmPerPixel:number,distancePx:number,knownDistanceMm:number,p1:Object,p2:Object,scaleSource:string}}
  */
 export function twoPointCalibration(input) {
@@ -40,6 +43,9 @@ export function twoPointCalibration(input) {
     throw Object.assign(new Error('两个校准点重合，无法换算比例'), { code: 'E_VALIDATION' });
   }
   const mmPerPixel = input.knownDistanceMm / distancePx;
+  const scaleSource = SCALE_SOURCES.includes(input.scaleSource)
+    ? input.scaleSource
+    : 'user_provided_known_distance';
   return {
     mmPerPixel,
     distancePx,
@@ -48,7 +54,7 @@ export function twoPointCalibration(input) {
     p2: { x: p2.x, y: p2.y },
     imageWidthPx: input.imageWidthPx ?? null,
     imageHeightPx: input.imageHeightPx ?? null,
-    scaleSource: 'user_provided_known_distance',
+    scaleSource,
   };
 }
 
@@ -104,8 +110,7 @@ export class CalibrationSession {
       ...twoPointCalibration(input),
       confirmedBy: input.confirmedBy || '量房员工',
       confirmedAt: nowIso(),
-    };
-    // 在同一个 state 上确认 scale，避免另一次 load/save 覆盖掉刚写入的 calibration。
+    };    // 在同一个 state 上确认 scale，避免另一次 load/save 覆盖掉刚写入的 calibration。
     const item = state.items.find((entry) => entry.id === 'scale');
     if (item) {
       item.confirmed = true;

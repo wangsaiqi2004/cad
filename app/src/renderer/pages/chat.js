@@ -26,7 +26,7 @@ const STATE_KIND = {
 
 /** @param {import('../core/router.js').PageContext} ctx */
 export function mount(ctx) {
-  const { call, go, confirmGate } = ctx;
+  const { call, go, confirmTool } = ctx;
   const view = document.getElementById('view');
 
   const headBadge = el('div');
@@ -57,8 +57,14 @@ export function mount(ctx) {
       fill(stepCard, [notice({ kind: 'warn', title: '还没有打开项目', lines: ['请先到首页打开一个项目，或新建项目。'] })]);
       fill(sideCard, []);
       fill(blockBox, []);
+      fill(headBadge, [badge('未开始', 'idle')]);
+      fill(stateText, ['还没有打开项目，先到首页选一个。']);
+      sideCard.style.display = 'none';
+      logBox.style.display = 'none';
       return;
     }
+    sideCard.style.display = '';
+    logBox.style.display = '';
     const result = await call('getTaskStatus', {});
     if (!result.ok) {
       fill(stepCard, [notice({ kind: 'bad', title: '读不到任务状态', lines: [result.message, ...result.nextSteps] })]);
@@ -114,14 +120,18 @@ export function mount(ctx) {
     return data.stateLabel || '正在处理…';
   }
 
-  /** 进度条只在真有明确总数时显示。 */
+  /** 进度条只在「确实能算出百分比」时显示；等待用户确认时只报计数，不画进度。 */
   function renderProgress(data) {
     const progress = data.subProgress;
     if (!progress || !progress.total) return null;
+    const count = `已完成 ${progress.done} / ${progress.total} ${progress.unit || ''}`;
+    if (data.waitingForUser || progress.showPercent === false) {
+      return el('div.hint', { text: count });
+    }
     const percent = Math.min(100, Math.round((progress.done / progress.total) * 100));
     return el('div', null, [
       el('div.progress', null, [el('span', { style: `width:${percent}%` })]),
-      el('div.hint', { text: `已完成 ${progress.done} / ${progress.total} ${progress.unit || ''}` }),
+      el('div.hint', { text: count }),
     ]);
   }
 
@@ -152,16 +162,14 @@ export function mount(ctx) {
     const prompt = await call('getSubmissionPrompt', {});
     if (!prompt.ok) { toast(prompt.message, 'bad'); return; }
     const data = prompt.data || {};
-    const approved = await confirmGate({
-      tool: 'confirmImageSubmission',
+    const result = await confirmTool('confirmImageSubmission', { approved: true }, {
       title: '确认生成效果图？',
       subtitle: `模型：${data.modelName || '未配置'}　版本：${data.cadVersionId || store.versionId || '—'}`,
       allowScope: ['把当前版本的图纸视图与需求描述发送给你配置的图片模型', '结果保存到当前版本目录', '生成一条不含密钥的生图记录'],
       forbidden: ['不覆盖旧版本的图纸与效果图', '不访问项目目录以外的文件', '不代替你判断效果图能否施工'],
       chargeNote: data.chargeNote || '本次请求可能产生费用，费用由公司自己的账户承担。',
-    });
-    if (!approved) { toast('已取消，没有发起任何请求', 'info'); return; }
-    const result = await call('confirmImageSubmission', { confirmed: approved, approved: true });
+    }, call);
+    if (result.cancelled) { toast('已取消，没有发起任何请求', 'info'); return; }
     if (!result.ok) { toast(result.message, 'bad'); await refresh(); return; }
     const testDouble = result.data?.testDouble === true;
     toast(testDouble ? '已按流程完成一次验证（未连接真实服务商）' : '效果图已生成', testDouble ? 'warn' : 'ok');
@@ -170,14 +178,12 @@ export function mount(ctx) {
 
   /** 出包。 */
   async function packageIt() {
-    const approved = await confirmGate({
-      tool: 'packageAndFinish',
+    const result = await confirmTool('packageAndFinish', {}, {
       title: '确认生成交付包？',
       allowScope: ['把当前版本的全部成果整理成一个交付包', '包内附带边界声明、方案说明与版本记录', '导出前对每个文件做一次密钥明文自检'],
       forbidden: ['不打包任何密钥', '不改写已有版本的文件', '不覆盖上一次导出的交付包'],
-    });
-    if (!approved) { toast('已取消', 'info'); return; }
-    const result = await call('packageAndFinish', { confirmed: approved });
+    }, call);
+    if (result.cancelled) { toast('已取消', 'info'); return; }
     if (!result.ok) { toast(result.message, 'bad'); return; }
     toast('交付包已生成，可在结果页查看', 'ok');
     go('#/results');
@@ -185,15 +191,13 @@ export function mount(ctx) {
 
   /** 重做：新版本，旧版本保留。 */
   async function redoIt() {
-    const approved = await confirmGate({
-      tool: 'redo',
+    const result = await confirmTool('redo', {}, {
       title: '确认重做这一版？',
       subtitle: '将生成一个新版本；旧版本的图纸与交付包完整保留。',
       allowScope: ['按当前需求再生成一版方案', '写入新的版本目录'],
       forbidden: ['不删除、不覆盖旧版本', '不访问项目目录以外的文件'],
-    });
-    if (!approved) { toast('已取消', 'info'); return; }
-    const result = await call('redo', { confirmed: approved });
+    }, call);
+    if (result.cancelled) { toast('已取消', 'info'); return; }
     if (!result.ok) { toast(result.message, 'bad'); return; }
     patch({ versionId: result.data?.versionId || store.versionId, taskId: result.data?.taskId || '' });
     toast('已开始生成新版本，旧版本保留', 'ok');

@@ -83,6 +83,49 @@ function countMatches(files, re) {
   return { total, hits };
 }
 
+/**
+ * 定时器白名单：**只允许「读只读工具、不发起付费请求、卸载时必清理」的界面轮询**。
+ *
+ * 为什么要有白名单而不是一律禁 `setInterval`：
+ * 界面要显示任务进度就必须轮询 `getTaskStatus`（只读工具，不写成果、不起费用）。
+ * 若为了「过检查」而砍掉轮询，界面就再也无法显示真实进度——那是比不检查更坏的结果。
+ * 所以这里做的是**登记制 + 等量断言**：命中数必须与白名单条数一致，
+ * 既不让未登记的新定时器混进来，也不让「删掉轮询」被静默放过（白名单条目会失效并报错）。
+ * @type {Array<{file:string, tool:string, why:string}>}
+ */
+const INTERVAL_ALLOWLIST = [
+  {
+    file: 'renderer/pages/chat.js',
+    tool: 'getTaskStatus',
+    why: '项目工作台 2.5s 轮询只读状态（不发起付费请求、不写成果），unmount() 内 clearInterval 清理',
+  },
+];
+
+/** 命中是否落在白名单条目上（path.relative 在 Windows 用反斜杠，统一成正斜杠再比）。 */
+function hitMatchesAllowlist(hit, entry) {
+  const filePart = String(hit).split(':')[0].replace(/\\/g, '/');
+  return filePart.endsWith(entry.file);
+}
+
+/**
+ * 统计「未登记」的定时器，并对白名单做等量校验。
+ * @param {string[]} files
+ * @returns {{total:number, hits:string[], unexpected:string[], stale:Array<{file:string}>, ok:boolean}}
+ */
+function auditIntervals(files) {
+  const found = countMatches(files, /setInterval\s*\(/);
+  const unexpected = found.hits.filter((hit) => !INTERVAL_ALLOWLIST.some((entry) => hitMatchesAllowlist(hit, entry)));
+  const stale = INTERVAL_ALLOWLIST.filter((entry) => !found.hits.some((hit) => hitMatchesAllowlist(hit, entry)));
+  return {
+    total: found.total,
+    hits: found.hits,
+    unexpected,
+    stale,
+    // 等量断言：既无未登记定时器，也无失效白名单（后者意味着轮询被删，必须同步更新白名单）
+    ok: unexpected.length === 0 && stale.length === 0 && found.total === INTERVAL_ALLOWLIST.length,
+  };
+}
+
 /** 动态定位工程师验收产物（工程师仍在活跃重跑，路径不可硬编码）。 */
 function locateArtifacts() {
   const reportPath = path.join(APP_DIR, '.runtime', 'acceptance-report.json');
@@ -183,8 +226,8 @@ function checkEnvironment(py) {
 
 // ======================= 1. 权限边界 =======================
 function checkPermissionStatic(A) {
-  const srcFiles = walk(path.join(APP_DIR, 'src'), ['.mjs', '.cjs', '.ts', '.tsx'])
-    .concat(walk(path.join(APP_DIR, 'scripts'), ['.mjs', '.cjs']));
+  // 本函数各子检查都只读具体文件，不再全量 walk src（原先那行 srcFiles 声明未被使用，已删除，
+  // 避免「看着像扫了渲染层其实没扫」的假象；渲染层覆盖由 PERM-07 用 pages 目录 walk 负责）。
 
   // ① 逃逸工具不得出现在允许清单（白名单）里；且必须被明确点名禁止。
   const gateFile = path.join(APP_DIR, 'src', 'security', 'permissionGate.mjs');
@@ -259,6 +302,33 @@ function checkPermissionStatic(A) {
         `被拒工具=${tools.join(', ')}`,
       ]);
   }
+
+  // ⑥ 确认位不可由页面构造：P-7 的「已确认」布尔只能来自 confirmGate()，页面不得自己拼。
+  // 判据（可执行、不靠文档自觉）：
+  //   a) pages/**.js 中不得出现 `confirmed:`（权限确认位）；`confirmedBy:` 是校准记录字段，不在此列；
+  //   b) 渲染层必须存在结构性包装 confirmTool(…)，让页面拿不到构造 confirmed 的机会；
+  //   c) 该包装必须校验工具名 ∈ 4 项需确认清单，防止把只读工具也包成"要确认"或漏掉付费动作。
+  const pagesDir = path.join(APP_DIR, 'src', 'renderer', 'pages');
+  const confirmFile = path.join(APP_DIR, 'src', 'renderer', 'core', 'confirm.js');
+  const pagesFiles = exists(pagesDir) ? walk(pagesDir, ['.js']) : [];
+  // \bconfirmed\s*: 精确匹配权限位，排除 confirmedBy:（校准记录里的"由谁确认"）
+  const flagHits = countMatches(pagesFiles, /\bconfirmed\s*:/);
+  const confirmSrc = exists(confirmFile) ? stripComments(readText(confirmFile)) : '';
+  const hasWrapper = /export\s+(async\s+)?function\s+confirmTool\s*\(/.test(confirmSrc);
+  const wrapperChecksName = /CONFIRM_REQUIRED_TOOLS|CONFIRM_REQUIRED/.test(confirmSrc);
+  const wrapperHasFourTools = ['confirmAndBuild', 'confirmImageSubmission', 'packageAndFinish', 'redo']
+    .every((name) => confirmSrc.includes(`'${name}'`));
+  const permOk = flagHits.total === 0 && hasWrapper && wrapperChecksName && wrapperHasFourTools;
+  record('PERM-07', '①权限', '确认位不可由页面构造（confirmed 只能来自 confirmTool 包装）',
+    '静态源码审查', permOk ? 'PASS' : 'FAIL',
+    [
+      `pages/**.js 中 \`confirmed:\` 命中=${flagHits.total}（${flagHits.hits.join(', ') || '无'}）→ 必须为 0`,
+      `confirm.js 存在 confirmTool 包装=${hasWrapper}；校验工具名∈4 项=${wrapperChecksName}；4 项齐备=${wrapperHasFourTools}`,
+      `扫描页面文件=${pagesFiles.length} 个（.js，含渲染层）`,
+      `不误伤说明：\`confirmedBy: '量房员工'\`（calibration.js 校准记录字段）不计入本项`,
+    ],
+    permOk ? undefined
+      : 'QA 说明：本条为 2026-11-07 第三轮新增的可执行契约（架构侧已定：页面通过 confirmTool(name,input,gateOpts) 走确认，拿不到构造 confirmed 的机会）。当前 FAIL 属**已知在改项**（Engineer 正在实现 confirmTool 包装），不是新回归；实现后无需改本脚本即自动转 PASS。');
 }
 
 function checkPermissionBehavior(probe) {
@@ -289,7 +359,8 @@ function checkPermissionBehavior(probe) {
 
 // ======================= 2. 幂等与防重复扣费 =======================
 function checkIdempotencyStatic() {
-  const srcFiles = walk(path.join(APP_DIR, 'src'), ['.mjs', '.cjs']);
+  // 渲染层 15 个文件全是 .js：漏扫 .js 会让整层对幂等静态检查不可见（见本节 IDEM-02 修正说明）
+  const srcFiles = walk(path.join(APP_DIR, 'src'), ['.mjs', '.cjs', '.js']);
   const pipelineSrc = stripComments(readText(path.join(APP_DIR, 'src', 'orchestrator', 'pipeline.mjs')));
 
   // ① 提交前落盘（PRD/架构记为 beginCharge()，实现命名为 IdempotencyLedger.reserve()，语义等价）
@@ -308,8 +379,10 @@ function checkIdempotencyStatic() {
     ],
     '命名说明：PRD 记为 beginCharge()，实现命名为 IdempotencyLedger.reserve()，语义等价（提交前落盘「已提交」记录）');
 
-  // ② 无 setInterval / 定时补发 / 无条件自动重试
-  const setIntervalHits = countMatches(srcFiles, /setInterval\s*\(/);
+  // ② 无「未登记」的 setInterval / 无定时补发 / 无条件自动重试
+  // 注意：不是「setInterval 一律为 0」。界面必须能显示真实进度，读只读工具的状态轮询属设计内行为，
+  // 已登记在 INTERVAL_ALLOWLIST 并做等量断言（未登记必 FAIL；白名单条目失效同样 FAIL）。
+  const intervalAudit = auditIntervals(srcFiles);
   const autoRetryTrue = countMatches(srcFiles, /autoRetry\s*:\s*true/);
   const autoRetryFalse = countMatches(srcFiles, /autoRetry\s*:\s*false/);
   const httpSrc = stripComments(readText(path.join(APP_DIR, 'src', 'config', 'httpAdapter.mjs')));
@@ -318,14 +391,18 @@ function checkIdempotencyStatic() {
   const noRetryOnTimeout = /if\s*\(timedOut\)[\s\S]{0,400}?return/.test(httpSrc);
   const noRetryOnResponse = /if\s*\(response\)[\s\S]{0,500}?return/.test(httpSrc);
   const sameKey = /Idempotency-Key/.test(httpSrc);
-  record('IDEM-02', '②幂等', '无 setInterval、无定时补发、autoRetry 全为 false',
+  record('IDEM-02', '②幂等', '无未登记的 setInterval、无定时补发、autoRetry 全为 false',
     '静态源码审查',
-    setIntervalHits.total === 0 && autoRetryTrue.total === 0 && autoRetryFalse.total > 0 ? 'PASS' : 'FAIL',
+    intervalAudit.ok && autoRetryTrue.total === 0 && autoRetryFalse.total > 0 ? 'PASS' : 'FAIL',
     [
-      `setInterval 调用命中=${setIntervalHits.total}（${setIntervalHits.hits.join(', ') || '无'}）`,
+      `setInterval 调用命中=${intervalAudit.total}（${intervalAudit.hits.join(', ') || '无'}）；未登记=${intervalAudit.unexpected.length}（${intervalAudit.unexpected.join(', ') || '无'}）；白名单=${INTERVAL_ALLOWLIST.length} 条`,
+      `白名单：${INTERVAL_ALLOWLIST.map((e) => `${e.file}→${e.tool}`).join('；') || '无'}（等量断言：命中数必须等于白名单条数）`,
+      `白名单理由：${INTERVAL_ALLOWLIST.map((e) => e.why).join(' / ') || '无'}`,
+      `失效白名单条目=${intervalAudit.stale.map((e) => e.file).join(', ') || '无'}（若轮询被删，须同步更新白名单，否则本条 FAIL）`,
       `autoRetry:true 命中=${autoRetryTrue.total}；autoRetry:false 命中=${autoRetryFalse.total}`,
       `setTimeout 仅用于超时 abort / 本地原子写 / 本地 IPC 轮询，未用于定时补发`,
-    ]);
+    ],
+    'QA 修正说明（2026-11-07 第三轮）：原扫描扩展名不含 .js，而渲染层 15 个文件全是 .js → 整层对 IDEM-02 不可见（曾漏掉 renderer/main.js 里一条驱动 P-7 记忆过期的 setInterval）。已补 .js，并改为「登记制 + 等量断言」，既不放过未登记定时器，也不因噎废食砍掉设计内的只读轮询。');
 
   // ⑥ 独立判定「禁止自动重试 / 禁止在循环中重新提交」：不藏在 PASS 备注里。
   // PRD 4.4 规则 4 原文：「禁止自动重试、禁止定时器补发、禁止在循环中重新提交」。
@@ -478,20 +555,21 @@ function checkStateMachine(A, probe) {
         && typeof s.unit === 'string' && s.done <= s.total
         && Object.keys(s).every((k) => ['done', 'total', 'unit'].includes(k));
     });
-    const srcFiles = walk(path.join(APP_DIR, 'src'), ['.mjs']);
-    const intervalInState = countMatches(srcFiles, /setInterval\s*\(/);
+    // 渲染层全是 .js：漏扫 .js 会让界面层对 STATE-04 不可见（见下方修正说明）
+    const srcFiles = walk(path.join(APP_DIR, 'src'), ['.mjs', '.cjs', '.js']);
+    const intervalAudit = auditIntervals(srcFiles);
     const okProgress = subProgress.length > 0 && fakeLines.length === 0
-      && progressShapeOk && intervalInState.total === 0;
+      && progressShapeOk && intervalAudit.ok;
     record('STATE-04', '③状态机', '进度只由真实计数驱动，无按时间递增百分比 / ETA',
       '产物检查 + 静态源码审查', okProgress ? 'PASS' : 'FAIL',
       [
         `sub_progress 事件=${subProgress.length}，计数单位=${JSON.stringify(units)}`,
         `subProgress 均为 {done,total,unit} 且 done≤total = ${progressShapeOk}`,
         `日志中「百分比/ETA」字段且取真值 = ${fakeLines.length}`,
-        `setInterval 命中=${intervalInState.total}`,
+        `setInterval 命中=${intervalAudit.total}（未登记=${intervalAudit.unexpected.length}；白名单=${INTERVAL_ALLOWLIST.length} 条：${INTERVAL_ALLOWLIST.map((e) => `${e.file}→${e.tool}`).join('；') || '无'}）`,
         `行为探针 STATE-05 的 toPublic()：showPercent=false / showEta=false / waitingForUser=true`,
       ],
-      'QA 修正说明：第 1 轮用 /ETA/i 对整条 JSON 做全文匹配造成误报，已改为按字段名+取真值精确判定');
+      'QA 修正说明：第 1 轮用 /ETA/i 对整条 JSON 做全文匹配造成误报，已改为按字段名+取真值精确判定；第 3 轮补 .js 扩展名（原 [".mjs"] 使渲染层整层不可见）并改用定时器白名单等量断言。');
   }
 
   // 行为探针：非法跳跃 & 校准阻塞
@@ -1147,6 +1225,17 @@ async function writeReport(r) {
   lines.push('> 诚实声明：本报告所有 PASS 均对应本机真实执行结果（退出码 / 字节数 / sha256 / 命中数）；');
   lines.push('> 未落地项一律标 `SKIP (未落地)`，绝不写成 PASS；mock 验证流程绝不冒充真实端点联调结论。');
   lines.push('');
+
+  // 人工撰写的复核章节（界面复核、脚本整改等）放在附录文件里，由脚本原样追加。
+  // 为什么：本文件每次运行都会整篇重写，人工章节日内直接写在 REPORT.md 里会被下一次运行冲掉
+  //（2026-11-07 第三轮真实发生过一次：一份已写完的「界面复核」章节被 --fast 重跑抹掉）。
+  const appendixPath = path.join(QA_DIR, 'report-appendix.md');
+  if (exists(appendixPath)) {
+    lines.push('<!-- 以下为人工复核附录 qa/report-appendix.md 的原样拷贝，脚本不修改其内容 -->');
+    lines.push('');
+    lines.push(readText(appendixPath).trimEnd());
+    lines.push('');
+  }
   await fsp.writeFile(REPORT_MD, lines.join('\n'), 'utf8');
 }
 

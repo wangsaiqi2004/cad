@@ -169,6 +169,8 @@ export class CoreHost {
         return await p.applyCalibration({
           p1: input.p1, p2: input.p2,
           knownDistanceMm: Number(input.knownDistanceMm),
+          // 比例来源必须透传：无底图时是「用户直接给的尺寸」，不能记成「底图两点」。
+          scaleSource: input.scaleSource,
           confirmations: input.confirmations || {},
           dimensions: input.dimensions || null,
           confirmedBy: String(input.confirmedBy || '员工'),

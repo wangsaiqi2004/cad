@@ -84,3 +84,28 @@ export function confirmGate(opts) {
 export function clearRemembered() {
   remembered.clear();
 }
+
+/** 只有这四个动作需要预执行确认；其它名字一律拒绝，避免把包装函数当万能通道。 */
+export const CONFIRM_REQUIRED = Object.freeze([
+  'confirmAndBuild', 'confirmImageSubmission', 'packageAndFinish', 'redo',
+]);
+
+/**
+ * 一次性完成「弹窗 → 调工具」：页面拿不到构造 confirmed 的机会。
+ * 取消时返回 `cancelled:true`，不向本地核心发任何请求。
+ * @param {string} name 受控动作名（必须在 CONFIRM_REQUIRED 内）
+ * @param {Object} input 业务参数（不含 confirmed）
+ * @param {Object} gateOpts 弹窗文案（title / allowScope / forbidden / chargeNote …）
+ * @param {(name:string,input:Object)=>Promise<Object>} callFn 工具调用函数
+ * @returns {Promise<{ok:boolean, code:number, data:any, message:string, cancelled?:boolean}>}
+ */
+export async function confirmTool(name, input, gateOpts, callFn) {
+  if (!CONFIRM_REQUIRED.includes(name)) {
+    throw new Error(`这个动作不需要确认，不能走确认通道：${name}`);
+  }
+  const approved = await confirmGate({ ...(gateOpts || {}), tool: name });
+  if (!approved) {
+    return { ok: false, code: 1, data: null, message: '已取消，没有执行任何操作', cancelled: true };
+  }
+  return callFn(name, { ...(input || {}), confirmed: true });
+}
