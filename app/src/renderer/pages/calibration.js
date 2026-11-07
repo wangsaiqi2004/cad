@@ -47,7 +47,7 @@ export function buildCalibrationPanel(opts) {
   const scaleStatus = el('div.hint');
   const pendingHost = el('div');
   const completeBar = el('div.row', { style: 'margin-top:14px' }, [
-    el('button.btn.btn-primary', { text: '保存这次校准', disabled: true, onclick: () => void apply() }),
+    el('button.btn.btn-primary', { text: '确认并继续', disabled: true, onclick: () => void apply() }),
   ]);
   const applyBtn = completeBar.querySelector('button');
 
@@ -125,7 +125,7 @@ export function buildCalibrationPanel(opts) {
         el('div.pending-hint', { text: item.hint || '' }),
       ])));
     applyBtn.disabled = !canSubmit(pending);
-    applyBtn.textContent = state.complete ? '校准已完成' : '保存这次校准';
+    applyBtn.textContent = state.complete ? '校准已完成' : '确认并继续';
   }
 
   /** 能否提交：有底图要两点 + 距离，无底图只要有开间进深；两种情况都必须勾完 4 项。 */

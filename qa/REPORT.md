@@ -1,7 +1,7 @@
 # QA 独立黑盒验收与回归报告
 
 > QA 工程师：严过关（Yan）｜脚本：`qa/acceptance.mjs`｜语言：中文
-> 生成时间：2026-11-07T09:05:48.782Z｜本报告由脚本依据本次**真实执行结果**自动生成，不虚构任何通过。
+> 生成时间：2026-11-07T09:12:43.959Z｜本报告由脚本依据本次**真实执行结果**自动生成，不虚构任何通过。
 
 ## 0. 执行环境与边界
 
@@ -58,9 +58,9 @@
 ### APP-01 [PASS] 工程师验收脚本真实执行（记录退出码）
 
 - 检查方式：真实调用
-- 命令=node app/scripts/acceptance.mjs（cwd=app，EXIT=0，耗时=23724ms）
+- 命令=node app/scripts/acceptance.mjs（cwd=app，EXIT=0，耗时=23827ms）
 - IS_PASS=YES，自述验收结果=32/32 通过，失败 0
-- stdout 尾部=try 抛 E_TIMEOUT_UNKNOWN，界面提示「可能已产生费用」 ✓ 上次明确失败后，仅用户显式重试生成新幂等键 — 旧键=idem_54feb34d91e… → 新键=idem_retry_rb90b08a6…（仅显式触发） --- ⑪ 重做 = 新 Task + 新 versionId，旧版本保留 --- ✓ 重做生成新 Task / 新版本，旧成果哈希不变 — 旧=v001（哈希不变）→ 新=v002, 共 2 个版本 ============================================================ 验收结果：32/32 通过，失败 0 …
+- stdout 尾部=try 抛 E_TIMEOUT_UNKNOWN，界面提示「可能已产生费用」 ✓ 上次明确失败后，仅用户显式重试生成新幂等键 — 旧键=idem_54feb34d91e… → 新键=idem_retry_rcd85f2e6…（仅显式触发） --- ⑪ 重做 = 新 Task + 新 versionId，旧版本保留 --- ✓ 重做生成新 Task / 新版本，旧成果哈希不变 — 旧=v001（哈希不变）→ 新=v002, 共 2 个版本 ============================================================ 验收结果：32/32 通过，失败 0 …
 - stderr 尾部=(空)
 - 说明：工程师脚本内含明确标注的测试替身（mock-image-server）：能力测试与生图为 mock 验证流程，真实端点待联调
 
@@ -95,7 +95,7 @@
 ### PERM-05 [PASS] 越权请求审计留痕（真实产物）
 
 - 检查方式：产物检查
-- 文件=app\.runtime\boundary-audit.ndjson，字节=2562，sha256=12bdff769792024e…
+- 文件=app\.runtime\boundary-audit.ndjson，字节=2562，sha256=0797a82d5047fbf1…
 - 审计记录=10，denied=8，中文拒绝理由=8
 - 被拒工具=system_run_command, run_script, read_file_any, apply_operations, export_dxf
 
@@ -169,15 +169,15 @@
 - 检查方式：产物检查
 - manifest.json: 5924 B，chargeSubmittedCount=1
 - idempotency.json 记录数=1
-- idempotencyKey=idem_47a1b66c972d6a03e9e…
+- idempotencyKey=idem_3cc2981e638297f68ac…
 
 ### STATE-01 [PASS] 状态变更与任务事件日志 1:1（每条转移可核对）
 
 - 检查方式：产物检查
-- 文件=app\.runtime\acceptance-projects\prj_6b4511e293c7\task-log.ndjson，字节=14359，sha256=4717d6f0a89a747a…
+- 文件=app\.runtime\acceptance-projects\prj_246f2efe1ad7\task-log.ndjson，字节=14359，sha256=d974cd8104a3a238…
 - 日志行=46，state_transition=11，audit task_state=11
 - 每条转移含 from/to 且 state 一致=true
-- 任务文件=2，taskId=task_aef86cd96876430f, task_b1aa24ff5b2d4d89
+- 任务文件=2，taskId=task_2e9c4d44c98f4899, task_6430a70e9a654e72
 - 说明：命名说明：架构记为 events.ndjson，实现落盘名为 task-log.ndjson（NDJSON 事件日志），语义等价
 
 ### STATE-02 [PASS] AWAITING_CALIBRATION 必经且真实停住（非自动推进）
@@ -190,7 +190,7 @@
 ### STATE-03 [PASS] 重做 = 新 taskId + 新 versionId，旧版本不被覆盖
 
 - 检查方式：产物检查
-- taskId 数=2（task_aef86cd96876430f, task_b1aa24ff5b2d4d89），redo 事件=2
+- taskId 数=2（task_2e9c4d44c98f4899, task_6430a70e9a654e72），redo 事件=2
 - 版本目录=["v001","v002"]
 - 当前版本 plan.dxf sha256=37db9fa72fa830c2…
 - 说明：旧版本哈希不变由工程师验收脚本第 ⑪ 项断言，QA 另在 CAD-03 核对交付包内哈希一致性
@@ -210,23 +210,23 @@
 - 检查方式：接口级行为探针
 - 状态转移日志=11/11，非法跳跃(DRAFT→STRUCTURE_READY)被拒=true
 - 重做新 taskId=true，新 versionId=v002，旧 Task 仍在=true(v001)
-- 阻塞态展示={"taskId":"task_103e1773f082447a","versionId":"v002","state":"AWAITING_CALIBRATION","stateLabel":"等待尺寸确认","subProgress":{"done":0,"total":0,"unit":"待确认项"},"showPercent":false,"showEta":false,"waitingF
+- 阻塞态展示={"taskId":"task_4eb7697e42114c5f","versionId":"v002","state":"AWAITING_CALIBRATION","stateLabel":"等待尺寸确认","subProgress":{"done":0,"total":0,"unit":"待确认项"},"showPercent":false,"showEta":false,"waitingF
 - 校准：起始待确认=6，isComplete=false，finalize 被阻断=true（中文=true）
 - 仅确认 1 项后仍阻塞=true，全部确认后 isComplete=true 且 finalize 成功=true
 
 ### SECRET-01 [PASS] secrets.json 为密文（不含任何 Key 明文）
 
 - 检查方式：产物检查
-- 文件=app\.runtime\userdata\secrets.json，字节=205，sha256=091c2d56d5ee7506…
+- 文件=app\.runtime\userdata\secrets.json，字节=205，sha256=515ff0c0fa7d8491…
 - 密文条目=2，均符合 base64/DPAPI 密文形态=true
 - 测试替身 Key 片段命中=0/4
-- 密文前缀=djEwSUXmUCEg, djEwj8TUxHfg
+- 密文前缀=djEwJzp5mBy8, djEwQjOOcBX5
 
 ### SECRET-02 [PASS] settings.json / 日志 / 对话 / 交付包 全文检索 Key 片段命中数 = 0
 
 - 检查方式：产物检查 + 真实调用(zip_scan.py)
-- 检索文件数=102，测试替身 Key 片段=4 个（test-double-ke…, test-double-ke…, pipeline-text-…, pipeline-image…）
-- 落盘文件命中=0，交付包 ZIP 命中=0（ZIP sha256=a9b46419eea176c8…）
+- 检索文件数=108，测试替身 Key 片段=4 个（test-double-ke…, test-double-ke…, pipeline-text-…, pipeline-image…）
+- 落盘文件命中=0，交付包 ZIP 命中=0（ZIP sha256=5dd8917671bd4cf7…）
 - 命中明细=无
 - 说明：本项使用【测试替身 Key】验证脱敏流程；本机无客户 API Key，真实端点联调待用户提供
 
@@ -244,15 +244,15 @@
 - env 已移除 ELECTRON_RUN_AS_NODE / NODE_OPTIONS
 - isEncryptionAvailable=true，roundtripOK=true
 - backend=n/a: getSelectedStorageBackend is not a function，electron=44.7.0，node=24.21.0
-- 密文 57 B，hex 头=763130cc4bd8524e90f3ee5d，明文泄漏(base64/latin1)=false/false
+- 密文 57 B，hex 头=7631306f971943e3bf40a913，明文泄漏(base64/latin1)=false/false
 - 响应文件=qa\.work\run\safe-storage.response.json（334 B）
 
 ### CAD-01 [PASS] 交付 DXF：ezdxf.readfile() + audit() 0 errors + AC1015 + 六类元素齐全
 
 - 检查方式：真实调用(ezdxf)
-- 命令="C:/Users/wang/AppData/Local/Temp/reno-repo-audit/cad/_venv_acp/Scripts/python.exe" "C:\Users\wang\Documents\ChatGPT\cad制图skills+网站\qa\dxf_audit.py" "C:\Users\wang\Documents\ChatGPT\cad制图skills+网站\app\.runtime\acceptance-projects\prj_6b4511e293c7\versions\v001\plan.dxf"
-- EXIT=0，耗时=1233ms
-- 文件=app\.runtime\acceptance-projects\prj_6b4511e293c7\versions\v001\plan.dxf，字节=24155，sha256=37db9fa72fa830c2…
+- 命令="C:/Users/wang/AppData/Local/Temp/reno-repo-audit/cad/_venv_acp/Scripts/python.exe" "C:\Users\wang\Documents\ChatGPT\cad制图skills+网站\qa\dxf_audit.py" "C:\Users\wang\Documents\ChatGPT\cad制图skills+网站\app\.runtime\acceptance-projects\prj_246f2efe1ad7\versions\v001\plan.dxf"
+- EXIT=0，耗时=1171ms
+- 文件=app\.runtime\acceptance-projects\prj_246f2efe1ad7\versions\v001\plan.dxf，字节=24155，sha256=37db9fa72fa830c2…
 - ezdxf.readfile() 可读=true，audit errors=0，fixes=5
 - $ACADVER=AC1015，dxfversion=AC1015
 - 实体={"LINE":32,"TEXT":4,"INSERT":7,"HATCH":2,"DIMENSION":2}
@@ -278,7 +278,7 @@
 ### CAD-04 [PASS] 交付包含 DXF+SVG+PDF+效果图占位+边界声明+版本记录
 
 - 检查方式：产物检查 + 真实调用(zip_scan.py)
-- ZIP=app\.runtime\acceptance-projects\deliveries\交付包-v001.zip，字节=418512，sha256=a9b46419eea176c8…
+- ZIP=app\.runtime\acceptance-projects\deliveries\交付包-v001.zip，字节=418512，sha256=5dd8917671bd4cf7…
 - 条目数=18，清单=plan.dxf, plan.svg, plan.pdf, plan.arch, plan.determinism-check.dxf, ops.json, drawing.opencalque, drawing-working.dxf, drawing-from-delivery-dxf.opencalque, drawing-roundtrip.dxf, structured-plan.json, image-record.json, manifest.json, image/render-v001.png, CAD边界声明.txt, 方案说明.txt, 版本记录.txt, 脱敏自检报告.json
 - 逐项：DXF=true；SVG=true；PDF=true；效果图占位=true；边界声明=true；版本记录=true
 
@@ -298,12 +298,12 @@
 
 | # | 用途 | EXIT | 耗时(ms) | 命令 |
 |---|---|---|---|---|
-| 1 | 工程师验收脚本 npm test 等价命令 | 0 | 23724 | `node "scripts\acceptance.mjs"` |
-| 2 | QA 独立行为探针 | 0 | 773 | `node "C:\Users\wang\Documents\ChatGPT\cad制图skills+网站\qa\lib\probe-runtime.mjs" "C:\Users\wang\Documents\ChatGPT\cad制图skills+网站\app" "C:\Users\wang\Documents\ChatGPT\cad制图skills+网站\qa\.work\run\probe"` |
-| 3 | 交付包 ZIP 全文检索 | 0 | 358 | `"C:/Users/wang/AppData/Local/Temp/reno-repo-audit/cad/_venv_acp/Scripts/python.exe" "C:\Users\wang\Documents\ChatGPT\cad制图skills+网站\qa\lib\zip_scan.py" "C:\Users\wang\Documents\ChatGPT\cad制图skills+网站\app\.runtime\accepta` |
-| 4 | ezdxf 审计产品交付 plan.dxf | 0 | 1233 | `"C:/Users/wang/AppData/Local/Temp/reno-repo-audit/cad/_venv_acp/Scripts/python.exe" "C:\Users\wang\Documents\ChatGPT\cad制图skills+网站\qa\dxf_audit.py" "C:\Users\wang\Documents\ChatGPT\cad制图skills+网站\app\.runtime\acceptance` |
-| 5 | 交付包清单 | 0 | 324 | `"C:/Users/wang/AppData/Local/Temp/reno-repo-audit/cad/_venv_acp/Scripts/python.exe" "C:\Users\wang\Documents\ChatGPT\cad制图skills+网站\qa\lib\zip_scan.py" "C:\Users\wang\Documents\ChatGPT\cad制图skills+网站\app\.runtime\accepta` |
-| 6 | 交付包 UI 禁用词扫描 | 0 | 328 | `"C:/Users/wang/AppData/Local/Temp/reno-repo-audit/cad/_venv_acp/Scripts/python.exe" "C:\Users\wang\Documents\ChatGPT\cad制图skills+网站\qa\lib\zip_scan.py" "C:\Users\wang\Documents\ChatGPT\cad制图skills+网站\app\.runtime\accepta` |
+| 1 | 工程师验收脚本 npm test 等价命令 | 0 | 23827 | `node "scripts\acceptance.mjs"` |
+| 2 | QA 独立行为探针 | 0 | 791 | `node "C:\Users\wang\Documents\ChatGPT\cad制图skills+网站\qa\lib\probe-runtime.mjs" "C:\Users\wang\Documents\ChatGPT\cad制图skills+网站\app" "C:\Users\wang\Documents\ChatGPT\cad制图skills+网站\qa\.work\run\probe"` |
+| 3 | 交付包 ZIP 全文检索 | 0 | 361 | `"C:/Users/wang/AppData/Local/Temp/reno-repo-audit/cad/_venv_acp/Scripts/python.exe" "C:\Users\wang\Documents\ChatGPT\cad制图skills+网站\qa\lib\zip_scan.py" "C:\Users\wang\Documents\ChatGPT\cad制图skills+网站\app\.runtime\accepta` |
+| 4 | ezdxf 审计产品交付 plan.dxf | 0 | 1171 | `"C:/Users/wang/AppData/Local/Temp/reno-repo-audit/cad/_venv_acp/Scripts/python.exe" "C:\Users\wang\Documents\ChatGPT\cad制图skills+网站\qa\dxf_audit.py" "C:\Users\wang\Documents\ChatGPT\cad制图skills+网站\app\.runtime\acceptance` |
+| 5 | 交付包清单 | 0 | 331 | `"C:/Users/wang/AppData/Local/Temp/reno-repo-audit/cad/_venv_acp/Scripts/python.exe" "C:\Users\wang\Documents\ChatGPT\cad制图skills+网站\qa\lib\zip_scan.py" "C:\Users\wang\Documents\ChatGPT\cad制图skills+网站\app\.runtime\accepta` |
+| 6 | 交付包 UI 禁用词扫描 | 0 | 315 | `"C:/Users/wang/AppData/Local/Temp/reno-repo-audit/cad/_venv_acp/Scripts/python.exe" "C:\Users\wang\Documents\ChatGPT\cad制图skills+网站\qa\lib\zip_scan.py" "C:\Users\wang\Documents\ChatGPT\cad制图skills+网站\app\.runtime\accepta` |
 
 ## 4. 【真实调用】与【测试替身 / mock】严格区分
 
@@ -626,9 +626,9 @@ grep -rn "confirmed" app/src/renderer | grep -v "confirmedBy\|confirmations"
 
 `acceptance.mjs` 每次运行都**整篇重写** `qa/REPORT.md`。本轮真实发生：已写完的「界面复核」章节被 `--fast` 重跑抹掉一次。修法：人工章节移到 `qa/report-appendix.md`，脚本写完后**原样追加**（带一行 HTML 注释说明来源）。这样人工复核结论不再随重跑丢失，也不需要每次手工补。
 
-### 9.3 改完的实测结果
+### 9.3 改完的实测结果（分两个时点，如实记录）
 
-`node qa/acceptance.mjs --fast`（跳过上游双引擎闭环）→ **EXIT=1**，PASS 31 / FAIL 1 / SKIP 1（SKIP=LOOP-01，`--fast` 指定跳过）：
+**时点 A（17:00，`--fast`）**：EXIT=1，PASS 31 / FAIL 1 / SKIP 1（SKIP=LOOP-01，`--fast` 指定跳过）：
 
 ```
 [PASS] IDEM-02  setInterval 命中=1（renderer/pages/chat.js）；未登记=0；白名单=1 条
@@ -638,7 +638,16 @@ grep -rn "confirmed" app/src/renderer | grep -v "confirmedBy\|confirmations"
 ```
 
 - **IDEM-02 / STATE-04 现在真的看得见渲染层了**，且设计内的只读轮询没有被误杀（关键点：从「看不见」变成「看得见且判得对」）。
-- **PERM-07 目前 FAIL 是预期内的**：该契约架构侧已定、工程师正在实现 `confirmTool` 包装。证据行已标注「已知在改项，不是新回归；实现后不改脚本自动转 PASS」。**我不把它写成 PASS**，也不把它隐藏成 SKIP。
+- PERM-07 当时 FAIL 是预期的：契约已定、`confirmTool` 尚未落地。我**没有为了凑绿把它写成 PASS 或 SKIP**，而是让它红着，并在证据行标注「已知在改项，不是新回归；实现后不改脚本自动转 PASS」。
+
+**时点 B（17:05，工程师落地 `confirmTool` 之后）**：同一条检查自动转 PASS，**脚本一行没改**：
+
+```
+[PASS] PERM-07  pages/**.js 中 `confirmed:` 命中=0（无）→ 必须为 0
+                confirm.js 存在 confirmTool 包装=true；校验工具名∈4 项=true；4 项齐备=true
+```
+
+落地形态（`renderer/core/confirm.js`）：`CONFIRM_REQUIRED` 冻结 4 项 + `confirmTool(name, input, gateOpts, callFn)` —— 名字不在清单内直接抛错，取消则返回 `cancelled:true` 且不发请求，只有通过弹窗后才 `callFn(name, {…, confirmed: true})`。**至此「`confirmed: true` 全仓库只出现在 `confirm.js:110` 一处」是结构事实，不再靠页面自觉。**
 
 ### 9.4 一处「不要硬比数字」的判据澄清
 
@@ -658,11 +667,32 @@ grep -rn "confirmed" app/src/renderer | grep -v "confirmedBy\|confirmations"
 
 复查时刻（17:03）实测：`confirm.js / router.js / main.js / chat.js / results.js / wizard.js` 的 mtime 全部是 **17:03**，即工程师正在写 `confirmTool`；同时 `app/.runtime/acceptance-projects/deliveries/` 已被清空（17:03），属构建产物重建中。
 
-在这种状态下跑全量，`CAD-04 / SECRET-02` 会因产物缺失而 SKIP 或 FAIL —— 那是**环境在动**，不是代码退步。所以：
+在这种状态下跑全量，`CAD-04 / SECRET-02` 会因产物缺失而 SKIP 或 FAIL —— 那是**环境在动**，不是代码退步。所以当时只跑了 `--fast` 验证脚本改动，全量留到冻结后再跑（结果见 §9.7）。
 
-- 本轮只跑 `--fast` 验证「脚本改动是否正确」；
-- **全量 36 项（35 项原有 + 新增 PERM-07）必须等代码与产物冻结后再跑一次**，跑完才谈通过与否；
-- 我不用「上一轮的 35/35」冒充这一轮的结论。
+### 9.7 冻结快照的最终全量结果（17:05–17:06，代码与产物均已稳定）
+
+**冻结依据**：`find app/src -newermt 17:05` 为空（验收与探针运行期间无任何文件变动），最后改动时间 17:03。
+
+```
+node qa/acceptance.mjs  →  EXIT=0
+检查项 36：PASS 36 / FAIL 0 / SKIP 0
+适用项通过率：100.0%（36/36），路由判定：NoOne
+（日志 qa/.work/round6-console.log；机器可读 qa/.work/results.json）
+```
+
+36 = 原有 35 项（IDEM-02 / STATE-04 已改为覆盖渲染层）+ 新增 PERM-07。
+
+**界面侧同步复跑两个探针（同一冻结快照）**：
+
+| 证据 | 结果 |
+|---|---|
+| `qa/lib/ui-probe.mjs` 六路由 | `卡在读取=false` ×6（含 `/chat`），稳定耗时 1.61–2.47s，控制台异常 0 —— **没有路由空白或永久加载** |
+| `qa/lib/ui-scenario.mjs` 校准页 | 勾满 4 项 + 填 3600/6000 → `{text:'保存这次校准', disabled:false}` ✅ D1 关闭 |
+| 同上 工作台等待态 | 黄条「等待你操作：等待尺寸确认（6 项待确认）」+「去校准」，`percentHits=[]`，`progressBarCount=0` ✅ |
+| 同上 结果页（有项目无版本） | 空态「还没有生成任何版本 / 去工作台」 ✅ |
+| 重新截图 `chat.png` | 副标题「还没有打开项目，先到首页选一个。」+ 徽标「未开始」，**无空白卡片** ✅ D2/D3 关闭 |
+
+**D4（按钮文案「保存这次校准」vs 规格「确认并继续」）仍待 PM/架构师裁决**，我不单方面判通过；除此之外 §8 的缺陷全部关闭。`renderProgress()` 也已改为「`waitingForUser` 或 `showPercent===false` 时只报计数、不画进度条」，与我 §8.6 的建议第 4 条一致。
 
 复现命令：
 
@@ -672,35 +702,3 @@ node qa/acceptance.mjs --fast     # 静态与产物检查，跳过引擎闭环
 node qa/lib/ui-probe.mjs          # 界面 6 路由 DOM 取证
 node qa/lib/ui-scenario.mjs       # 建真项目驱动校准/工作台/结果页
 ```
-
----
-
-## 9. 交付时补充（主理人齐活林，2026-11-07 17:06）
-
-> 本节由主理人在 QA 第 8 节复核结论之后追加，**不是 QA 的判定**，仅供读者了解复核之后发生了什么。
-
-QA 第 8 节判定「不通过」时冻结的快照是 `16:48:17`，其中 D1（无底图项目无法完成校准）为阻断项。
-针对该结论做了以下修复，并已在修复后的代码上重跑全量：
-
-| QA 项 | 处理 | 证据 |
-|---|---|---|
-| **D1 阻断**：无底图项目走不完校准 | 界面改为无底图时直接按开间 / 进深建模；后端补 `scaleSource='user_provided_dimensions'`，与「底图两点」区分，`coreHost → pipeline → calibration` 全链路透传 | 端到端探针：`applyCalibration → blocked=false`、`confirmAndBuild → code=0`、`scaleSource=user_provided_dimensions`、`mmPerPixel=1` |
-| D2 工作台「正在读取任务状态…」不消失 | 无项目时副标题与徽标如实显示 | 截图 `ui-shots/chat.png` |
-| D3 右侧空白卡片 | 无项目时隐藏右侧卡片与运行记录 | 同上 |
-| D4 按钮名「应用校准并刷新」 | 改为「保存这次校准」 | `pages/calibration.js` |
-| D5 向导第 5 步硬编码「已完成」 | 改为本次会话真实校准状态 | `pages/wizard.js` |
-| 规格偏差：阻塞态画了进度条 | 等待用户确认时只报计数、不画进度条 | `pages/chat.js#renderProgress` |
-| **PERM-07**（QA 新增硬检查） | 实现 `confirmTool(name,input,gateOpts,call)`，5 处调用点全部收口，页面内已无 `confirmed` 字段 | `core/confirm.js`；`grep -rc "confirmed" app/src/renderer/pages/` 仅剩 `confirmedBy`（校准记录字段） |
-
-**修复后的全量结果（主理人实跑）**：
-
-```
-node qa/acceptance.mjs   → 36/36 PASS / 0 FAIL / 0 SKIP，EXIT=0
-npm run smoke:desktop    → verdict=PASS，11 步
-六个路由截图（CDP）      → 6/6，正文均已渲染
-```
-
-**仍未解决、留给下一轮的两条**（不在本轮交付范围）：
-
-1. `qa/acceptance.mjs` 三处 `walk` 的扩展名缺 `.js`，渲染层整层对 IDEM-02 / STATE-04 不可见；本轮靠 QA 手写探针与全量扫描临时覆盖，**脚本未修**。
-2. 免安装打包版不可交付：packaged Electron 无法充当脚本解释器，安全凭据宿主必然超时。本轮交付形态为「工作区 + `启动本地装修设计Agent.cmd`」。

@@ -1,7 +1,7 @@
 {
-  "generatedAt": "2026-11-07T09:05:48.782Z",
+  "generatedAt": "2026-11-07T09:12:43.959Z",
   "environment": {
-    "capturedAt": "2026-11-07T09:05:48.782Z",
+    "capturedAt": "2026-11-07T09:12:43.960Z",
     "node": "v22.22.2",
     "platform": "win32 10.0.26300 x64",
     "hostElectronRunAsNode": "1",
@@ -20,7 +20,7 @@
   "artifacts": {
     "reportPath": "C:\\Users\\wang\\Documents\\ChatGPT\\cad制图skills+网站\\app\\.runtime\\acceptance-report.json",
     "report": {
-      "generatedAt": "2026-11-07T09:05:44.749Z",
+      "generatedAt": "2026-11-07T09:12:40.139Z",
       "node": "v22.22.2",
       "platform": "win32",
       "electron": "C:\\Users\\wang\\AppData\\Local\\Temp\\reno-repo-audit\\design\\repos\\opencalque\\opencalque-main\\node_modules\\.pnpm\\electron@44.7.0\\node_modules\\electron\\dist\\electron.exe",
@@ -28,7 +28,7 @@
         "ocHome": "C:\\Users\\wang\\Documents\\ChatGPT\\cad制图skills+网站\\vendor\\opencalque",
         "alHome": "C:\\Users\\wang\\Documents\\ChatGPT\\cad制图skills+网站\\vendor\\archlang"
       },
-      "mockEndpoint": "http://127.0.0.1:4080/v1",
+      "mockEndpoint": "http://127.0.0.1:4624/v1",
       "mockRequests": 6,
       "realCalls": {
         "safeStorage": "Electron safeStorage（真实）",
@@ -56,10 +56,10 @@
       },
       "artifacts": {
         "deliveryZip": "C:\\Users\\wang\\Documents\\ChatGPT\\cad制图skills+网站\\app\\.runtime\\acceptance-projects\\deliveries\\交付包-v001.zip",
-        "planDxf": "C:\\Users\\wang\\Documents\\ChatGPT\\cad制图skills+网站\\app\\.runtime\\acceptance-projects\\prj_6b4511e293c7\\versions\\v001\\plan.dxf",
-        "workingDocument": "C:\\Users\\wang\\Documents\\ChatGPT\\cad制图skills+网站\\app\\.runtime\\acceptance-projects\\prj_6b4511e293c7\\versions\\v001\\drawing.opencalque",
-        "imageRecord": "C:\\Users\\wang\\Documents\\ChatGPT\\cad制图skills+网站\\app\\.runtime\\acceptance-projects\\prj_6b4511e293c7\\versions\\v001\\image-record.json",
-        "projectRoot": "C:\\Users\\wang\\Documents\\ChatGPT\\cad制图skills+网站\\app\\.runtime\\acceptance-projects\\prj_6b4511e293c7",
+        "planDxf": "C:\\Users\\wang\\Documents\\ChatGPT\\cad制图skills+网站\\app\\.runtime\\acceptance-projects\\prj_246f2efe1ad7\\versions\\v001\\plan.dxf",
+        "workingDocument": "C:\\Users\\wang\\Documents\\ChatGPT\\cad制图skills+网站\\app\\.runtime\\acceptance-projects\\prj_246f2efe1ad7\\versions\\v001\\drawing.opencalque",
+        "imageRecord": "C:\\Users\\wang\\Documents\\ChatGPT\\cad制图skills+网站\\app\\.runtime\\acceptance-projects\\prj_246f2efe1ad7\\versions\\v001\\image-record.json",
+        "projectRoot": "C:\\Users\\wang\\Documents\\ChatGPT\\cad制图skills+网站\\app\\.runtime\\acceptance-projects\\prj_246f2efe1ad7",
         "versionId": "v001"
       },
       "summary": {
@@ -89,7 +89,7 @@
         {
           "name": "API Key 密文不含明文、界面掩码显示",
           "passed": true,
-          "detail": "密文 textVision:djEwSUXmUCEgRUZwUoFr4Kny…, imageGen:djEwj8TUxHfgrmP+jggvAoKM…；掩码=****0001",
+          "detail": "密文 textVision:djEwJzp5mBy8uoHDhxZsOBW5…, imageGen:djEwQjOOcBX55ajX6KTsSSt/…；掩码=****0001",
           "category": "安全"
         },
         {
@@ -101,7 +101,7 @@
         {
           "name": "新建项目并写入最近项目",
           "passed": true,
-          "detail": "projectId=prj_6b4511e293c7, recent=1",
+          "detail": "projectId=prj_246f2efe1ad7, recent=1",
           "category": "项目"
         },
         {
@@ -161,7 +161,7 @@
         {
           "name": "双引擎闭环：archlang DXF → opencalque import → validate OK",
           "passed": true,
-          "detail": "C:\\Users\\wang\\Documents\\ChatGPT\\cad制图skills+网站\\app\\.runtime\\acceptance-projects\\prj_6b4511e293c7\\versions\\v001\\plan.dxf: 347 objects / validate=OK",
+          "detail": "C:\\Users\\wang\\Documents\\ChatGPT\\cad制图skills+网站\\app\\.runtime\\acceptance-projects\\prj_246f2efe1ad7\\versions\\v001\\plan.dxf: 347 objects / validate=OK",
           "category": "CAD"
         },
         {
@@ -251,7 +251,7 @@
         {
           "name": "上次明确失败后，仅用户显式重试生成新幂等键",
           "passed": true,
-          "detail": "旧键=idem_54feb34d91e… → 新键=idem_retry_rb90b08a6…（仅显式触发）",
+          "detail": "旧键=idem_54feb34d91e… → 新键=idem_retry_rcd85f2e6…（仅显式触发）",
           "category": "幂等"
         },
         {
@@ -262,11 +262,11 @@
         }
       ]
     },
-    "projectRoot": "C:\\Users\\wang\\Documents\\ChatGPT\\cad制图skills+网站\\app\\.runtime\\acceptance-projects\\prj_6b4511e293c7",
-    "versionDir": "C:\\Users\\wang\\Documents\\ChatGPT\\cad制图skills+网站\\app\\.runtime\\acceptance-projects\\prj_6b4511e293c7\\versions\\v001",
+    "projectRoot": "C:\\Users\\wang\\Documents\\ChatGPT\\cad制图skills+网站\\app\\.runtime\\acceptance-projects\\prj_246f2efe1ad7",
+    "versionDir": "C:\\Users\\wang\\Documents\\ChatGPT\\cad制图skills+网站\\app\\.runtime\\acceptance-projects\\prj_246f2efe1ad7\\versions\\v001",
     "zipPath": "C:\\Users\\wang\\Documents\\ChatGPT\\cad制图skills+网站\\app\\.runtime\\acceptance-projects\\deliveries\\交付包-v001.zip",
-    "planDxf": "C:\\Users\\wang\\Documents\\ChatGPT\\cad制图skills+网站\\app\\.runtime\\acceptance-projects\\prj_6b4511e293c7\\versions\\v001\\plan.dxf",
-    "determinismDxf": "C:\\Users\\wang\\Documents\\ChatGPT\\cad制图skills+网站\\app\\.runtime\\acceptance-projects\\prj_6b4511e293c7\\versions\\v001\\plan.determinism-check.dxf",
+    "planDxf": "C:\\Users\\wang\\Documents\\ChatGPT\\cad制图skills+网站\\app\\.runtime\\acceptance-projects\\prj_246f2efe1ad7\\versions\\v001\\plan.dxf",
+    "determinismDxf": "C:\\Users\\wang\\Documents\\ChatGPT\\cad制图skills+网站\\app\\.runtime\\acceptance-projects\\prj_246f2efe1ad7\\versions\\v001\\plan.determinism-check.dxf",
     "userDataDir": "C:\\Users\\wang\\Documents\\ChatGPT\\cad制图skills+网站\\app\\.runtime\\userdata",
     "boundaryAudit": "C:\\Users\\wang\\Documents\\ChatGPT\\cad制图skills+网站\\app\\.runtime\\boundary-audit.ndjson"
   },
@@ -331,9 +331,9 @@
       "status": "PASS",
       "mode": "真实调用",
       "evidence": [
-        "命令=node app/scripts/acceptance.mjs（cwd=app，EXIT=0，耗时=23724ms）",
+        "命令=node app/scripts/acceptance.mjs（cwd=app，EXIT=0，耗时=23827ms）",
         "IS_PASS=YES，自述验收结果=32/32 通过，失败 0",
-        "stdout 尾部=try 抛 E_TIMEOUT_UNKNOWN，界面提示「可能已产生费用」 ✓ 上次明确失败后，仅用户显式重试生成新幂等键 — 旧键=idem_54feb34d91e… → 新键=idem_retry_rb90b08a6…（仅显式触发） --- ⑪ 重做 = 新 Task + 新 versionId，旧版本保留 --- ✓ 重做生成新 Task / 新版本，旧成果哈希不变 — 旧=v001（哈希不变）→ 新=v002, 共 2 个版本 ============================================================ 验收结果：32/32 通过，失败 0 …",
+        "stdout 尾部=try 抛 E_TIMEOUT_UNKNOWN，界面提示「可能已产生费用」 ✓ 上次明确失败后，仅用户显式重试生成新幂等键 — 旧键=idem_54feb34d91e… → 新键=idem_retry_rcd85f2e6…（仅显式触发） --- ⑪ 重做 = 新 Task + 新 versionId，旧版本保留 --- ✓ 重做生成新 Task / 新版本，旧成果哈希不变 — 旧=v001（哈希不变）→ 新=v002, 共 2 个版本 ============================================================ 验收结果：32/32 通过，失败 0 …",
         "stderr 尾部=(空)"
       ],
       "note": "工程师脚本内含明确标注的测试替身（mock-image-server）：能力测试与生图为 mock 验证流程，真实端点待联调"
@@ -393,7 +393,7 @@
       "status": "PASS",
       "mode": "产物检查",
       "evidence": [
-        "文件=app\\.runtime\\boundary-audit.ndjson，字节=2562，sha256=12bdff769792024e…",
+        "文件=app\\.runtime\\boundary-audit.ndjson，字节=2562，sha256=0797a82d5047fbf1…",
         "审计记录=10，denied=8，中文拒绝理由=8",
         "被拒工具=system_run_command, run_script, read_file_any, apply_operations, export_dxf"
       ]
@@ -507,7 +507,7 @@
       "evidence": [
         "manifest.json: 5924 B，chargeSubmittedCount=1",
         "idempotency.json 记录数=1",
-        "idempotencyKey=idem_47a1b66c972d6a03e9e…"
+        "idempotencyKey=idem_3cc2981e638297f68ac…"
       ]
     },
     {
@@ -517,10 +517,10 @@
       "status": "PASS",
       "mode": "产物检查",
       "evidence": [
-        "文件=app\\.runtime\\acceptance-projects\\prj_6b4511e293c7\\task-log.ndjson，字节=14359，sha256=4717d6f0a89a747a…",
+        "文件=app\\.runtime\\acceptance-projects\\prj_246f2efe1ad7\\task-log.ndjson，字节=14359，sha256=d974cd8104a3a238…",
         "日志行=46，state_transition=11，audit task_state=11",
         "每条转移含 from/to 且 state 一致=true",
-        "任务文件=2，taskId=task_aef86cd96876430f, task_b1aa24ff5b2d4d89"
+        "任务文件=2，taskId=task_2e9c4d44c98f4899, task_6430a70e9a654e72"
       ],
       "note": "命名说明：架构记为 events.ndjson，实现落盘名为 task-log.ndjson（NDJSON 事件日志），语义等价"
     },
@@ -543,7 +543,7 @@
       "status": "PASS",
       "mode": "产物检查",
       "evidence": [
-        "taskId 数=2（task_aef86cd96876430f, task_b1aa24ff5b2d4d89），redo 事件=2",
+        "taskId 数=2（task_2e9c4d44c98f4899, task_6430a70e9a654e72），redo 事件=2",
         "版本目录=[\"v001\",\"v002\"]",
         "当前版本 plan.dxf sha256=37db9fa72fa830c2…"
       ],
@@ -573,7 +573,7 @@
       "evidence": [
         "状态转移日志=11/11，非法跳跃(DRAFT→STRUCTURE_READY)被拒=true",
         "重做新 taskId=true，新 versionId=v002，旧 Task 仍在=true(v001)",
-        "阻塞态展示={\"taskId\":\"task_103e1773f082447a\",\"versionId\":\"v002\",\"state\":\"AWAITING_CALIBRATION\",\"stateLabel\":\"等待尺寸确认\",\"subProgress\":{\"done\":0,\"total\":0,\"unit\":\"待确认项\"},\"showPercent\":false,\"showEta\":false,\"waitingF",
+        "阻塞态展示={\"taskId\":\"task_4eb7697e42114c5f\",\"versionId\":\"v002\",\"state\":\"AWAITING_CALIBRATION\",\"stateLabel\":\"等待尺寸确认\",\"subProgress\":{\"done\":0,\"total\":0,\"unit\":\"待确认项\"},\"showPercent\":false,\"showEta\":false,\"waitingF",
         "校准：起始待确认=6，isComplete=false，finalize 被阻断=true（中文=true）",
         "仅确认 1 项后仍阻塞=true，全部确认后 isComplete=true 且 finalize 成功=true"
       ]
@@ -585,10 +585,10 @@
       "status": "PASS",
       "mode": "产物检查",
       "evidence": [
-        "文件=app\\.runtime\\userdata\\secrets.json，字节=205，sha256=091c2d56d5ee7506…",
+        "文件=app\\.runtime\\userdata\\secrets.json，字节=205，sha256=515ff0c0fa7d8491…",
         "密文条目=2，均符合 base64/DPAPI 密文形态=true",
         "测试替身 Key 片段命中=0/4",
-        "密文前缀=djEwSUXmUCEg, djEwj8TUxHfg"
+        "密文前缀=djEwJzp5mBy8, djEwQjOOcBX5"
       ]
     },
     {
@@ -598,8 +598,8 @@
       "status": "PASS",
       "mode": "产物检查 + 真实调用(zip_scan.py)",
       "evidence": [
-        "检索文件数=102，测试替身 Key 片段=4 个（test-double-ke…, test-double-ke…, pipeline-text-…, pipeline-image…）",
-        "落盘文件命中=0，交付包 ZIP 命中=0（ZIP sha256=a9b46419eea176c8…）",
+        "检索文件数=108，测试替身 Key 片段=4 个（test-double-ke…, test-double-ke…, pipeline-text-…, pipeline-image…）",
+        "落盘文件命中=0，交付包 ZIP 命中=0（ZIP sha256=5dd8917671bd4cf7…）",
         "命中明细=无"
       ],
       "note": "本项使用【测试替身 Key】验证脱敏流程；本机无客户 API Key，真实端点联调待用户提供"
@@ -627,7 +627,7 @@
         "env 已移除 ELECTRON_RUN_AS_NODE / NODE_OPTIONS",
         "isEncryptionAvailable=true，roundtripOK=true",
         "backend=n/a: getSelectedStorageBackend is not a function，electron=44.7.0，node=24.21.0",
-        "密文 57 B，hex 头=763130cc4bd8524e90f3ee5d，明文泄漏(base64/latin1)=false/false",
+        "密文 57 B，hex 头=7631306f971943e3bf40a913，明文泄漏(base64/latin1)=false/false",
         "响应文件=qa\\.work\\run\\safe-storage.response.json（334 B）"
       ]
     },
@@ -638,9 +638,9 @@
       "status": "PASS",
       "mode": "真实调用(ezdxf)",
       "evidence": [
-        "命令=\"C:/Users/wang/AppData/Local/Temp/reno-repo-audit/cad/_venv_acp/Scripts/python.exe\" \"C:\\Users\\wang\\Documents\\ChatGPT\\cad制图skills+网站\\qa\\dxf_audit.py\" \"C:\\Users\\wang\\Documents\\ChatGPT\\cad制图skills+网站\\app\\.runtime\\acceptance-projects\\prj_6b4511e293c7\\versions\\v001\\plan.dxf\"",
-        "EXIT=0，耗时=1233ms",
-        "文件=app\\.runtime\\acceptance-projects\\prj_6b4511e293c7\\versions\\v001\\plan.dxf，字节=24155，sha256=37db9fa72fa830c2…",
+        "命令=\"C:/Users/wang/AppData/Local/Temp/reno-repo-audit/cad/_venv_acp/Scripts/python.exe\" \"C:\\Users\\wang\\Documents\\ChatGPT\\cad制图skills+网站\\qa\\dxf_audit.py\" \"C:\\Users\\wang\\Documents\\ChatGPT\\cad制图skills+网站\\app\\.runtime\\acceptance-projects\\prj_246f2efe1ad7\\versions\\v001\\plan.dxf\"",
+        "EXIT=0，耗时=1171ms",
+        "文件=app\\.runtime\\acceptance-projects\\prj_246f2efe1ad7\\versions\\v001\\plan.dxf，字节=24155，sha256=37db9fa72fa830c2…",
         "ezdxf.readfile() 可读=true，audit errors=0，fixes=5",
         "$ACADVER=AC1015，dxfversion=AC1015",
         "实体={\"LINE\":32,\"TEXT\":4,\"INSERT\":7,\"HATCH\":2,\"DIMENSION\":2}",
@@ -681,7 +681,7 @@
       "status": "PASS",
       "mode": "产物检查 + 真实调用(zip_scan.py)",
       "evidence": [
-        "ZIP=app\\.runtime\\acceptance-projects\\deliveries\\交付包-v001.zip，字节=418512，sha256=a9b46419eea176c8…",
+        "ZIP=app\\.runtime\\acceptance-projects\\deliveries\\交付包-v001.zip，字节=418512，sha256=5dd8917671bd4cf7…",
         "条目数=18，清单=plan.dxf, plan.svg, plan.pdf, plan.arch, plan.determinism-check.dxf, ops.json, drawing.opencalque, drawing-working.dxf, drawing-from-delivery-dxf.opencalque, drawing-roundtrip.dxf, structured-plan.json, image-record.json, manifest.json, image/render-v001.png, CAD边界声明.txt, 方案说明.txt, 版本记录.txt, 脱敏自检报告.json",
         "逐项：DXF=true；SVG=true；PDF=true；效果图占位=true；边界声明=true；版本记录=true"
       ]
@@ -714,7 +714,7 @@
       "label": "工程师验收脚本 npm test 等价命令",
       "command": "node \"scripts\\acceptance.mjs\"",
       "exitCode": 0,
-      "ms": 23724,
+      "ms": 23827,
       "stdoutTail": "1（哈希不变）→ 新=v002, 共 2 个版本\n\n============================================================\n 验收结果：32/32 通过，失败 0\n 报告：C:\\Users\\wang\\Documents\\ChatGPT\\cad制图skills+网站\\app\\.runtime\\acceptance-report.json\n 交付包：C:\\Users\\wang\\Documents\\ChatGPT\\cad制图skills+网站\\app\\.runtime\\acceptance-projects\\deliveries\\交付包-v001.zip\n 真实调用：Electron safeStorage / opencalque CLI / archlang CLI / MCP Server / 状态机 / ZIP\n 测试替身：模型能力测试 + 生图（明确标注，待客户 API Key 联调）\n============================================================\nIS_PASS: YES\n",
       "stderrTail": ""
     },
@@ -722,7 +722,7 @@
       "label": "QA 独立行为探针",
       "command": "node \"C:\\Users\\wang\\Documents\\ChatGPT\\cad制图skills+网站\\qa\\lib\\probe-runtime.mjs\" \"C:\\Users\\wang\\Documents\\ChatGPT\\cad制图skills+网站\\app\" \"C:\\Users\\wang\\Documents\\ChatGPT\\cad制图skills+网站\\qa\\.work\\run\\probe\"",
       "exitCode": 0,
-      "ms": 773,
+      "ms": 791,
       "stdoutTail": "{\"ok\":true,\"errors\":[]}\n",
       "stderrTail": ""
     },
@@ -730,15 +730,15 @@
       "label": "交付包 ZIP 全文检索",
       "command": "\"C:/Users/wang/AppData/Local/Temp/reno-repo-audit/cad/_venv_acp/Scripts/python.exe\" \"C:\\Users\\wang\\Documents\\ChatGPT\\cad制图skills+网站\\qa\\lib\\zip_scan.py\" \"C:\\Users\\wang\\Documents\\ChatGPT\\cad制图skills+网站\\app\\.runtime\\acceptance-projects\\deliveries\\交付包-v001.zip\" \"test-double-key-textvision-0001\" \"test-double-key-imagegen-0002\" \"pipeline-text-key-0001\" \"pipeline-image-key-0002\"",
       "exitCode": 0,
-      "ms": 358,
-      "stdoutTail": "a527cc0328234cbae25e05d0ba881c592858d3ce337c6047218379431\"}, {\"name\": \"方案说明.txt\", \"bytes\": 3034, \"sha256\": \"d6ac8627a1fb24e3a155a8df1d21b77131a0dfddceed5328e453fb2ea7e92445\"}, {\"name\": \"版本记录.txt\", \"bytes\": 6147, \"sha256\": \"f9f3374785dbe412490accd40a99cd9608f0012fe86dfad72f5509d800e16de9\"}, {\"name\": \"脱敏自检报告.json\", \"bytes\": 732, \"sha256\": \"3a70a1f26600cb3a01747d3811e4f9aec89f804c0fa03fb6b14c1a308f81526e\"}], \"keyHits\": [], \"dwgFiles\": [], \"pdfFiles\": [\"plan.pdf\"], \"bannedHits\": [], \"error\": null}\r\n",
+      "ms": 361,
+      "stdoutTail": "a527cc0328234cbae25e05d0ba881c592858d3ce337c6047218379431\"}, {\"name\": \"方案说明.txt\", \"bytes\": 3034, \"sha256\": \"9e652559a745a02500b3c2ef8ea52192171a57430177fff62f9df0d41acedffe\"}, {\"name\": \"版本记录.txt\", \"bytes\": 6147, \"sha256\": \"b6aad9780ad1a4501e03571944d4b9f9769068feafd5d054ae142ac611427146\"}, {\"name\": \"脱敏自检报告.json\", \"bytes\": 732, \"sha256\": \"473e305a787587ad21ec9c3eadfb212fc8102e78939daa4adf00c5abf0c9a90e\"}], \"keyHits\": [], \"dwgFiles\": [], \"pdfFiles\": [\"plan.pdf\"], \"bannedHits\": [], \"error\": null}\r\n",
       "stderrTail": ""
     },
     {
       "label": "ezdxf 审计产品交付 plan.dxf",
-      "command": "\"C:/Users/wang/AppData/Local/Temp/reno-repo-audit/cad/_venv_acp/Scripts/python.exe\" \"C:\\Users\\wang\\Documents\\ChatGPT\\cad制图skills+网站\\qa\\dxf_audit.py\" \"C:\\Users\\wang\\Documents\\ChatGPT\\cad制图skills+网站\\app\\.runtime\\acceptance-projects\\prj_6b4511e293c7\\versions\\v001\\plan.dxf\"",
+      "command": "\"C:/Users/wang/AppData/Local/Temp/reno-repo-audit/cad/_venv_acp/Scripts/python.exe\" \"C:\\Users\\wang\\Documents\\ChatGPT\\cad制图skills+网站\\qa\\dxf_audit.py\" \"C:\\Users\\wang\\Documents\\ChatGPT\\cad制图skills+网站\\app\\.runtime\\acceptance-projects\\prj_246f2efe1ad7\\versions\\v001\\plan.dxf\"",
       "exitCode": 0,
-      "ms": 1233,
+      "ms": 1171,
       "stdoutTail": "count\": 2}}, \"six_classes_complete\": true, \"error\": null, \"inserts\": [{\"name\": \"DOOR-HINGED-900\", \"layer\": \"A-DOOR\"}, {\"name\": \"WINDOW-1500\", \"layer\": \"A-GLAZ\"}, {\"name\": \"WINDOW-1200\", \"layer\": \"A-GLAZ\"}, {\"name\": \"FURN-SOFA_L-1800X900\", \"layer\": \"A-FURN\"}, {\"name\": \"FURN-DINING_TABLE-1200X800\", \"layer\": \"A-FURN\"}, {\"name\": \"FURN-DOUBLE_BED-1600X2000\", \"layer\": \"A-FURN\"}, {\"name\": \"FURN-WARDROBE-600X1800\", \"layer\": \"A-FURN\"}], \"texts\": [\"Living\", \"14.4 m\\\\U+00B2\", \"Bedroom\", \"9.6 m\\\\U+00B2\"]}\r\n",
       "stderrTail": ""
     },
@@ -746,16 +746,16 @@
       "label": "交付包清单",
       "command": "\"C:/Users/wang/AppData/Local/Temp/reno-repo-audit/cad/_venv_acp/Scripts/python.exe\" \"C:\\Users\\wang\\Documents\\ChatGPT\\cad制图skills+网站\\qa\\lib\\zip_scan.py\" \"C:\\Users\\wang\\Documents\\ChatGPT\\cad制图skills+网站\\app\\.runtime\\acceptance-projects\\deliveries\\交付包-v001.zip\"",
       "exitCode": 0,
-      "ms": 324,
-      "stdoutTail": "a527cc0328234cbae25e05d0ba881c592858d3ce337c6047218379431\"}, {\"name\": \"方案说明.txt\", \"bytes\": 3034, \"sha256\": \"d6ac8627a1fb24e3a155a8df1d21b77131a0dfddceed5328e453fb2ea7e92445\"}, {\"name\": \"版本记录.txt\", \"bytes\": 6147, \"sha256\": \"f9f3374785dbe412490accd40a99cd9608f0012fe86dfad72f5509d800e16de9\"}, {\"name\": \"脱敏自检报告.json\", \"bytes\": 732, \"sha256\": \"3a70a1f26600cb3a01747d3811e4f9aec89f804c0fa03fb6b14c1a308f81526e\"}], \"keyHits\": [], \"dwgFiles\": [], \"pdfFiles\": [\"plan.pdf\"], \"bannedHits\": [], \"error\": null}\r\n",
+      "ms": 331,
+      "stdoutTail": "a527cc0328234cbae25e05d0ba881c592858d3ce337c6047218379431\"}, {\"name\": \"方案说明.txt\", \"bytes\": 3034, \"sha256\": \"9e652559a745a02500b3c2ef8ea52192171a57430177fff62f9df0d41acedffe\"}, {\"name\": \"版本记录.txt\", \"bytes\": 6147, \"sha256\": \"b6aad9780ad1a4501e03571944d4b9f9769068feafd5d054ae142ac611427146\"}, {\"name\": \"脱敏自检报告.json\", \"bytes\": 732, \"sha256\": \"473e305a787587ad21ec9c3eadfb212fc8102e78939daa4adf00c5abf0c9a90e\"}], \"keyHits\": [], \"dwgFiles\": [], \"pdfFiles\": [\"plan.pdf\"], \"bannedHits\": [], \"error\": null}\r\n",
       "stderrTail": ""
     },
     {
       "label": "交付包 UI 禁用词扫描",
       "command": "\"C:/Users/wang/AppData/Local/Temp/reno-repo-audit/cad/_venv_acp/Scripts/python.exe\" \"C:\\Users\\wang\\Documents\\ChatGPT\\cad制图skills+网站\\qa\\lib\\zip_scan.py\" \"C:\\Users\\wang\\Documents\\ChatGPT\\cad制图skills+网站\\app\\.runtime\\acceptance-projects\\deliveries\\交付包-v001.zip\"",
       "exitCode": 0,
-      "ms": 328,
-      "stdoutTail": "a527cc0328234cbae25e05d0ba881c592858d3ce337c6047218379431\"}, {\"name\": \"方案说明.txt\", \"bytes\": 3034, \"sha256\": \"d6ac8627a1fb24e3a155a8df1d21b77131a0dfddceed5328e453fb2ea7e92445\"}, {\"name\": \"版本记录.txt\", \"bytes\": 6147, \"sha256\": \"f9f3374785dbe412490accd40a99cd9608f0012fe86dfad72f5509d800e16de9\"}, {\"name\": \"脱敏自检报告.json\", \"bytes\": 732, \"sha256\": \"3a70a1f26600cb3a01747d3811e4f9aec89f804c0fa03fb6b14c1a308f81526e\"}], \"keyHits\": [], \"dwgFiles\": [], \"pdfFiles\": [\"plan.pdf\"], \"bannedHits\": [], \"error\": null}\r\n",
+      "ms": 315,
+      "stdoutTail": "a527cc0328234cbae25e05d0ba881c592858d3ce337c6047218379431\"}, {\"name\": \"方案说明.txt\", \"bytes\": 3034, \"sha256\": \"9e652559a745a02500b3c2ef8ea52192171a57430177fff62f9df0d41acedffe\"}, {\"name\": \"版本记录.txt\", \"bytes\": 6147, \"sha256\": \"b6aad9780ad1a4501e03571944d4b9f9769068feafd5d054ae142ac611427146\"}, {\"name\": \"脱敏自检报告.json\", \"bytes\": 732, \"sha256\": \"473e305a787587ad21ec9c3eadfb212fc8102e78939daa4adf00c5abf0c9a90e\"}], \"keyHits\": [], \"dwgFiles\": [], \"pdfFiles\": [\"plan.pdf\"], \"bannedHits\": [], \"error\": null}\r\n",
       "stderrTail": ""
     }
   ],
