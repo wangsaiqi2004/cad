@@ -1,0 +1,27 @@
+# class: circulation-privacy
+# twin-of: two-bed-chain
+# origin: audits/showcase-and-examples.md X1 with the bath-to-bedroom door moved to hall-to-living
+# expect: none
+# fact: the hall opens onto the kitchen/living; bath, master and bedroom 2 each hang off a shared room, so
+#   removing any bedroom or bath strands nothing
+plan "Two-bed off a hall" {
+  units mm
+  grid 50
+  wall id=shell exterior thickness 200 { (0,0) (9000,0) (9000,6000) (0,6000) close }
+  wall id=w_band partition thickness 100 { (0,3500) (9000,3500) }
+  wall id=w_x1 partition thickness 100 { (3000,0) (3000,6000) }
+  wall id=w_x2 partition thickness 100 { (6000,3500) (6000,6000) }
+  room id=r_master at (0,0) size 3000x3500 label "Master Bedroom" uses bedroom
+  room id=r_living at (3000,0) size 6000x3500 label "Kitchen / Living" uses kitchen living
+  room id=r_bath at (0,3500) size 3000x2500 label "Bathroom" uses bath
+  room id=r_hall at (3000,3500) size 3000x2500 label "Hall" uses hall
+  room id=r_bed2 at (6000,3500) size 3000x2500 label "Bedroom 2" uses bedroom
+  door id=d_front at (4500,6000) width 1000 wall shell
+  door id=d_hall_bath at (3000,4750) width 800 wall w_x1
+  door id=d_hall_living at (4500,3500) width 900 wall w_band
+  door id=d_master_living at (3000,1750) width 900 wall w_x1
+  door id=d_living_bed2 at (7500,3500) width 900 wall w_band
+  window at (1500,0) width 1200 wall shell
+  window at (6000,0) width 2000 wall shell
+  window at (7500,6000) width 1200 wall shell
+}

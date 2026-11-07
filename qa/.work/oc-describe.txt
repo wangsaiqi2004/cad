@@ -1,0 +1,762 @@
+{
+  "name": "roundtrip",
+  "unit": "mm",
+  "layers": [
+    {
+      "id": "layer_1",
+      "name": "Layer 1"
+    },
+    {
+      "id": "layer_b1foxyywd1",
+      "name": "A-FLOR",
+      "color": "#808080"
+    },
+    {
+      "id": "layer_diau5rmfcy",
+      "name": "A-ANNO-TEXT",
+      "color": "#ff00ff"
+    },
+    {
+      "id": "layer_sg1ckrwway",
+      "name": "A-DOOR",
+      "color": "#00ffff"
+    },
+    {
+      "id": "layer_8es4hjwnas",
+      "name": "A-GLAZ",
+      "color": "#0000ff"
+    },
+    {
+      "id": "layer_y72h2mjxe2",
+      "name": "A-WALL-EXTR"
+    },
+    {
+      "id": "layer_30vzew2fbf",
+      "name": "A-ANNO-DIMS",
+      "color": "#ffff00"
+    }
+  ],
+  "pages": [
+    {
+      "id": "page_1",
+      "name": "al1",
+      "objects": {
+        "line": 20,
+        "text": 2,
+        "group": 2,
+        "polyline": 2,
+        "dimension": 2
+      }
+    }
+  ],
+  "components": [],
+  "parametricKinds": [
+    {
+      "kind": "arch.door",
+      "label": "Door",
+      "params": [
+        {
+          "key": "width",
+          "label": "Width",
+          "type": "number",
+          "default": 900,
+          "unit": "length"
+        },
+        {
+          "key": "height",
+          "label": "Height",
+          "type": "number",
+          "default": 2040,
+          "unit": "length"
+        },
+        {
+          "key": "type",
+          "label": "Type",
+          "type": "string",
+          "default": "Single",
+          "options": [
+            "Single",
+            "Double",
+            "Sliding",
+            "Opening only"
+          ]
+        },
+        {
+          "key": "hinge",
+          "label": "Hinge",
+          "type": "string",
+          "default": "Left",
+          "options": [
+            "Left",
+            "Right"
+          ]
+        },
+        {
+          "key": "angle",
+          "label": "Open angle",
+          "type": "number",
+          "default": 90
+        },
+        {
+          "key": "flip",
+          "label": "Other side",
+          "type": "boolean",
+          "default": false
+        }
+      ]
+    },
+    {
+      "kind": "arch.window",
+      "label": "Window",
+      "params": [
+        {
+          "key": "width",
+          "label": "Width",
+          "type": "number",
+          "default": 1200,
+          "unit": "length"
+        },
+        {
+          "key": "panes",
+          "label": "Panes",
+          "type": "number",
+          "default": 2
+        },
+        {
+          "key": "glazing",
+          "label": "Glazing",
+          "type": "string",
+          "default": "Double",
+          "options": [
+            "Single",
+            "Double",
+            "Triple"
+          ]
+        },
+        {
+          "key": "height",
+          "label": "Height",
+          "type": "number",
+          "default": 1250,
+          "unit": "length"
+        },
+        {
+          "key": "sill",
+          "label": "Sill depth",
+          "type": "number",
+          "default": 50,
+          "unit": "length"
+        },
+        {
+          "key": "flip",
+          "label": "Other side",
+          "type": "boolean",
+          "default": false
+        }
+      ]
+    },
+    {
+      "kind": "arch.stair",
+      "label": "Stair, straight",
+      "params": [
+        {
+          "key": "width",
+          "label": "Width",
+          "type": "number",
+          "default": 900,
+          "unit": "length"
+        },
+        {
+          "key": "steps",
+          "label": "Steps",
+          "type": "number",
+          "default": 12
+        },
+        {
+          "key": "tread",
+          "label": "Tread depth",
+          "type": "number",
+          "default": 270,
+          "unit": "length"
+        }
+      ]
+    },
+    {
+      "kind": "arch.stair.l",
+      "label": "Stair, L-shaped",
+      "params": [
+        {
+          "key": "width",
+          "label": "Width",
+          "type": "number",
+          "default": 900,
+          "unit": "length"
+        },
+        {
+          "key": "steps",
+          "label": "Steps",
+          "type": "number",
+          "default": 14
+        },
+        {
+          "key": "before",
+          "label": "Steps before turn",
+          "type": "number",
+          "default": 7
+        },
+        {
+          "key": "tread",
+          "label": "Tread depth",
+          "type": "number",
+          "default": 270,
+          "unit": "length"
+        },
+        {
+          "key": "turn",
+          "label": "Turn",
+          "type": "string",
+          "default": "Right",
+          "options": [
+            "Right",
+            "Left"
+          ]
+        }
+      ]
+    },
+    {
+      "kind": "arch.stair.u",
+      "label": "Stair, U-shaped",
+      "params": [
+        {
+          "key": "width",
+          "label": "Width",
+          "type": "number",
+          "default": 900,
+          "unit": "length"
+        },
+        {
+          "key": "steps",
+          "label": "Steps",
+          "type": "number",
+          "default": 16
+        },
+        {
+          "key": "tread",
+          "label": "Tread depth",
+          "type": "number",
+          "default": 270,
+          "unit": "length"
+        },
+        {
+          "key": "gap",
+          "label": "Gap between flights",
+          "type": "number",
+          "default": 100,
+          "unit": "length"
+        },
+        {
+          "key": "turn",
+          "label": "Turn",
+          "type": "string",
+          "default": "Right",
+          "options": [
+            "Right",
+            "Left"
+          ]
+        }
+      ]
+    },
+    {
+      "kind": "arch.stair.spiral",
+      "label": "Stair, spiral",
+      "params": [
+        {
+          "key": "radius",
+          "label": "Radius",
+          "type": "number",
+          "default": 1000,
+          "unit": "length"
+        },
+        {
+          "key": "inner",
+          "label": "Column radius",
+          "type": "number",
+          "default": 150,
+          "unit": "length"
+        },
+        {
+          "key": "steps",
+          "label": "Steps",
+          "type": "number",
+          "default": 14
+        },
+        {
+          "key": "sweep",
+          "label": "Sweep angle",
+          "type": "number",
+          "default": 300
+        },
+        {
+          "key": "clockwise",
+          "label": "Clockwise",
+          "type": "boolean",
+          "default": true
+        }
+      ]
+    },
+    {
+      "kind": "arch.washbasin",
+      "label": "Washbasin",
+      "params": [
+        {
+          "key": "width",
+          "label": "Width",
+          "type": "number",
+          "default": 600,
+          "unit": "length"
+        },
+        {
+          "key": "depth",
+          "label": "Depth",
+          "type": "number",
+          "default": 450,
+          "unit": "length"
+        },
+        {
+          "key": "bowls",
+          "label": "Bowls",
+          "type": "number",
+          "default": 1
+        }
+      ]
+    },
+    {
+      "kind": "arch.washbasin.double",
+      "label": "Double washbasin",
+      "params": [
+        {
+          "key": "width",
+          "label": "Width",
+          "type": "number",
+          "default": 1200,
+          "unit": "length"
+        },
+        {
+          "key": "depth",
+          "label": "Depth",
+          "type": "number",
+          "default": 500,
+          "unit": "length"
+        },
+        {
+          "key": "bowls",
+          "label": "Bowls",
+          "type": "number",
+          "default": 2
+        }
+      ]
+    },
+    {
+      "kind": "arch.bathtub",
+      "label": "Bathtub",
+      "params": [
+        {
+          "key": "length",
+          "label": "Length",
+          "type": "number",
+          "default": 1700,
+          "unit": "length"
+        },
+        {
+          "key": "width",
+          "label": "Width",
+          "type": "number",
+          "default": 750,
+          "unit": "length"
+        },
+        {
+          "key": "rim",
+          "label": "Rim",
+          "type": "number",
+          "default": 60,
+          "unit": "length"
+        }
+      ]
+    },
+    {
+      "kind": "arch.hob",
+      "label": "Hob",
+      "params": [
+        {
+          "key": "width",
+          "label": "Width",
+          "type": "number",
+          "default": 600,
+          "unit": "length"
+        },
+        {
+          "key": "depth",
+          "label": "Depth",
+          "type": "number",
+          "default": 600,
+          "unit": "length"
+        }
+      ]
+    },
+    {
+      "kind": "arch.sink",
+      "label": "Sink",
+      "params": [
+        {
+          "key": "width",
+          "label": "Width",
+          "type": "number",
+          "default": 800,
+          "unit": "length"
+        },
+        {
+          "key": "depth",
+          "label": "Depth",
+          "type": "number",
+          "default": 600,
+          "unit": "length"
+        },
+        {
+          "key": "bowls",
+          "label": "Basins",
+          "type": "number",
+          "default": 1
+        },
+        {
+          "key": "drainer",
+          "label": "Draining board",
+          "type": "string",
+          "default": "None",
+          "options": [
+            "None",
+            "Left",
+            "Right"
+          ]
+        }
+      ]
+    },
+    {
+      "kind": "arch.fridge",
+      "label": "Fridge",
+      "params": [
+        {
+          "key": "width",
+          "label": "Width",
+          "type": "number",
+          "default": 600,
+          "unit": "length"
+        },
+        {
+          "key": "depth",
+          "label": "Depth",
+          "type": "number",
+          "default": 650,
+          "unit": "length"
+        },
+        {
+          "key": "doors",
+          "label": "Doors",
+          "type": "number",
+          "default": 1
+        }
+      ]
+    },
+    {
+      "kind": "arch.fridge.american",
+      "label": "American fridge",
+      "params": [
+        {
+          "key": "width",
+          "label": "Width",
+          "type": "number",
+          "default": 910,
+          "unit": "length"
+        },
+        {
+          "key": "depth",
+          "label": "Depth",
+          "type": "number",
+          "default": 730,
+          "unit": "length"
+        },
+        {
+          "key": "doors",
+          "label": "Doors",
+          "type": "number",
+          "default": 2
+        }
+      ]
+    },
+    {
+      "kind": "arch.sofa.corner",
+      "label": "Corner sofa",
+      "params": [
+        {
+          "key": "length",
+          "label": "Length",
+          "type": "number",
+          "default": 2600,
+          "unit": "length"
+        },
+        {
+          "key": "returnLength",
+          "label": "Return length",
+          "type": "number",
+          "default": 1800,
+          "unit": "length"
+        },
+        {
+          "key": "depth",
+          "label": "Depth",
+          "type": "number",
+          "default": 900,
+          "unit": "length"
+        },
+        {
+          "key": "corner",
+          "label": "Corner",
+          "type": "string",
+          "default": "Left",
+          "options": [
+            "Left",
+            "Right"
+          ]
+        }
+      ]
+    },
+    {
+      "kind": "arch.radiator",
+      "label": "Radiator",
+      "params": [
+        {
+          "key": "width",
+          "label": "Length",
+          "type": "number",
+          "default": 800,
+          "unit": "length"
+        },
+        {
+          "key": "depth",
+          "label": "Depth",
+          "type": "number",
+          "default": 100,
+          "unit": "length"
+        },
+        {
+          "key": "valve",
+          "label": "Valve",
+          "type": "string",
+          "default": "Right",
+          "options": [
+            "Right",
+            "Left"
+          ]
+        }
+      ]
+    },
+    {
+      "kind": "arch.compass",
+      "label": "Compass (north)",
+      "params": [
+        {
+          "key": "size",
+          "label": "Size",
+          "type": "number",
+          "default": 1200,
+          "unit": "length"
+        },
+        {
+          "key": "letter",
+          "label": "Letter",
+          "type": "string",
+          "default": "N"
+        }
+      ]
+    },
+    {
+      "kind": "note.north",
+      "label": "North arrow",
+      "params": [
+        {
+          "key": "size",
+          "label": "Size",
+          "type": "number",
+          "default": 800,
+          "unit": "length"
+        }
+      ]
+    },
+    {
+      "kind": "note.scalebar",
+      "label": "Scale bar",
+      "params": [
+        {
+          "key": "length",
+          "label": "Length",
+          "type": "number",
+          "default": 5000,
+          "unit": "length"
+        },
+        {
+          "key": "divisions",
+          "label": "Divisions",
+          "type": "number",
+          "default": 5
+        },
+        {
+          "key": "textSize",
+          "label": "Text size",
+          "type": "number",
+          "default": 150,
+          "unit": "length"
+        }
+      ]
+    },
+    {
+      "kind": "note.level",
+      "label": "Level marker",
+      "params": [
+        {
+          "key": "level",
+          "label": "Level",
+          "type": "string",
+          "default": "+0.00"
+        },
+        {
+          "key": "size",
+          "label": "Size",
+          "type": "number",
+          "default": 200,
+          "unit": "length"
+        }
+      ]
+    },
+    {
+      "kind": "elec.socket",
+      "label": "Socket",
+      "params": [
+        {
+          "key": "count",
+          "label": "Count",
+          "type": "number",
+          "default": 1
+        }
+      ]
+    },
+    {
+      "kind": "elec.switch",
+      "label": "Switch",
+      "params": [
+        {
+          "key": "twoWay",
+          "label": "Two-way",
+          "type": "boolean",
+          "default": false
+        }
+      ]
+    },
+    {
+      "kind": "elec.light",
+      "label": "Ceiling light",
+      "params": [
+        {
+          "key": "size",
+          "label": "Size",
+          "type": "number",
+          "default": 240,
+          "unit": "length"
+        }
+      ]
+    },
+    {
+      "kind": "elec.walllight",
+      "label": "Wall light",
+      "params": [
+        {
+          "key": "size",
+          "label": "Size",
+          "type": "number",
+          "default": 240,
+          "unit": "length"
+        }
+      ]
+    },
+    {
+      "kind": "furn.table",
+      "label": "Table with chairs",
+      "params": [
+        {
+          "key": "length",
+          "label": "Length",
+          "type": "number",
+          "default": 1800,
+          "unit": "length"
+        },
+        {
+          "key": "width",
+          "label": "Width",
+          "type": "number",
+          "default": 900,
+          "unit": "length"
+        },
+        {
+          "key": "seats",
+          "label": "Seats",
+          "type": "number",
+          "default": 6
+        }
+      ]
+    },
+    {
+      "kind": "furn.bed",
+      "label": "Bed",
+      "params": [
+        {
+          "key": "width",
+          "label": "Width",
+          "type": "number",
+          "default": 1600,
+          "unit": "length"
+        },
+        {
+          "key": "length",
+          "label": "Length",
+          "type": "number",
+          "default": 2000,
+          "unit": "length"
+        }
+      ]
+    },
+    {
+      "kind": "furn.shelf",
+      "label": "Shelving unit",
+      "params": [
+        {
+          "key": "length",
+          "label": "Length",
+          "type": "number",
+          "default": 2000,
+          "unit": "length"
+        },
+        {
+          "key": "depth",
+          "label": "Depth",
+          "type": "number",
+          "default": 400,
+          "unit": "length"
+        },
+        {
+          "key": "bays",
+          "label": "Bays",
+          "type": "number",
+          "default": 4
+        }
+      ]
+    }
+  ]
+}

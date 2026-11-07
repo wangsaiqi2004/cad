@@ -1,0 +1,169 @@
+{
+  "ok": true,
+  "format": "dxf",
+  "output": "C:\\Users\\wang\\Documents\\ChatGPT\\cad制图skills+网站\\qa\\.work\\al2.dxf",
+  "bytes": 6282,
+  "diagnostics": [],
+  "summary": {
+    "plan": "One Room",
+    "caption": "\"One Room\" — a 1-room floor plan, 20 m² total: Room (20 m²); 1 door, 1 window, entrance via d_in.",
+    "units": "mm",
+    "bbox": {
+      "w": 5000,
+      "h": 4000
+    },
+    "bbox_outer": {
+      "w": 5200,
+      "h": 4200
+    },
+    "rooms": [
+      {
+        "id": "r_main",
+        "label": "Room",
+        "uses": [
+          "living"
+        ],
+        "room_type": "LivingRoom",
+        "area_m2": 20,
+        "net_area_m2": 18.24,
+        "bbox": {
+          "x": 0,
+          "y": 0,
+          "w": 5000,
+          "h": 4000
+        },
+        "floor_polygon": [
+          {
+            "x": 0,
+            "y": 0
+          },
+          {
+            "x": 5000,
+            "y": 0
+          },
+          {
+            "x": 5000,
+            "y": 4000
+          },
+          {
+            "x": 0,
+            "y": 4000
+          }
+        ],
+        "adjacent": []
+      }
+    ],
+    "doors": [
+      {
+        "id": "d_in",
+        "between": [
+          "exterior",
+          "r_main"
+        ],
+        "width": 900
+      }
+    ],
+    "windows": [
+      {
+        "id": "w_n",
+        "room": "r_main",
+        "width": 1500,
+        "facing": "N"
+      }
+    ],
+    "openings": [],
+    "furniture": [],
+    "access": {
+      "entrances": [
+        "d_in"
+      ],
+      "hasEntrance": true,
+      "edges": [
+        {
+          "doorId": "d_in",
+          "kind": "door",
+          "between": [
+            "exterior",
+            "r_main"
+          ],
+          "nominalWidth": 900,
+          "estimatedClearWidth": 840,
+          "hostCategory": "exterior",
+          "hostWallId": "shell",
+          "exterior": true,
+          "ambiguous": false
+        }
+      ],
+      "rooms": [
+        {
+          "id": "r_main",
+          "depthFromEntrance": 1,
+          "reachable": true,
+          "bottleneckClearWidth": 840
+        }
+      ]
+    },
+    "circulation": {
+      "entranceId": "d_in",
+      "cellSizeMm": 100,
+      "bodyRadiusMm": 300,
+      "rooms": [
+        {
+          "roomId": "r_main",
+          "walkDistanceMm": 2400,
+          "bottleneckClearWidthMm": 840,
+          "detourRatio": 1.26
+        }
+      ],
+      "routes": []
+    },
+    "totals": {
+      "rooms": 1,
+      "doors": 1,
+      "windows": 1,
+      "floor_area_m2": 20,
+      "gross_internal_area_m2": 18.24,
+      "gross_internal_area_all_levels_m2": 18.24,
+      "net_floor_area_m2": 18.24
+    },
+    "input_graph": {
+      "r_main": []
+    },
+    "freedom": {
+      "rooms": {
+        "total": 1,
+        "absolute": 1,
+        "relational": 0,
+        "strip": 0
+      },
+      "openings": {
+        "total": 2,
+        "attached": 2,
+        "absolute": 0
+      },
+      "furniture": {
+        "total": 0,
+        "anchored": 0,
+        "againstWall": 0,
+        "absolute": 0
+      },
+      "elements": [
+        {
+          "id": "r_main",
+          "kind": "room",
+          "placement": "absolute"
+        },
+        {
+          "id": "d_in",
+          "kind": "door",
+          "placement": "attached"
+        },
+        {
+          "id": "w_n",
+          "kind": "window",
+          "placement": "attached"
+        }
+      ]
+    }
+  }
+}

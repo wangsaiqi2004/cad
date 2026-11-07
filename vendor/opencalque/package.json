@@ -1,0 +1,34 @@
+{
+  "name": "opencalque",
+  "version": "1.6.0",
+  "private": true,
+  "license": "MIT",
+  "packageManager": "pnpm@9.14.2",
+  "scripts": {
+    "dev": "pnpm --filter @opencalque/desktop dev",
+    "dev:web": "pnpm --filter @opencalque/web dev",
+    "build:web": "pnpm --filter @opencalque/web build",
+    "build": "pnpm --filter @opencalque/desktop build",
+    "start": "pnpm --filter @opencalque/desktop start",
+    "test": "vitest run",
+    "typecheck": "pnpm -r typecheck",
+    "opencalque": "tsx packages/cli/src/cli.ts",
+    "schema": "tsx packages/cli/src/cli.ts schema --out schema",
+    "rooms:gallery": "tsx packages/core/test/rooms-gallery.ts",
+    "smoke": "pnpm --filter @opencalque/desktop smoke",
+    "e2e": "pnpm build:web && playwright test",
+    "warehouse": "tsx packages/cli/src/build-warehouse.ts",
+    "warehouse:gallery": "tsx packages/cli/src/warehouse-gallery.ts",
+    "example": "tsx packages/cli/src/build-example.ts",
+    "notices": "pnpm --filter @opencalque/web notices",
+    "dist": "pnpm build && pnpm --filter @opencalque/desktop dist"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.64.0",
+    "@types/node": "^26.6.4",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2",
+    "vitest": "^5.0.3"
+  },
+  "description": "Open-source 2D architectural editor: floor plans and layouts with a Figma-like interface, a local CLI, and a plain JSON format built for AI workflows."
+}

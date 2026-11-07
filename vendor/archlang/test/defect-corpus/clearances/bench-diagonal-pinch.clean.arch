@@ -1,0 +1,16 @@
+# class: clearances
+# twin-of: bench-diagonal-pinch
+# origin: audits/archcanvas-public-examples.md GW3 with the bench moved into the middle of the gallery
+# expect: none
+# fact: the bench spans y 1500-2100, 2800 mm clear of the spine face
+plan "Bench clear of a gallery opening" {
+  units mm
+  grid 100
+  wall id=shell exterior thickness 300 { (0,0) (6000,0) (6000,7500) (0,7500) close }
+  wall id=w_spine partition thickness 200 { (0,5000) (6000,5000) }
+  room id=r_g2 at (0,0) size 6000x5000 label "Gallery B"
+  room id=r_concourse at (0,5000) size 6000x2500 label "Concourse" uses circulation
+  door id=d_main at (3000,7500) width 1200 wall shell swing out
+  opening id=o_g2 on w_spine at 3000 width 3000
+  furniture id=f_bench2 bench at (1800,1500) size 2400x600 label "Bench" in r_g2
+}

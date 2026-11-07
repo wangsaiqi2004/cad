@@ -1,0 +1,25 @@
+# class: circulation-privacy
+# twin-of: living-via-bedrooms
+# origin: repro/family-apartment.arch with a kitchen-to-living door added
+# expect: none
+# fact: the kitchen opens straight onto the living room (depth 2), so removing either bedroom strands nothing
+plan "Living off the kitchen" {
+  units mm
+  grid 50
+  wall id=shell exterior thickness 200 { (0,0) (9000,0) (9000,6000) (0,6000) close }
+  wall id=w_band partition thickness 100 { (0,3000) (6000,3000) }
+  wall id=w_beds partition thickness 100 { (3000,0) (3000,3000) }
+  wall id=w_living partition thickness 100 { (6000,0) (6000,6000) }
+  room id=r_bed1 at (0,0) size 3000x3000 label "Bedroom 1" uses bedroom
+  room id=r_bed2 at (3000,0) size 3000x3000 label "Bedroom 2" uses bedroom
+  room id=r_kitchen at (0,3000) size 6000x3000 label "Kitchen" uses kitchen
+  room id=r_living at (6000,0) size 3000x6000 label "Living Room" uses living
+  door id=d_entry at (1500,6000) width 900 wall shell
+  door id=d_kitchen_bed1 at (1500,3000) width 800 wall w_band
+  door id=d_bed1_bed2 at (3000,1500) width 800 wall w_beds
+  door id=d_bed2_living at (6000,1500) width 800 wall w_living
+  door id=d_kitchen_living at (6000,4500) width 900 wall w_living
+  window at (1500,0) width 1200 wall shell
+  window at (4500,0) width 1200 wall shell
+  window at (9000,3000) width 1600 wall shell
+}

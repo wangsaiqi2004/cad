@@ -1,0 +1,15 @@
+{
+  // Declarations only (`dist/arch-plan.d.ts`), run by `npm run build` after the esbuild step.
+  // The core's types come from the installed peer dependency, as they will for a consumer.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "declaration": true,
+    "emitDeclarationOnly": true,
+    "outDir": "dist",
+    "rootDir": "src",
+    "types": [],
+    "paths": {}
+  },
+  "include": ["src"]
+}

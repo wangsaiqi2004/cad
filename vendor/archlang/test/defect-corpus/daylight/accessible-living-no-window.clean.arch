@@ -1,0 +1,18 @@
+# class: daylight
+# twin-of: accessible-living-no-window
+# origin: examples/accessible.arch with a window added to the living room's south wall
+# expect: none
+# fact: r_living has a 1500 mm window on the south wall (x 1000-2500)
+plan "Flat 2B" {
+  units mm
+  grid 50
+  north up
+  wall exterior thickness 200 { (0,0) (6000,0) (6000,4000) (0,4000) close }
+  wall partition thickness 100 { (3500,0) (3500,4000) }
+  room id=r_living at (0,0) size 3500x4000 label "Living" uses living
+  room id=r_bed at (3500,0) size 2500x4000 label "Bedroom" uses bedroom
+  door id=d_main at (1500,0) width 1000 wall exterior hinge left swing in
+  opening id=o_int at (3500,2000) width 900 wall partition
+  window at (5000,4000) width 1200 wall exterior
+  window at (1750,4000) width 1500 wall exterior
+}

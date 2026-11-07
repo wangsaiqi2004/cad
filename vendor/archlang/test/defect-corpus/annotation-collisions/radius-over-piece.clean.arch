@@ -1,0 +1,21 @@
+# class: annotation-collisions
+# twin-of: radius-over-piece
+# origin: the same pavilion with the table set beside the leader
+# expect: none
+# fact: the table spans x 3300-4500, y 1700-2500, clear of the R3000 call-out lettered along x 3000 at y 1500
+plan "Radius call-out beside a table" {
+  units mm
+  grid 50
+  paper A4 landscape
+  scale 1:50
+  dims auto overall
+  wall id=drum exterior thickness 200 {
+    (6000,3000)
+    arc (0,3000) radius 3000
+    arc (6000,3000) radius 3000
+  }
+  room id=r_pav circle at (3000,3000) radius 3000 label "Pavilion" at (3000,4300) uses living
+  door on drum at 75% width 900
+  window on drum at 25% width 1200
+  furniture table at (3300,1700) size 1200x800
+}

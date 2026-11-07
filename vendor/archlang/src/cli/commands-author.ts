@@ -1,0 +1,641 @@
+/**
+ * The authoring/transform commands — `ast`, `complete`, `fmt`, `repair`, `fix`,
+ * `finish`, `suggest`. They parse/format/correct source (the syntactic `fix` and the geometric
+ * `repair` are a hard boundary; see ADR 0006/0011). Split out of the former
+ * monolithic `src/cli.ts` (mechanical; behavior unchanged).
+ */
+
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { resolve as resolvePath } from "node:path";
+import {
+  compile,
+  lint,
+  format,
+  repair,
+  finish,
+  FINISH_STAGES,
+  FINISH_STAGES_AVAILABLE,
+  applyFixes,
+  rankFixes,
+  reroll,
+  suggestTopology,
+  astToJson,
+  completion,
+  diagnosticToJson,
+  unifiedDiff,
+} from "../index.js";
+import type { Diagnostic, FinishStage, FixSuggestion } from "../index.js";
+// `arch ast` parses without resolving/rendering; parse() is not on the public
+// surface, so the CLI reaches for it directly (as it does resolvePlan).
+import { parse } from "../parser.js";
+// The W7 `while`→`for` fix is proved OUTSIDE `compile()` (see `src/while-fix.ts`'s
+// header) — `arch fix` is its one caller, on the public surface or not.
+import { proveWhileFixes } from "../while-fix.js";
+import {
+  type Args,
+  EXIT,
+  baseDirOf,
+  emitDiagnosticsHuman,
+  emitJson,
+  hasErrors,
+  ioError,
+  makeNodeWorld,
+  writeOutput,
+  usageError,
+  usageErrorFor,
+  withSource,
+} from "./io.js";
+import { closest } from "../expr.js";
+import { readGuarded, sha256Hex, withGuardedSource } from "./source-hash.js";
+
+// ---------------------------------------------------------------------------
+// ast / complete
+// ---------------------------------------------------------------------------
+
+/**
+ * `ast` — parse only (no resolve/render) and print the span-bearing AST as JSON
+ * (`astToJson`: scripting nodes appear as their kind, unexpanded). The parser
+ * recovers, so a partial AST is emitted even on error; error diagnostics still
+ * force exit 2. Human mode pretty-prints the same JSON (diagnostics → stderr).
+ */
+export function cmdAst(args: Args): number {
+  return withSource(args, (source) => {
+    const { plan, diagnostics } = parse(source);
+    const ast = plan ? astToJson(plan) : undefined;
+    const errored = hasErrors(diagnostics);
+    if (args.json) {
+      const o: Record<string, unknown> = { ok: !errored };
+      if (ast !== undefined) o.ast = ast;
+      o.diagnostics = diagnostics.map((d) => diagnosticToJson(source, d));
+      emitJson(o);
+    } else {
+      if (diagnostics.length) emitDiagnosticsHuman(source, diagnostics, args.quiet);
+      if (ast !== undefined) process.stdout.write(JSON.stringify(ast, null, 2) + "\n");
+    }
+    return errored ? EXIT.USER : EXIT.OK;
+  });
+}
+
+/**
+ * `complete --at <byteOffset>` — the core LSP `completion()` projected as data: the
+ * items in scope at that source offset. Missing/invalid `--at` is a usage error.
+ */
+export function cmdComplete(args: Args): number {
+  if (args.at === undefined || !Number.isFinite(args.at) || args.at < 0) {
+    return usageError("complete needs --at <byteOffset> (a non-negative integer)");
+  }
+  const offset = Math.trunc(args.at);
+  return withSource(args, (source) => {
+    const items = completion(source, offset);
+    if (args.json) {
+      emitJson({ ok: true, items });
+    } else if (!args.quiet) {
+      for (const it of items) {
+        process.stdout.write(`${it.label}\t${it.kind}${it.detail ? `\t${it.detail}` : ""}\n`);
+      }
+    }
+    return EXIT.OK;
+  });
+}
+
+// ---------------------------------------------------------------------------
+// fmt / repair / fix / suggest
+// ---------------------------------------------------------------------------
+
+/**
+ * `fmt` — print the canonical formatting, or with `--write` rewrite the input in place.
+ * `--expected-hash` guards that rewrite (`src/cli/source-hash.ts`); `--json` reports
+ * `source_hash`, and `written_hash` when bytes were written.
+ */
+export function cmdFmt(args: Args): number {
+  return withGuardedSource(args, "fmt", (read, input) => {
+    const { source } = read;
+    const formatted = format(source);
+    const changed = formatted !== source;
+    if (args.write && input !== "-") {
+      if (changed) {
+        const stop = read.recheck();
+        if (stop !== undefined) return stop;
+        writeFileSync(resolvePath(input), formatted, "utf8");
+      }
+      if (args.json)
+        emitJson({
+          ok: true,
+          changed,
+          output: resolvePath(input),
+          source_hash: read.hash,
+          ...(changed ? { written_hash: sha256Hex(formatted) } : {}),
+        });
+      else if (!args.quiet) process.stdout.write(`✓ ${input} formatted${changed ? "" : " (no changes)"}\n`);
+    } else if (args.json) {
+      emitJson({ ok: true, changed, formatted, source_hash: read.hash, output_hash: sha256Hex(formatted) });
+    } else {
+      process.stdout.write(formatted);
+    }
+    return EXIT.OK;
+  });
+}
+
+/**
+ * `repair` — the explicit source-to-source corrector (ADR 0006). Emits new `.arch`
+ * source (furniture pushed out of walls) plus a change log; never edits render output.
+ * Writes corrected source to `-o <file>` (or stdout); the change log goes to stderr.
+ */
+export function cmdRepair(args: Args): number {
+  return withGuardedSource(args, "repair", (read, input) => {
+    const { source } = read;
+    const r = repair(source);
+    if (args.json) {
+      emitJson({
+        ok: true,
+        changed: r.changed,
+        changes: r.changes,
+        unresolved: r.unresolved,
+        source: r.source,
+        source_hash: read.hash,
+        output_hash: sha256Hex(r.source),
+      });
+      return EXIT.OK;
+    }
+    const target = args.o;
+    if (target && target !== "-") {
+      const stop = read.recheck();
+      if (stop !== undefined) return stop;
+      try {
+        writeOutput(target, r.source);
+      } catch (e) {
+        return ioError((e as Error).message, args.json);
+      }
+      if (!args.quiet)
+        process.stderr.write(
+          `✓ ${input} → ${target} (${r.changes.length} change${r.changes.length === 1 ? "" : "s"})\n`,
+        );
+    } else {
+      process.stdout.write(r.source);
+    }
+    if (!args.quiet) {
+      for (const c of r.changes) {
+        // `via` says WHICH clause was rewritten — an `at` point, the `inset` of a
+        // room-anchored placement, or the placement itself (which became an `at`). It is
+        // worth showing for anything but the plain `at` case, because the reviewer is
+        // about to read a different line than they might expect.
+        const clause = c.via && c.via !== "at" && c.via !== "rotate" ? ` [${c.via}]` : "";
+        const what =
+          c.kind === "rotated"
+            ? `rotated ${c.id} ${c.fromRotate ?? 0}° → ${c.toRotate ?? 0}°`
+            : `moved ${c.id}${clause} (${c.from.x},${c.from.y}) → (${c.to.x},${c.to.y})`;
+        process.stderr.write(`  ${what} — ${c.reason}\n`);
+      }
+      for (const u of r.unresolved) process.stderr.write(`  ⚠ ${u.id}: ${u.reason}\n`);
+      if (!r.changed)
+        process.stderr.write(
+          r.unresolved.length > 0
+            ? `  (no changes — ${r.unresolved.length} problem${r.unresolved.length === 1 ? "" : "s"} repair declined to guess at; see above)\n`
+            : "  (no changes — nothing to repair)\n",
+        );
+    }
+    return EXIT.OK;
+  });
+}
+
+/**
+ * `arch fix` — apply the machine-applicable fix suggestions the compiler and lint
+ * attach to their diagnostics (the *syntactic* corrector: off-wall openings → the
+ * attachment form, out-of-range attach positions clamped, an alias-inferred room use
+ * pinned with an explicit `uses`, …). A bounded fixpoint: each pass compiles + lints,
+ * collects `diagnostics[].fixes`, applies them (default only `machine-applicable`;
+ * `--unsafe` also applies `maybe-incorrect`), then re-checks; a pass that *increases*
+ * the error count is rolled back and the loop stops (unless `--force`). Stops on zero
+ * progress or after 4 passes. Writes the result to the input file (or `-o`);
+ * `--dry-run` never writes. Report style mirrors `arch repair`.
+ *
+ * Because the default target is the input file itself, this rewrite is the CLI's one
+ * destructive act — so it is previewable and reversible: whenever the source changes, a
+ * unified diff of exactly what would be written goes to stderr (human mode, `--dry-run`
+ * included) and into `--json` as `diff`, and `--backup` saves the target's original bytes
+ * to `<target>.bak` before overwriting (opt-in, so a plain `fix` leaves no `.bak` litter).
+ */
+export async function cmdFix(args: Args): Promise<number> {
+  const input = args._[0];
+  if (!input) return usageError("fix needs an input file (use a path or `-` for stdin)");
+  const read = readGuarded(args, "fix", input);
+  if ("code" in read) return read.code;
+  const { source } = read;
+
+  const world = makeNodeWorld(baseDirOf(input));
+  const maxApplicability = args.unsafe ? ("maybe-incorrect" as const) : ("machine-applicable" as const);
+  const MAX_PASSES = 4;
+
+  // Every fix-bearing diagnostic for a source: compile-stage (resolve) diagnostics plus
+  // the architectural-soundness lint warnings (some of which now carry a machine-applicable
+  // fix, e.g. W_ALIAS_MATCH). lint() is silent on an unresolvable plan, so this is exactly
+  // compile's diagnostics whenever there is a fatal error.
+  const diagsOf = (src: string): Diagnostic[] => {
+    const compiled = compile(src, { noCache: true, world });
+    const linted = lint(src, { world });
+    const ds = [...compiled.diagnostics, ...linted];
+    // Only `arch fix` ever proves a `while`→`for` rewrite — never `compile()` itself (see
+    // `src/while-fix.ts`'s header) — so it is the one place a `W_WHILE_DEPRECATED`
+    // diagnostic gains a `fixes` array, matched back onto it by span. `compiled`/`linted`
+    // are handed straight to `proveWhileFixes` as its ORIGINAL — both were computed with
+    // this exact `src`/`world`, `noCache: true`, so it skips recomputing either itself.
+    if (!ds.some((d) => d.code === "W_WHILE_DEPRECATED" && d.file === undefined)) return ds;
+    const proven = proveWhileFixes(src, { world }, { compile: compiled, lint: linted });
+    if (proven.length === 0) return ds;
+    return ds.map((d) => {
+      if (d.code !== "W_WHILE_DEPRECATED" || !d.span) return d;
+      const p = proven.find((x) => x.span.start === d.span!.start && x.span.end === d.span!.end);
+      return p ? { ...d, fixes: [p.fix] } : d;
+    });
+  };
+
+  const compiledDiagsOf = (src: string): Diagnostic[] => compile(src, { noCache: true, world }).diagnostics;
+  /** Broken hard keeps (ADR 0033): the never-worse law counts them, as every source-rewriting
+   *  transform's does (PS4.3 R7). */
+  const brokenKeeps = (ds: readonly Diagnostic[]): number => ds.filter((d) => d.code === "W_KEEP_VIOLATED").length;
+
+  const applied: Array<{ code?: string; title: string; applicability: string }> = [];
+  const skipped: Array<{ code?: string; reason: string }> = [];
+  const changeLog: string[] = [];
+  let current = source;
+  let passes = 0;
+  let stopReason: string | undefined;
+
+  for (let pass = 0; pass < MAX_PASSES; pass++) {
+    const diagnostics = diagsOf(current);
+    const fixes: FixSuggestion[] = [];
+    const codeOf = new Map<FixSuggestion, string | undefined>();
+    for (const d of diagnostics) {
+      // The `fixes` on one diagnostic are mutually-exclusive alternatives — take the
+      // single top-ranked one (rankFixes is the identity on today's singleton arrays,
+      // so this is byte-identical until a producer emits real alternatives).
+      const [chosen] = rankFixes(d.fixes ?? []);
+      if (!chosen) continue;
+      fixes.push(chosen);
+      codeOf.set(chosen, d.code);
+    }
+    if (fixes.length === 0) break;
+
+    const report = applyFixes(current, fixes, { maxApplicability });
+    // Record WHY a suggestion was declined before deciding whether the pass made progress.
+    // A pass where every fix is skipped is precisely the case an author most needs the
+    // reason for — "this fix belongs to imported module X, edit that file" — and reporting
+    // it only on a productive pass swallowed it exactly then.
+    for (const s of report.skipped) skipped.push({ code: codeOf.get(s.suggestion), reason: s.reason });
+    if (report.applied.length === 0) break; // zero progress (all skipped/placeholders)
+
+    const errBefore = diagnostics.filter((d) => d.severity === "error").length;
+    const after = compiledDiagsOf(report.output);
+    const errAfter = after.filter((d) => d.severity === "error").length;
+    if (errAfter > errBefore && !args.force) {
+      stopReason = `pass ${pass + 1} would raise the error count ${errBefore} → ${errAfter}; rolled back (use --force to keep it)`;
+      break;
+    }
+    const keepsBefore = brokenKeeps(diagnostics);
+    const keepsAfter = brokenKeeps(after);
+    if (keepsAfter > keepsBefore && !args.force) {
+      stopReason = `pass ${pass + 1} would break a hard keep (W_KEEP_VIOLATED ${keepsBefore} → ${keepsAfter}); rolled back (use --force to keep it)`;
+      break;
+    }
+
+    current = report.output;
+    passes++;
+    for (const f of report.applied) {
+      applied.push({ code: codeOf.get(f), title: f.title, applicability: f.applicability });
+      changeLog.push(`applied ${codeOf.get(f) ? `[${codeOf.get(f)}] ` : ""}${f.title}`);
+    }
+  }
+
+  // Residue: distinct codes of remaining problems the loop could not clear (errors,
+  // or diagnostics that still carry a fix it declined to auto-apply).
+  const finalDiags = diagsOf(current);
+  const unresolved = [
+    ...new Set(
+      finalDiags.filter((d) => d.severity === "error" || d.fixes?.length).flatMap((d) => (d.code ? [d.code] : [])),
+    ),
+  ];
+  const ok = finalDiags.every((d) => d.severity !== "error");
+
+  // Write the result (default: back to the input; `-o` redirects; `--dry-run` never
+  // writes). Stdin input with no `-o` streams to stdout.
+  const target = args.o ?? (input === "-" ? "-" : input);
+  const changed = current !== source;
+  const wrote = changed && !args.dryRun;
+  // The exact bytes the write would produce, as a patch — the preview an agent needs to
+  // decide whether to accept an in-place rewrite. Empty when nothing changed.
+  const diff = changed
+    ? unifiedDiff(source, current, `a/${input === "-" ? "stdin" : input}`, `b/${target === "-" ? "stdout" : target}`)
+    : "";
+
+  // `--expected-hash`: the input must still be the bytes this result was computed from,
+  // checked again just before the first byte (the `.bak` included) is written.
+  if (wrote && target !== "-") {
+    const stop = read.recheck();
+    if (stop !== undefined) return stop;
+  }
+
+  // `--backup`: preserve what is about to be clobbered. Only a real file that already
+  // exists has anything to lose, so `-o new-file.arch` and stdout write no `.bak`.
+  let backup: string | undefined;
+  if (wrote && target !== "-" && args.backup) {
+    const path = resolvePath(target);
+    if (existsSync(path)) {
+      try {
+        writeFileSync(`${path}.bak`, readFileSync(path, "utf8"), "utf8");
+        backup = `${target}.bak`;
+      } catch (e) {
+        return ioError((e as Error).message, args.json);
+      }
+    }
+  }
+
+  if (wrote && target !== "-") {
+    try {
+      writeOutput(target, current);
+    } catch (e) {
+      return ioError((e as Error).message, args.json);
+    }
+  }
+
+  if (args.json) {
+    // Append-only: `wrote`/`target` say whether (and where) bytes landed, `backup` names
+    // the saved original, `diff` carries the patch. The four are omitted-when-absent only
+    // for `backup`/`diff`, which have no meaningful empty value.
+    const out: Record<string, unknown> = { ok, passes, applied, skipped, unresolved, wrote, target };
+    if (backup) out.backup = backup;
+    if (diff) out.diff = diff;
+    // The revision handles (`src/cli/source-hash.ts`): what was read, and what landed in the target.
+    out.source_hash = read.hash;
+    if (wrote && target !== "-") out.written_hash = sha256Hex(current);
+    // The fixed text's own revision (what `diff` produces): `written_hash` when it was written here.
+    out.output_hash = sha256Hex(current);
+    emitJson(out);
+  } else {
+    if (target === "-" && !args.dryRun) process.stdout.write(current);
+    if (!args.quiet) {
+      if (diff) process.stderr.write(diff);
+      for (const c of changeLog) process.stderr.write(`  ${c}\n`);
+      for (const s of skipped) process.stderr.write(`  skipped${s.code ? ` [${s.code}]` : ""}: ${s.reason}\n`);
+      if (stopReason) process.stderr.write(`  ⚠ ${stopReason}\n`);
+      if (backup) process.stderr.write(`  backup: ${backup}\n`);
+      if (applied.length === 0) process.stderr.write("  (no fixes applied)\n");
+      else if (args.dryRun) process.stderr.write("  (dry run — nothing written)\n");
+      else if (wrote && target !== "-")
+        process.stderr.write(
+          `✓ ${input} → ${target} (${applied.length} fix${applied.length === 1 ? "" : "es"}, ${passes} pass${passes === 1 ? "" : "es"})\n`,
+        );
+      if (unresolved.length) process.stderr.write(`  unresolved: ${unresolved.join(", ")}\n`);
+    }
+  }
+  return ok ? EXIT.OK : EXIT.USER;
+}
+
+/**
+ * `arch finish` — furnish the rooms that hold no furniture (ADR 0025), then add the sheet
+ * statements a plan lacks (`paper`, `scale`, `dims auto`, `title`, `schedule rooms`,
+ * `legend`; ADR 0024): explicit transforms, and nothing a `compile` ever does on its own. It
+ * fills what is missing and deletes nothing; `--reissue` lets it replace `paper`/`scale`
+ * (only those) when the drawing does not fit them. `--only` runs one stage.
+ *
+ * The write conventions are `arch fix`'s, because this is the same destructive act: the
+ * default target is the input file itself, so a unified diff of exactly what would be
+ * written goes to stderr (and into `--json` as `diff`), `--dry-run` never writes, and
+ * `--backup` saves the original to `<target>.bak`. A plan that does not compile is
+ * returned untouched with exit 2. A stage name this version does not run is refused
+ * (exit 3): a flag that quietly did nothing would read as "nothing to do".
+ */
+export function cmdFinish(args: Args): number {
+  const input = args._[0];
+  if (!input) return usageError("finish needs an input file (use a path or `-` for stdin)");
+  let only: FinishStage | undefined;
+  if (args.only !== undefined) {
+    const stage = FINISH_STAGES.find((s) => s === args.only);
+    if (!stage) {
+      const hint = closest(String(args.only), [...FINISH_STAGES]);
+      return usageErrorFor(
+        "finish",
+        `unknown stage "${args.only}" for --only — expected one of: ${FINISH_STAGES.join(", ")}` +
+          (hint ? ` (did you mean "${hint}"?)` : ""),
+      );
+    }
+    if (!FINISH_STAGES_AVAILABLE.includes(stage))
+      return usageErrorFor(
+        "finish",
+        `--only ${stage} is not available yet — this version implements: ${FINISH_STAGES_AVAILABLE.join(", ")}`,
+      );
+    only = stage;
+  }
+  const read = readGuarded(args, "finish", input);
+  if ("code" in read) return read.code;
+  const { source } = read;
+
+  const world = makeNodeWorld(baseDirOf(input));
+  const errors = compile(source, { noCache: true, world }).diagnostics.filter((d) => d.severity === "error");
+  const ok = errors.length === 0;
+  const r = finish(source, { world, ...(only ? { only } : {}), ...(args.reissue ? { reissue: true } : {}) });
+
+  const target = args.o ?? (input === "-" ? "-" : input);
+  const wrote = r.changed && !args.dryRun;
+  const diff = r.changed
+    ? unifiedDiff(source, r.source, `a/${input === "-" ? "stdin" : input}`, `b/${target === "-" ? "stdout" : target}`)
+    : "";
+
+  // `--expected-hash`: re-checked just before the first byte (the `.bak` included) is written.
+  if (wrote && target !== "-") {
+    const stop = read.recheck();
+    if (stop !== undefined) return stop;
+  }
+
+  // `--backup`: only a real file that already exists has anything to lose.
+  let backup: string | undefined;
+  if (wrote && target !== "-" && args.backup) {
+    const path = resolvePath(target);
+    if (existsSync(path)) {
+      try {
+        writeFileSync(`${path}.bak`, readFileSync(path, "utf8"), "utf8");
+        backup = `${target}.bak`;
+      } catch (e) {
+        return ioError((e as Error).message, args.json);
+      }
+    }
+  }
+  if (wrote && target !== "-") {
+    try {
+      writeOutput(target, r.source);
+    } catch (e) {
+      return ioError((e as Error).message, args.json);
+    }
+  }
+
+  if (args.json) {
+    // `wrote`/`target`/`backup`/`diff` as in `arch fix`; `source` as in `arch repair`, so a
+    // caller on stdin (or previewing with `--dry-run`) has the result without a second call.
+    const out: Record<string, unknown> = {
+      ok,
+      changed: r.changed,
+      changes: r.changes,
+      unresolved: r.unresolved,
+      wrote,
+      target,
+    };
+    if (!ok) out.diagnostics = errors.map((d) => diagnosticToJson(source, d));
+    if (backup) out.backup = backup;
+    if (diff) out.diff = diff;
+    out.source = r.source;
+    out.source_hash = read.hash;
+    if (wrote && target !== "-") out.written_hash = sha256Hex(r.source);
+    // `source`'s own revision, for a caller that writes it: `written_hash` when it was written here.
+    out.output_hash = sha256Hex(r.source);
+    emitJson(out);
+  } else {
+    if (!ok) emitDiagnosticsHuman(source, errors, args.quiet);
+    if (target === "-" && !args.dryRun) process.stdout.write(r.source);
+    if (!args.quiet) {
+      if (diff) process.stderr.write(diff);
+      for (const c of r.changes)
+        process.stderr.write(`  ${c.kind} ${c.from ? `${c.from} → ` : ""}${c.text} — ${c.reason}\n`);
+      for (const u of r.unresolved) process.stderr.write(`  ⚠ ${u.statement ? `${u.statement}: ` : ""}${u.reason}\n`);
+      if (backup) process.stderr.write(`  backup: ${backup}\n`);
+      if (!r.changed) process.stderr.write("  (no changes)\n");
+      else if (args.dryRun) process.stderr.write("  (dry run — nothing written)\n");
+      else if (target !== "-")
+        process.stderr.write(
+          `✓ ${input} → ${target} (${r.changes.length} statement${r.changes.length === 1 ? "" : "s"})\n`,
+        );
+    }
+  }
+  return ok ? EXIT.OK : EXIT.USER;
+}
+
+/** One SVG string per page of a `compile()` result (a single-storey result's
+ *  own `svg` is its one page) — the unit a byte-for-byte re-verify compares. */
+function compiledPages(source: string, world: ReturnType<typeof makeNodeWorld>): string[] | null {
+  const r = compile(source, { noCache: true, world });
+  if (r.errors.length > 0) return null;
+  return r.pages ? r.pages.map((p) => p.svg) : [r.svg];
+}
+
+/**
+ * `arch reroll` — offer a proven-equivalent `for` loop for a run of ≥3
+ * consecutive statements in arithmetic progression (Szalinski-style; see
+ * `src/reroll.ts`). Each suggestion is already twin-compiled and byte-checked
+ * in isolation before it reaches here; `--write` applies every non-overlapping
+ * one through `applyFixes` and re-verifies the COMBINED result — not just that
+ * it compiles clean, but that its compiled SVG (every page) is BYTE-IDENTICAL
+ * to the original's — before writing, belt and braces on top of the
+ * per-suggestion proof, never a substitute for it. Never rewrites silently
+ * (ADR 0005): with no `--write`, this only prints what it found.
+ *
+ * JSON shape is `{ ok, wrote, target, applied, skipped }` for `--write` (the
+ * `wrote`/`target` names match `arch fix`'s; `applied`/`skipped` are COUNTS
+ * here, not arrays — a reroll suggestion has no diagnostic code to report per
+ * item), and `{ ok, suggestions }` without it (see `docs/cli-reference.md`).
+ * Unlike `arch fix`, this has no `--dry-run` or `--backup`: every suggestion
+ * is already proven byte-for-byte equivalent before it is offered, so there
+ * is no partial/uncertain result worth previewing, and a failed re-verify
+ * writes nothing at all (the same "prove, then possibly write" shape a
+ * preview would add nothing to).
+ */
+export function cmdReroll(args: Args): number {
+  return withGuardedSource(args, "reroll", (read, input) => {
+    const { source } = read;
+    // The fs World, like `compile` gets — so a plan with `import`s can still
+    // be proven (the proof obligation resolves the same modules `compile`
+    // would).
+    const world = makeNodeWorld(baseDirOf(input));
+    const suggestions = reroll(source, { world });
+
+    if (args.write && input !== "-") {
+      const fixes: FixSuggestion[] = suggestions.map((s) => ({
+        title: `re-roll ${s.count} statements into a \`for ${s.loopVar}\` loop`,
+        applicability: "machine-applicable",
+        edits: [{ span: s.span, newText: s.replacement }],
+      }));
+      const report = applyFixes(source, fixes, { maxApplicability: "machine-applicable" });
+      const changed = report.output !== source;
+      // Belt and braces: each suggestion's own proof already checked its edit
+      // in isolation; re-verify the COMBINED result renders BYTE-IDENTICAL SVG
+      // to the original before writing it — not merely "still compiles".
+      const beforePages = changed ? compiledPages(source, world) : null;
+      const afterPages = changed ? compiledPages(report.output, world) : null;
+      const verified =
+        !changed ||
+        (beforePages !== null &&
+          afterPages !== null &&
+          beforePages.length === afterPages.length &&
+          beforePages.every((svg, i) => svg === afterPages![i]));
+
+      if (changed && verified) {
+        const stop = read.recheck();
+        if (stop !== undefined) return stop;
+        try {
+          writeFileSync(resolvePath(input), report.output, "utf8");
+        } catch (e) {
+          return ioError((e as Error).message, args.json);
+        }
+      }
+
+      const wrote = changed && verified;
+      if (args.json) {
+        emitJson({
+          ok: verified,
+          wrote,
+          target: resolvePath(input),
+          applied: verified ? report.applied.length : 0,
+          skipped: report.skipped.length,
+          source_hash: read.hash,
+          ...(wrote ? { written_hash: sha256Hex(report.output) } : {}),
+        });
+      } else if (!args.quiet) {
+        if (!verified) process.stderr.write("  ⚠ combined result failed re-verification — nothing written\n");
+        else if (!wrote) process.stdout.write(`${input}: no reroll suggestions\n`);
+        else
+          process.stdout.write(
+            `✓ ${input} rerolled (${report.applied.length} loop${report.applied.length === 1 ? "" : "s"})\n`,
+          );
+      }
+      return verified ? EXIT.OK : EXIT.INTERNAL;
+    }
+
+    if (args.json) {
+      emitJson({ ok: true, suggestions, source_hash: read.hash });
+    } else if (!args.quiet) {
+      if (suggestions.length === 0) process.stdout.write("no reroll suggestions\n");
+      for (const s of suggestions) {
+        process.stdout.write(
+          `[${s.span.start},${s.span.end}) ${s.count} statements → for ${s.loopVar} ` +
+            `(tokens ${s.tokensBefore} → ${s.tokensAfter})\n${s.replacement}\n\n`,
+        );
+      }
+    }
+    return EXIT.OK;
+  });
+}
+
+/**
+ * `arch suggest` — advisory topology suggestions as data (never applied; ADR 0005).
+ * For a room with no path back, a building with no entrance, a bath reachable only
+ * through a bedroom, or a windowless bedroom, prints ready-to-paste `door`/`window`
+ * statements (furniture-aware, each referencing its wall by a stable ref — an authored
+ * id or a unique category — or absolute coordinates) plus a rationale.
+ */
+export function cmdSuggest(args: Args): number {
+  return withSource(args, (source, input) => {
+    const suggestions = suggestTopology(source, { world: makeNodeWorld(baseDirOf(input)) });
+    if (args.json) {
+      emitJson({ ok: true, suggestions });
+      return EXIT.OK;
+    }
+    if (suggestions.length === 0) {
+      if (!args.quiet) process.stdout.write("no topology suggestions\n");
+      return EXIT.OK;
+    }
+    const lines: string[] = [];
+    for (const s of suggestions) {
+      lines.push(`${s.code}: ${s.problem}`);
+      for (const c of s.candidates) lines.push(`  ${c.insertText}\n    → ${c.rationale}`);
+    }
+    process.stdout.write(lines.join("\n") + "\n");
+    return EXIT.OK;
+  });
+}

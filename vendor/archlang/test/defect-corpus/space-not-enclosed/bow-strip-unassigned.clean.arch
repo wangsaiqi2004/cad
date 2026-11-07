@@ -1,0 +1,15 @@
+# class: space-not-enclosed
+# twin-of: bow-strip-unassigned
+# origin: audits/archcanvas-public-examples.md GW1 with the facade drawn straight along the rooms' edge
+# expect: none
+# fact: the south facade is the straight line y=4000 the rooms and the partition stop at
+plan "Partition meeting a straight facade" {
+  units mm
+  grid 50
+  wall id=shell exterior thickness 200 { (0,0) (10000,0) (10000,4000) (0,4000) close }
+  wall id=w_s2 partition thickness 100 { (5000,0) (5000,4000) }
+  room id=r_shop at (0,0) size 5000x4000 label "Shop" uses storage
+  room id=r_cafe at (5000,0) size 5000x4000 label "Cafe" uses dining
+  door on shell at 2500 width 1000
+  door on shell at 7500 width 1000
+}

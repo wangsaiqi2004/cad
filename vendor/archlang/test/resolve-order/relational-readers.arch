@@ -1,0 +1,20 @@
+# Resolve-order corpus (ADR 0028 §1, backlog PS0.5): elements that READ a room which is
+# placed relationally. Before the reorder these resolved while the relational room still
+# sat at its (0,0) placeholder, and every reader refused a room carrying `_rel`. Rooms are
+# now placed before every reader, which refuses only a room that could not be placed, so
+# this plan compiles: the door swings into the kitchen and both pieces land in it.
+plan "Relational readers" {
+  units mm
+  grid 50
+
+  wall id=shell exterior thickness 200 { (0,0) (8000,0) (8000,4000) (0,4000) close }
+  wall id=mid partition thickness 100 { (5000,0) (5000,4000) }
+
+  room id=living at (0,0) size 5000x4000 label "Living"
+  room id=kitchen right-of living align top gap 0 size 3000x4000 label "Kitchen"
+
+  door id=d on mid at 2000 width 900 swing into kitchen
+  furniture id=f_counter counter against wall mid in kitchen
+  furniture id=f_table table in kitchen centered size 1200x800
+  dim (0,4000)->(8000,4000) offset 600
+}

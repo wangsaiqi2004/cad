@@ -1,0 +1,461 @@
+# Hosting & custom domains
+
+How the two public sites are hosted and reached. This is the operational source of truth for the
+`archlang.uk` custom domain; treat the live Cloudflare dashboard as authoritative for the exact
+record values and zone settings, and this doc as the map of *what points where and why*.
+
+Sibling playbook: releases → [`npm-oidc-publishing-playbook.md`](npm-oidc-publishing-playbook.md).
+
+## What is live
+
+| Public URL | Serves | Cloudflare Worker | npm workspace name |
+|------------|--------|-------------------|--------------------|
+| `https://archlang.uk` | Docs site (VitePress) | `archlang-docs` | `archlang-docs` |
+| `https://playground.archlang.uk` | Playground (Vite) | `archlang-playground` | `archlang-playground` |
+
+DNS for the `archlang.uk` zone is managed on **Cloudflare**, and since **2026-09** both sites are
+also *served* by Cloudflare — as **Workers with static assets**, in the same account that already
+held the zone. Before that they were Vercel deployments behind grey-cloud CNAMEs.
+
+**The public URLs did not change in that migration.** `archlang.uk` and `playground.archlang.uk`
+are exactly what they were. Nothing downstream of a URL moved: no JSON Schema `$id`, no
+`sitemap.hostname`, no README `#z=` permalink, no hard-coded origin. It was a host move, not a URL
+move — which is why the "Changing a public URL in code" section below did **not** apply to it.
+
+### The docs site runs no code; the playground runs it for two prefixes
+
+`docs-site/wrangler.jsonc` deliberately has **no `main`**. With no script to invoke, every request
+is a static-asset request: Cloudflare bills those at zero and they are unmetered.
+
+`playground/wrangler.jsonc` has one script, `playground/worker/`, for short links
+([ADR 0034](adr/0034-playground-short-links.md), amending ADR 0019). It runs first **only** for the
+paths `assets.run_worker_first` lists, `["/s/*", "/api/*"]`; every other path is still a static
+asset request, unmetered, byte for byte as before. A path the asset layer finds no file for reaches
+the script, which hands it straight back through the `ASSETS` binding, so a 404 is still the asset
+layer's own (with its `_headers`). `playground/test/share-worker.test.ts` holds the list to those
+two entries.
+
+| Route | Answers |
+|-------|---------|
+| `POST /api/share` | body: a `#z=` payload (≤ 64 KiB, inflating to ≤ 64 KiB, a plan the parser accepts) → `{ id, url }`; refusals are JSON with a stable `error.code` |
+| `GET /api/share/<id>` | `{ id, z }`, `immutable` (what `embed.html#s=<id>` reads) |
+| `GET /s/<id>` | HTML: Open Graph/Twitter card metadata, then `location.replace("/#z=<payload>")`; `max-age=86400`, `noindex` |
+| `GET /s/<id>.png` | the 1200×630 card image (`og:image`): the plan as `compile()` draws it, rasterised by `@resvg/resvg-wasm` with the core's Roboto; edge-cached, `immutable` |
+| `GET /s/<unknown>` | a 404 HTML page linking to the playground |
+
+| Binding | What |
+|---------|------|
+| `ASSETS` | the asset layer itself (the fallback above) |
+| `SHARE` | KV namespace `archlang-share`: `s:<id>` → the payload, metadata `{ v, h, t }`; no TTL, no address |
+| `RATE_SHARE` | rate limit, `namespace_id` 2603: 30 creates per address per 60 s (best-effort abuse guard) |
+| `RATE_PREVIEW` | rate limit, `namespace_id` 2604: 120 card-image cache misses per address per 60 s |
+| `SHARE_ANALYTICS` | Analytics Engine dataset `archlang_share`: one point per create and resolve, `[event, id, day]` |
+
+Workers Logs are on with invocation logs off: the script logs an internal error's name and nothing
+else, and invocation logs would record request metadata. A removal request is answered with
+`wrangler kv key delete --namespace-id <id> "s:<id>"` (owner only).
+
+Sizes, measured at the migration: docs-site builds to 235 files / 14 MB (largest single file,
+`examples.html`, at 2.25 MiB); the playground to 70 files / 2.7 MB. Cloudflare's free-tier ceilings
+are **20,000 assets per version** and **25 MiB per file** — both sites sit far inside them, but the
+docs site's `examples.html` is the file to watch if the example gallery keeps growing.
+
+### The third Worker: the hosted MCP server, the only ArchLang one with code
+
+`packages/mcp-worker` deploys a third Worker, **`archlang-mcp`**, and it is the one Worker here with
+a `main` script ([ADR 0026](adr/0026-hosted-mcp-worker.md)). It does not share anything with the
+two sites: its own `wrangler.jsonc`, its own job in `deploy.yml` (`deploy-mcp`), its own smoke
+site (`node scripts/smoke.mjs --site mcp --base <url>`). The sites' job did not change when this one
+was added.
+
+| Route | Answers |
+|-------|---------|
+| `POST /mcp` | Streamable-HTTP MCP, stateless (no sign-in, no session), the npm server's tools plus `read_me` |
+| `GET /svg/<payload>` | the `#z=` payload compiled to `image/svg+xml`, `max-age=300` + `ETag`; `Content-Location` names the pinned copy |
+| `GET /v/<render version>/svg/<payload>` | the same drawing pinned to one compiler, the only `immutable` path; an older version 302s to `/svg/` |
+| `GET /` | the `read_me` text |
+
+- **Reached at `https://mcp.archlang.uk`** (custom domain attached in the dashboard) and at
+  `https://archlang-mcp.chanmeng-dev.workers.dev` (`workers_dev: true`, no `routes`, no `account_id`
+  in the file). Do not hand-make the DNS record. A zone WAF rule on `archlang.uk`, `mcp abuse guard`
+  (100 requests per 10 s per IP to every path on `mcp.archlang.uk`, block 10 s), is the precise guard;
+  it is dashboard state, not in the repository (ADR 0026, "Addendum: production"), and the owner edits
+  it by hand (agents cannot act in the dashboard; policy in `docs/seo.md` section 8).
+- **It is metered.** Every request runs the script, so it counts against the plan's daily requests
+  and per-request CPU limit, unlike the sites. ADR 0026 has the per-tool measurement and why it
+  points at Workers Paid. A request that runs out of CPU fails with the platform's 5xx; inputs that
+  are merely large are refused first, by bytes, with `E_INPUT_TOO_LARGE`, and an address over its
+  rate with `E_RATE_LIMITED` (600 `/mcp` or 3000 `/svg/` misses a minute: an abuse guard set high
+  because connector platforms call from shared egress addresses). The spend bound is
+  `limits.cpu_ms` (5 s of CPU per request) plus a billing notification set before announcing it.
+- **It needs Workers Paid before it reaches `main`.** `limits` is supported only on the Standard
+  usage model, which only Paid has; on a Free account `deploy-mcp` should fail, and its last step
+  names Paid as the likely cause.
+- **It logs nothing and keeps no source.** Workers Logs (`observability`) is off and the code logs
+  nothing, because a `/svg/` path is a whole plan. It stores only rendered SVGs in the edge cache,
+  keyed by render version. One Analytics Engine data point per MCP message (dataset
+  `archlang_mcp`) holds the method and the tool name, each from a fixed list, nothing else.
+- **Build:** `npm run mcp-worker:build` (the core first, then one bundled module,
+  `packages/mcp-worker/dist/worker.js`). Locally: `wrangler dev --local --port <port>` from
+  `packages/mcp-worker`, never `wrangler deploy`.
+
+## Iron law: public URL ≠ Worker name ≠ workspace name
+
+The strings `archlang-docs` and `archlang-playground` are **Cloudflare Worker names and npm
+workspace `name`s** — they are *not* the public URLs, and they did not change when the hosting did.
+A grep for them still legitimately hits `package.json` `name` fields, `package-lock.json`,
+`wrangler.jsonc`, and `deploy.yml`. **Never rename the Workers or the workspace packages** to match
+the domain: the custom domain is attached *on top of* the Worker and is fully decoupled from its
+name. The Worker names were kept identical to the old project names on purpose, so that this law
+reads the same before and after the migration.
+
+## Iron law, INVERTED: the records are now proxied (orange cloud)
+
+**This reverses the previous rule, and the reversal is the point.**
+
+- **Old rule (Vercel, 2026-07-15 → 2026-09):** every record had to be **"DNS only" (grey cloud),
+  never proxied**. Vercel provisioned and renewed its own certificates and forced HTTPS at its
+  edge; putting Cloudflare's proxy in front of that origin caused `ERR_TOO_MANY_REDIRECTS` and cert
+  issuance failures. Cloudflare's dashboard banner nudging you to enable the proxy was to be
+  ignored.
+- **New rule (Cloudflare Workers):** the records are **necessarily proxied (orange cloud)**. A
+  Workers custom domain *is* a proxied record — Cloudflare is now both the DNS and the origin, and
+  there is no third-party edge to conflict with. You cannot grey-cloud a Workers custom domain; the
+  attachment creates and owns the record.
+
+If you find the old advice quoted anywhere else, it is superseded. It is recorded here rather than
+deleted because "never proxy these records" was stated as an iron law for two months, and a reader
+who meets it in an archived doc needs to know why it existed and why it stopped applying.
+
+## DNS (Cloudflare zone `archlang.uk`)
+
+Zone `6cd6c3391fe8a7ec9f28ca24182e6ce4`, in the account `chanmeng.dev@gmail.com`
+(`c87dca24333f7ed5d643f731f6308fec`) — the same account the Workers live in, which is what makes
+the custom-domain attachment a one-step operation.
+
+| Name | Record | Managed by | Proxy |
+|------|--------|------------|-------|
+| `@` (apex) | Workers custom domain → `archlang-docs` | Cloudflare (created by the attachment) | Proxied |
+| `playground` | Workers custom domain → `archlang-playground` | Cloudflare (created by the attachment) | Proxied |
+| `www` | CNAME → apex, redirected by a zone rule (below) | hand-maintained | Proxied |
+
+The three grey-cloud CNAMEs to `*.vercel-dns-016.com` (apex, `www`, `playground`) that this
+replaced are gone. **Do not create a record for the apex or `playground` by hand** — attaching the
+custom domain in `wrangler.jsonc` (`routes: [{ pattern: …, custom_domain: true }]`) provisions it,
+and a hand-made record fights the attachment.
+
+## TLS
+
+**Universal SSL on the active zone already covers the apex and every first-level subdomain**, which
+is why the cutover needed no certificate issuance at all — `archlang.uk`, `www.archlang.uk` and
+`playground.archlang.uk` were all inside the existing cert the moment the records flipped. There is
+no origin certificate to manage: Cloudflare *is* the origin.
+
+The SSL/TLS mode setting no longer describes a hop to a third party. Do not go looking for the old
+**Full (strict)** requirement — it was about validating Vercel's certificate, and there is no
+longer a Vercel to validate.
+
+## Redirects
+
+`www.archlang.uk` → `301` → `archlang.uk`, preserving path and query.
+
+This is **zone state, not repository state**: a Cloudflare **Single Redirect Rule** in the
+`http_request_dynamic_redirect` phase. It lives in the dashboard (Rules → Redirect Rules), not in
+any file here, because Cloudflare's `_redirects` file format matches on **path only** and cannot
+express a scheme+host source. Its exact API shape, so it can be recreated without guessing:
+
+```http
+POST /zones/6cd6c3391fe8a7ec9f28ca24182e6ce4/rulesets
+```
+
+```jsonc
+{
+  "phase": "http_request_dynamic_redirect",
+  "kind": "zone",
+  "rules": [
+    {
+      "expression": "http.request.host eq \"www.archlang.uk\"",
+      "action": "redirect",
+      "action_parameters": {
+        "from_value": {
+          "target_url": {
+            "expression": "concat(\"https://archlang.uk\", http.request.uri.path)"
+          },
+          "status_code": 301,
+          "preserve_query_string": true
+        }
+      }
+    }
+  ]
+}
+```
+
+The target is an **`expression`, not a static `value`** — that is what preserves the path. A static
+`value` would flatten every `www` deep link onto the home page, which is the failure mode this
+shape exists to avoid.
+
+### What was lost, permanently
+
+`archlang-docs.vercel.app` and `archlang-playground.vercel.app` are **gone**. They used to `301` to
+the custom domains, and older revisions of this doc promised they were "kept, not removed" so that
+"no external link ever breaks". That promise no longer holds and cannot be restored: those
+hostnames belong to Vercel and die with the projects.
+
+One known consumer: the MCP registry's first-published entry for
+`io.github.ChanMeng666/archlang-mcp` (version `0.1.1`, 2026-07-10) still carries
+`archlang-docs.vercel.app` as its website URL. That entry was already stale before this migration —
+every later version points at `archlang.uk` — and it is immutable registry history, so it stays
+broken.
+
+## Cloudflare zone settings that must stay OFF
+
+Both sites are now **proxied**, so Cloudflare sits in the request path and *can* rewrite bytes and
+challenge clients — where under the grey cloud it never touched a response at all. Four zone
+features would break this repository's own verification if enabled:
+
+| Setting | Why it must stay off |
+|---------|----------------------|
+| **Bot Fight Mode** | `scripts/smoke.mjs` is a bare zero-dependency `fetch` with no browser headers. A challenge turns every deploy and every nightly `prod-smoke` red. |
+| **Email Obfuscation** | Rewrites HTML in flight. The nightly `e2e-prod` docs cases compare production's raw `/<page>.md` bytes against this checkout — any transformation makes that byte-equality probe fail forever. |
+| **Rocket Loader** | Defers and rewrites `<script>` tags. The playground and the docs site's `<ArchLive>` widgets are client-compiled; the `@prod` Playwright cases would flake or fail. |
+| **Browser Integrity Check** | Same class of failure as Bot Fight Mode, for the same client. |
+
+The rule to carry: **a proxied zone can silently change what a machine reads.** Before enabling any
+Cloudflare feature that transforms responses or interposes a challenge, check it against
+`scripts/smoke.mjs` and the `@prod` Playwright subset — those are the two things that read this
+site as a machine rather than as a browser.
+
+### AI Crawl Control — the fifth setting, and it is not where the docs say
+
+A crawler block is the one part of this surface **no test in this repository can see**, so it is
+audited by hand. What is live on the `archlang.uk` zone, read on 2026-09-14:
+
+| Surface | Where | State |
+|---------|-------|-------|
+| Per-crawler allow/block | zone → AI → Security: a table of 32 named crawlers, each with a `Block Crawler` switch and a read-only category label | **0 of 32 blocked** |
+| `Block AI training bots` | zone Overview → "Manage AI bot access" | **Do not block** (allow crawlers) |
+| Managed robots.txt | zone → AI → Overview | **OFF** — its `Content Signals Policy` dropdown is selected but inert while the master toggle is off, proved by fetching `robots.txt` as GPTBot and getting the repo's own bytes back, byte for byte |
+| Legacy `Block AI bots` managed rule | Security → Settings → Bot traffic | untouched; labelled deprecated as of 2026-09-15 |
+
+Two things to expect. **There are no Search / Agent / Training category toggles** — the category
+words are read-only labels on each crawler row, so any instruction naming those switches describes a
+surface that no longer exists. And a **cache-busted fetch under each crawler's user-agent is the
+check that actually settles it**: six answer-engine user-agents against each host returned 200 both
+before and after the audit, and Cloudflare's own per-crawler counters showed every one of them
+allowed. If Managed robots.txt is ever switched on, Cloudflare's default content-signals policy says
+`ai-train=no`, which contradicts the allow-everything decision in [`seo.md`](seo.md) § "Crawler
+policy" — that is the trap to watch for.
+
+**Two write classes on Cloudflare are owner-by-hand, not agent work.** A session's permission
+classifier refuses an agent both `Security Weaken` (touching the zone security settings — the four
+toggles above) and `DNS / Domain / Cert Changes` (adding a record, including a Search Console
+verification TXT). Both were refused in practice, in two separate sessions, while read-only
+navigation of the same zone was allowed. So an agent can audit and report these; the owner performs
+them.
+
+### What the 2026-09-05 audit actually found
+
+This is not hypothetical. The zone had been DNS-only since 2026-07-15, so nothing in it had ever
+been in a request path — and **four settings were live that would have broken something the moment
+the records went orange.** All four were changed during the cutover, before the first record was
+flipped:
+
+| Setting | Was | Now | What it would have done |
+|---------|-----|-----|-------------------------|
+| `browser_check` | `on` | **`off`** | Browser Integrity Check challenges clients whose headers do not look like a browser. `scripts/smoke.mjs` sends `user-agent: archlang-smoke/1` from a shared GitHub Actions IP — every deploy and every nightly would have gone red. |
+| `email_obfuscation` | `on` | **`off`** | Injects a decoder script into every HTML response. Cloudflare editing our bytes is precisely what the old grey-cloud rule existed to prevent. |
+| `browser_cache_ttl` | `14400` | **`0`** | A 4-hour browser TTL that **overrides** the origin's `max-age=0, must-revalidate`. A deploy would have appeared not to ship for four hours, and the nightly staleness probe would have been measuring a browser cache instead of the deploy. |
+| `always_use_https` | `off` | **`on`** | Vercel forced HTTPS; the Workers asset router does not redirect `http:` on its own, so `http://archlang.uk` would have served plaintext. |
+| `security_level` | `medium` | **`essentially_off`** | Free-plan "medium" challenges bad-reputation IPs, and Actions runners share IPs with the whole internet. A public static site has nothing to protect. |
+
+`rocket_loader`, `always_online`, `development_mode`, `polish` and `mirage` were already `off`, and
+`ssl` was already `strict`. **Bot Fight Mode is NOT readable with the migration token's scopes** — it
+lives behind the Bot Management API — so it was verified empirically instead, and that is the check
+to repeat: `curl -A "archlang-smoke/1" -o /dev/null -w '%{http_code}' https://archlang.uk/` must
+return `200`. It did, on both hostnames.
+
+**Two settings were deliberately left alone.** Zone-level HSTS stays **disabled**: the header is sent
+by `_headers` instead, which is where Vercel sent it from, keeps it in version control, and avoids a
+two-year commitment made from a dashboard. And `min_tls_version` stays at `1.0` — it is weak, but it
+was weak before the migration too, and changing it is a client-compatibility decision, not a hosting
+one.
+
+## Deploy pipeline
+
+Push to `main` triggers **`.github/workflows/deploy.yml`** (the "Deploy (Cloudflare)" workflow),
+which runs a two-site matrix: `npm ci` → `npm run docs:build` / `npm run playground:build` (each
+builds the **core first**, then the site) → `wrangler deploy` from the site's directory → the
+unchanged `scripts/smoke.mjs` check against the live origin. Merging a PR to `main` is what ships
+new site content. A branch push deploys nothing.
+
+Three things about it that are load-bearing:
+
+- **`actions/checkout` uses `fetch-depth: 0`.** `docs-site/.vitepress/config.ts` sets
+  `lastUpdated: true`, which reads each page's git commit time **at build time**. A depth-1 clone
+  has no history, so every "Last updated" stamp would silently collapse to the deploy commit — a
+  wrong answer with no error.
+- **Deploys run from CI, not from Cloudflare's Git integration.** The build is a monorepo build
+  (the core must be built before either site; `docs-site/sync-docs.mjs` hard-exits without
+  `dist/`), and the smoke check belongs welded to the deploy that produced it. See
+  [ADR 0019](adr/0019-cloudflare-workers-hosting.md).
+- **`wrangler` is version-pinned** in `deploy.yml`, a token-bearing job. Bump it deliberately, to a
+  version at least 14 days old that npm does not mark deprecated (`npm view wrangler@<v> deprecated`).
+
+Two repository secrets are required: `CLOUDFLARE_API_TOKEN` (Workers Scripts:Edit + Workers
+Routes:Edit + Workers KV Storage:Edit on the account, DNS:Edit + Zone:Read on the zone) and
+`CLOUDFLARE_ACCOUNT_ID`.
+
+### `_headers` and `_redirects`, and why each rule exists
+
+`docs-site/public/_headers`, `playground/public/_headers` and `playground/public/_redirects` are
+parsed by the Worker's asset layer and are never served (a request for `/_headers` is a 404 —
+verified). Each rule was written against a **measured** difference from what Vercel used to send,
+not on principle.
+
+**The block that matters most is the one no test can see.** Vercel set three headers implicitly on
+every response; Cloudflare sets **none** of them. All three are now restored under `/*` on **both**
+sites:
+
+| Header | Value | Why |
+|--------|-------|-----|
+| `Access-Control-Allow-Origin` | `*` | The JSON Schemas are published under their canonical `$id` URLs (`https://archlang.uk/plan.schema.json` is what `src/plan-json.ts` writes into every Plan JSON document), and `llms.txt` advertises the whole root as machine-fetchable. Dropping CORS silently breaks any browser-context validator or agent. On the playground it matters too: `embed.html` is designed to be framed by other sites, and it is the target of every `#z=` permalink the README and docs emit. |
+| `Content-Disposition` | `inline` | Without it a `text/markdown` response is offered as a **download** instead of shown, which defeats the append-`.md` convention entirely. |
+| `Strict-Transport-Security` | `max-age=63072000` | Browsers hold Vercel's two-year max-age today; matching it keeps the header refreshing instead of silently expiring in 2028. `includeSubDomains` is deliberately **absent**, exactly as Vercel sent it — turning it on would newly bind every subdomain of `archlang.uk`. |
+
+**NO TEST IN THIS REPOSITORY WOULD CATCH THE CORS LOSS.** `scripts/smoke.mjs` is a Node `fetch` and
+Playwright's `request` fixture are both exempt from CORS enforcement, so a missing
+`Access-Control-Allow-Origin` reads as a perfectly healthy 200 to every check this repo runs while
+being broken for every browser-context consumer. That is a standing gap, not a solved problem: if
+you ever change these files, verify CORS from an actual browser origin, because the green suite
+will not tell you.
+
+The rest of the rules:
+
+- **`/assets/*` → `Cache-Control: public, max-age=31536000, immutable`** (both sites). Cloudflare's
+  default is `public, max-age=0, must-revalidate`, which revalidates every fingerprinted bundle on
+  every page load. Vite and VitePress hash everything under `/assets/`, so those URLs can never
+  change identity. Every other route keeps the revalidating default, which is what makes a deploy
+  visible immediately.
+- **`/<page>.md` → `text/markdown; charset=utf-8`** (docs only), one exact-path rule per raw
+  markdown copy. Cloudflare types `.md` as `text/markdown` with **no charset**; Vercel sent the
+  charset. A `text/*` response without one is latin-1 by default in some clients, which mojibakes
+  every em-dash in the raw markdown copies. The rules are **generated** between the marker lines in
+  `docs-site/public/_headers` by `npm run gen:docs-headers`, from the `PAGES` and `SITE_PAGES`
+  tables in `docs-site/sync-docs.mjs`; a hand edit inside the markers fails `check:drift`. They
+  are deliberately not a `/*.md` glob: a glob also matches a missing page, and its 404 HTML would
+  go out labelled `text/markdown`. `vitepress preview` ignores `_headers`, so only
+  `scripts/smoke.mjs` against the deployed host proves the charset and the unlabelled 404.
+- **`/archlang.gbnf` → `text/plain; charset=utf-8`** (docs only). Cloudflare sends **no
+  `Content-Type` at all** for that extension; Vercel sent `application/octet-stream`. Both deliver
+  a machine-readable route as an opaque download.
+- **`/  /index.html  200`** (playground only, in `_redirects`). Not a redirect: a **status-200 rule
+  is a rewrite**, and the redirect layer runs before the asset lookup. It exists to give `/` a file
+  under `html_handling: "none"` — see below.
+- **`X-Frame-Options: SAMEORIGIN` + `Content-Security-Policy: frame-ancestors 'self'`** on the
+  playground's `/` **and** `/index.html` — and deliberately **not** on `/embed.html`. The asymmetry
+  is the rule, not an oversight: a `#z=` permalink carries a whole plan in the fragment and a room
+  `label` is author text, so what turns a compiled drawing into a working deception is the full
+  editor chrome framed inside someone else's page. The chrome-less embed viewer is the surface that
+  is *meant* to be framed (the README's `<iframe>` snippet, blogs, Confluence), so it carries
+  neither header. `scripts/smoke.mjs` asserts both directions, the absence included — a widened
+  `/*` rule would protect the shell and silently break every embed on the internet, and nothing
+  else in this repo can see that.
+- **`_headers` matches the REQUEST path, not the file the asset layer resolves to.** Measured on a
+  local `wrangler dev` against the playground's own config, with two probe rules carrying different
+  values: `/` came back with only the `/` rule's header and `/index.html` with only the
+  `/index.html` rule's. So the `/  /index.html  200` **rewrite carries no headers across** — a rule
+  written at one of those paths leaves the other bare, which is why the framing rule is written at
+  both. Worth re-checking by the same method before assuming any future rule covers `/`.
+
+### Asset routing (`html_handling`), and why the two sites differ
+
+- **Docs:** `html_handling: "drop-trailing-slash"` + `not_found_handling: "404-page"`. This is the
+  equivalent of Vercel's `cleanUrls: true` + `trailingSlash: false`: VitePress emits `guide.html`
+  and links to `/guide`, so `/guide` must serve that file and `/guide/` must redirect to the
+  extensionless form. VitePress emits its own `404.html`, and both `docs-site/e2e/routes.spec.ts`
+  and `scripts/smoke.mjs` use a `text/html` 404 as a **negative** signal, so an unmatched path must
+  404 rather than 200 with the shell.
+- **Playground:** `html_handling: "none"` + `not_found_handling: "none"`, plus one line in
+  `playground/public/_redirects`. `"none"` is an **exact-path lookup**, chosen for one measured
+  reason: it keeps **`/embed.html` a literal 200**. Every other mode drops the `.html` and 307s to
+  `/embed` — and `/embed.html` is a *published* URL, pasted into third-party `<iframe>` snippets, so
+  a redirect would cost every embed on the internet a round trip and gain nothing. Vercel served it
+  literally, and this keeps that.
+
+  The cost of `"none"` is that `/` is not itself a file and would fall through to
+  `not_found_handling`. `playground/public/_redirects` fixes that with `/  /index.html  200` — a
+  **status-200 rule is a rewrite, not a redirect**, and the redirect layer runs *before* the asset
+  lookup, so the site root serves `index.html` with no redirect and no 404.
+
+  `not_found_handling: "none"` is explicit because the absence is the decision: there is no
+  `404.html` here, and this is **not** a single-page application. `index.html` and `embed.html` are
+  two real entries and all state lives in the `#z=` hash, which never reaches the server (a short
+  link's `/s/<id>` is answered by the script, which only names a `#z=` link).
+  `"single-page-application"` would answer every mistyped path with a 200 and the editor shell,
+  turning a 404 into a false success.
+
+Verified on a `*.workers.dev` staging origin **before** any DNS change: 42/42 docs smoke checks,
+3/3 playground smoke checks, 46/46 docs `@prod` Playwright cases (including the byte-equality
+staleness probes) and 9/9 playground `@prod` cases; `/guide` → 200 `text/html`, `/guide/` → 307 to
+`/guide`, `/nope` → 404 with the VitePress page, `/_headers` → 404, hashed assets carrying
+`cache-control: public, max-age=31536000, immutable`. **Staging first, then DNS** is the order to
+keep — every one of those checks can be run against a `workers.dev` origin with the live site
+untouched.
+
+## Changing a public URL in code (do this carefully)
+
+**This section did not apply to the 2026-09 hosting migration** — no public URL changed there — but
+it is still the right playbook if one ever does, and it is kept verbatim for that reason.
+
+If a public host ever changes again, the URL is hard-coded in ~30 source files plus generated
+artifacts. Two traps caught us during the 2026-07-15 migration:
+
+1. **Grep for the host prefix *without* dots.** Some references write the host as a regex with escaped
+   dots (`archlang-playground\.vercel\.app`, e.g. in `test/readme-permalink.test.ts`). A literal-dot
+   grep (`archlang-playground.vercel.app`) silently misses those. Search `archlang-playground` /
+   `archlang-docs` (no dots) to catch both the literal and escaped forms.
+2. **Edit sources, then regenerate — never hand-edit generated files.** The JSON Schema `$id`s live in
+   `src/plan-json.ts` / `src/intent.ts` (→ `npm run gen:plan-schema` / `gen:intent-schema`); the
+   agent-context URLs live in `skills/archlang/SKILL.md` (→ `npm run gen:llms`). `check:drift` fails if you edit the
+   generated `schemas/*.json` / `llms-full.txt` directly. The README `#z=` playground permalinks are
+   **base-independent** (the compressed hash encodes only the example source), so only the host prefix
+   changes — the hash stays valid.
+
+**Verification after any URL change:** `npm run check` (full suite, incl. the schema-`$id`,
+README-permalink, and llm-prompt tests) + `npm run check:drift` (generated-file diff should be
+URL-only) + `npm run docs:build` (site + sitemap). Then confirm the live hosts over HTTPS.
+
+## SEO
+
+The docs site emits `sitemap.xml` with `hostname: https://archlang.uk` (VitePress `sitemap` config in
+`docs-site/.vitepress/config.ts`). The JSON Schemas are served at their canonical `$id` URLs
+(`https://archlang.uk/plan.schema.json`, `https://archlang.uk/intent.schema.json`). Both survived
+the hosting migration untouched, because the hostname did not move.
+
+`workers_dev: false` on both Workers is part of this: without it each site would also be reachable —
+and indexable, since `robots.txt` says `Allow: /` — at a second `*.workers.dev` origin.
+
+### IndexNow
+
+Every deploy ends by telling the IndexNow participants (Bing, Yandex, Seznam, Naver and the rest)
+which URLs changed, instead of waiting for a crawler to come back on its own schedule. The step is
+`scripts/indexnow.mjs`, run per matrix leg in `.github/workflows/deploy.yml` immediately **after**
+the smoke check — there is no point announcing a deploy that has not been proven to be serving. It
+reads the URL list out of the site's own freshly-deployed `sitemap.xml` (nothing is hardcoded, so a
+new page is announced the day it ships) and POSTs one batch to `https://api.indexnow.org/IndexNow`.
+
+**The key is public, deliberately.** IndexNow authenticates by asking the submitter to serve the key
+at `https://<host>/<key>.txt`; controlling that URL is the whole proof of ownership. So the key file
+is committed — `docs-site/public/<key>.txt` and `playground/public/<key>.txt`, content exactly the
+key — and the key itself is a GitHub repository **variable** (`INDEXNOW_KEY`), not a secret. A secret
+would be masked in the workflow log for no benefit, and would make a 403 or 422 unreadable at exactly
+the moment the log is what you have.
+
+**The step can never fail the deploy.** `scripts/indexnow.mjs` always exits 0. A key file that has
+not propagated to the edge yet, a site with no sitemap, `api.indexnow.org` being down, a 429 — every
+one of those prints a `::warning::` line and returns 0, because the site is already live and already
+correct by the time this runs. The check that *does* gate is `scripts/smoke.mjs`, the step before it.
+With `INDEXNOW_KEY` unset (a fork, or a checkout predating the variable) the script says so and exits
+0 without touching the network; `test/indexnow-script.test.ts` pins that path by spawning the script.
+The one non-zero exit is `2`, for a malformed command line — a broken workflow step to fix, which
+could never be mistaken for a ping result.

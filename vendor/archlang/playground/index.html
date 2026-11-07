@@ -1,0 +1,415 @@
+<!doctype html>
+<html lang="en" data-mode="view" data-booting>
+  <head>
+    <meta charset="utf-8" />
+    <!-- `interactive-widget=resizes-content`: the on-screen keyboard shrinks the layout viewport,
+         so the one-screen phone page (styles/chrome.css) keeps the editor above the keyboard
+         instead of being pushed under it. -->
+    <meta name="viewport" content="width=device-width, initial-scale=1, interactive-widget=resizes-content" />
+    <title>ArchLang Playground — code to floor plans</title>
+    <meta
+      name="description"
+      content="Live playground for ArchLang — a small language that compiles to professional SVG floor plans. CodeMirror 6 editor with syntax highlighting and inline lint."
+    />
+    <!-- ArchLang brand: A-frame-floor-plan favicon (SVG), apple-touch icon, the source-world
+         theme colour, and the OG/Twitter social card. Assets in public/brand/ (see brand/README.md). -->
+    <link rel="icon" type="image/svg+xml" href="/brand/archlang-icon-plum.svg" />
+    <link rel="apple-touch-icon" href="/brand/archlang-apple-touch.png" />
+    <meta name="theme-color" content="#eceef2" />
+    <!-- Light-only (ADR 0014). The real Chromium Auto-Dark opt-out is the CSS
+         `color-scheme: only light` in styles/tokens.css; this states the same intent. -->
+    <meta name="color-scheme" content="light" />
+    <!-- Before the first paint, so the layout never jumps: which mode this visit opens in
+         (`&edit` in the hash, the rule `hasEditFlag` in src/share.ts reads), and whether the
+         drawing built into this page is the plan it opens. A `#z=`/`#src=` link or an
+         autosaved draft (`KEYS.source` in src/storage.ts) opens another plan, and a saved render
+         theme (`KEYS.theme`) draws the plan differently, so in those cases the built-in drawing is
+         hidden until the app's own is compiled. (The a11y switch is not persisted.) Without
+         JavaScript neither runs, and the page shows the built-in drawing in view mode. -->
+    <script>
+      (function () {
+        var root = document.documentElement;
+        var hash = location.hash;
+        root.dataset.mode = /(?:^#|&)edit(?:&|$)/.test(hash) ? "edit" : "view";
+        var other = /[#&](?:z|src)=/.test(hash);
+        if (!other) {
+          try {
+            other =
+              localStorage.getItem("archlang.pg.source") !== null || !!localStorage.getItem("archlang.pg.theme");
+          } catch (e) {}
+        }
+        if (other) root.classList.add("pg-other");
+      })();
+    </script>
+    <!-- One URL, one page. The `#z=` permalink fragment never reaches the server, so every
+         shared plan collapses onto this address: it is the canonical one, and the static
+         per-example pages under /examples/ are what carries a plan into an index. -->
+    <link rel="canonical" href="https://playground.archlang.uk/" />
+    <meta property="og:type" content="website" />
+    <meta property="og:url" content="https://playground.archlang.uk/" />
+    <meta property="og:site_name" content="ArchLang" />
+    <meta property="og:title" content="ArchLang Playground — code to floor plans" />
+    <meta
+      property="og:description"
+      content="Write ArchLang in the browser and watch it compile to a professional SVG floor plan — live, client-side."
+    />
+    <meta property="og:image" content="https://playground.archlang.uk/brand/archlang-og.png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta
+      property="og:image:alt"
+      content="The ArchLang wordmark beside its A-frame floor-plan mark, above the words: code to floor plans."
+    />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="ArchLang Playground — code to floor plans" />
+    <meta
+      name="twitter:description"
+      content="Write ArchLang in the browser and watch it compile to a professional SVG floor plan — live, client-side."
+    />
+    <meta name="twitter:image" content="https://playground.archlang.uk/brand/archlang-og.png" />
+    <meta
+      name="twitter:image:alt"
+      content="The ArchLang wordmark beside its A-frame floor-plan mark, above the words: code to floor plans."
+    />
+    <!-- Structured data for search and answer engines. No crawler executes this page's
+         JavaScript, so everything a machine can learn here has to be in the served bytes:
+         this block plus the heading in the header and the lede under the drawing. Keep it in step with the docs site's own
+         graph — the same WebSite @id is the parent of both hosts, and every archlang.uk @id
+         here is a node the docs home defines. The %ARCHLANG_…% values are filled at build time by
+         vite.config.js: the version from the root package.json, each %ARCHLANG_ID_…% from the
+         ids in site-shared/identity.json, which the docs graph defines its nodes by. No sameAs: this app is not the library,
+         whose listings live on the docs #software node it points at. -->
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@graph": [
+          {
+            "@type": "WebSite",
+            "@id": "https://playground.archlang.uk/#website",
+            "url": "https://playground.archlang.uk/",
+            "name": "ArchLang Playground",
+            "description": "Write ArchLang floor-plan source in the browser and compile it to a dimensioned SVG plan, client-side.",
+            "inLanguage": "en",
+            "isPartOf": {
+              "@type": "WebSite",
+              "@id": "%ARCHLANG_ID_WEBSITE%",
+              "url": "https://archlang.uk/",
+              "name": "ArchLang"
+            },
+            "publisher": { "@id": "%ARCHLANG_ID_AUTHOR%" }
+          },
+          {
+            "@type": "SoftwareApplication",
+            "@id": "https://playground.archlang.uk/#app",
+            "name": "ArchLang Playground",
+            "applicationCategory": "DeveloperApplication",
+            "operatingSystem": "Any",
+            "url": "https://playground.archlang.uk/",
+            "description": "An in-browser editor for ArchLang, an open-source (MIT) declarative language for floor plans: write .arch source and it compiles to a dimensioned SVG plan, with linting and geometric analysis.",
+            "browserRequirements": "Requires JavaScript.",
+            "inLanguage": "en",
+            "license": "https://opensource.org/licenses/MIT",
+            "softwareVersion": "%ARCHLANG_VERSION%",
+            "isPartOf": { "@id": "%ARCHLANG_ID_SOFTWARE%" },
+            "isBasedOn": { "@id": "%ARCHLANG_ID_SOFTWARE%" },
+            "author": { "@id": "%ARCHLANG_ID_AUTHOR%" },
+            "softwareHelp": { "@type": "CreativeWork", "url": "https://archlang.uk/guide" },
+            "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" }
+          }
+        ]
+      }
+    </script>
+  </head>
+  <body>
+    <!-- Header = source-world chrome (cool grey), one row (ruling PG-D6): the brand, which is the
+         page's one heading, the plan gallery, and four controls — Source (the editor), Share (the
+         links, Embed and every export, ruling PG-D5), ⋯ (More: the render theme, a11y, the edit
+         actions and the related sites) and Make your own (the one redline control, which also
+         holds the hand-it-to-an-AI links). Checks, the review rings, is a layer of the drawing and
+         sits on the stage's toolbar (ruling PG-D3). Each control keeps the id the app and the specs
+         know it by. Source carries a small dot while the plan is compiling or broken (main.ts).
+         NB the heading's tag name is spelled out in prose here on purpose: scripts/smoke.mjs
+         asserts the served page contains a literal opening h1 tag, and a comment that happened to
+         contain one would make that check pass over a page that had lost it. -->
+    <header>
+      <h1 class="tb-brand">
+        <!-- The plum mark, not the white one: the header is a light surface. -->
+        <img class="brand-mark" src="/brand/archlang-icon-plum.svg" alt="" width="20" height="20" />
+        <span class="wordmark"><b>Arch</b>Lang</span>
+        <span class="badge">Playground</span>
+      </h1>
+      <!-- The plan gallery (ruling PG-D2): the one way to choose a plan. A non-modal disclosure,
+           like Share and More: with no script it opens by itself, and every card is a link to the
+           plan's static page. Its cards, their thumbnails and the trigger's plan name are written
+           into the served page at build time (scripts/gen-static.mjs); with script, gallery.ts
+           opens a plan here instead, filters, and moves through the grid with the arrow keys. A
+           closed <details> renders nothing, so no thumbnail is fetched before the first open. -->
+      <details class="gal" id="gallery">
+        <summary class="hd-btn gal-trigger" id="planPicker" aria-controls="galleryPanel" title="Choose a plan">
+          <span class="gal-glyph" aria-hidden="true">▦</span>
+          <span class="vh">Plan: </span><span class="gal-current" id="planName"><!--prerender:plan-name--></span>
+          <span class="gal-caret" aria-hidden="true">▾</span>
+        </summary>
+        <div class="gal-panel" id="galleryPanel" role="group" aria-label="Example plans">
+          <input type="search" id="galleryFilter" class="gal-filter" placeholder="Filter plans by name" aria-label="Filter plans by name" autocomplete="off" spellcheck="false" />
+          <div class="gal-groups" id="galleryGroups"><!--prerender:gallery--></div>
+          <p class="gal-empty" id="galleryEmpty" role="status"></p>
+          <a class="gal-all" href="/examples/">All plans →</a>
+        </div>
+      </details>
+      <div class="spacer"></div>
+      <button id="sourceToggle" class="hd-btn" type="button" aria-pressed="false" title="Show the ArchLang source beside the drawing">Source</button>
+      <!-- Share (ruling PG-D5): every way the plan leaves the page, in one menu. Its buttons are
+           `disabled` until the app is up (actions.ts wires them); jsPDF and the GLB writer load on
+           their first click. -->
+      <details class="tools" id="share">
+        <summary class="hd-btn">Share <span aria-hidden="true">▾</span></summary>
+        <div class="tools-panel share-panel">
+          <!-- Two links (ADR 0034). The short one is stored on this site's server, and only when
+               it is chosen here; the full one carries the plan after the #, which no browser
+               sends to a server. The note says so next to the two buttons. -->
+          <div class="tools-group" role="group" aria-labelledby="shareLinks">
+            <p class="tools-h" id="shareLinks">Link</p>
+            <p id="shareNote" class="tools-note">A short link stores this plan on archlang.uk's server; the full link does not.</p>
+            <button id="copyShortLink" type="button" class="tb-primary" aria-describedby="shareNote" disabled>Copy short link</button>
+            <button id="copyLink" type="button" aria-describedby="shareNote" disabled>Copy full link</button>
+            <button id="embed" type="button" data-close disabled title="Copy an iframe snippet to embed this plan">Embed</button>
+          </div>
+          <!-- Export: the drawing on screen (the storey selected), copied or downloaded. GLB is the
+               whole plan, written in the page; its note says the browser does not validate it. -->
+          <div class="tools-group" role="group" aria-labelledby="shareExport">
+            <p class="tools-h" id="shareExport">Export</p>
+            <div class="tools-row">
+              <button id="copySvg" type="button" data-close disabled title="Copy the SVG markup">Copy SVG</button>
+              <button id="copyPng" type="button" data-close disabled title="Copy a PNG image">Copy PNG</button>
+            </div>
+            <p class="tools-sub" id="downloadHead">Download</p>
+            <div class="tools-row" role="group" aria-labelledby="downloadHead">
+              <button type="button" data-download="svg" data-close disabled aria-label="Download SVG">SVG</button>
+              <button type="button" data-download="png" data-close disabled aria-label="Download PNG">PNG</button>
+              <button type="button" data-download="pdf" data-close disabled aria-label="Download PDF">PDF</button>
+              <button type="button" data-download="dxf" data-close disabled aria-label="Download DXF">DXF</button>
+              <button type="button" data-download="txt" data-close disabled aria-label="Download TXT">TXT</button>
+              <button type="button" data-download="glb" data-close disabled aria-label="Download GLB" aria-describedby="glbNote">GLB</button>
+            </div>
+            <!-- Filled at startup from glb-note.ts, the one home of the words (main.ts). -->
+            <p id="glbNote" class="tools-note"></p>
+          </div>
+        </div>
+      </details>
+      <!-- More (⋯): the render theme and a11y, the edit actions, and the related sites. -->
+      <details class="tools" id="more">
+        <summary class="hd-btn" aria-label="More" title="More"><span aria-hidden="true">⋯</span></summary>
+        <div class="tools-panel">
+          <!-- Edit: these change the source, so they open the editor first. -->
+          <div class="tools-group" role="group" aria-labelledby="moreEdit">
+            <p class="tools-h" id="moreEdit">Edit</p>
+            <button id="formatSrc" type="button" data-edit data-close disabled title="Reformat the source to canonical style">Format</button>
+            <button id="finishSrc" type="button" data-edit data-close disabled title="Add what a finished sheet needs (paper, scale, dimensions, title, schedule, legend, furniture); Ctrl+Z undoes it">Finish</button>
+            <button id="saved" type="button" data-edit aria-haspopup="true" disabled>Saved ▾</button>
+          </div>
+          <div class="tools-group" role="group" aria-labelledby="moreView">
+            <p class="tools-h" id="moreView">View</p>
+            <!-- The COMPILER's render themes — these style the produced SVG plan, not the
+                 app chrome. "Dark" is a language feature (src/theme.ts), not a dark mode
+                 for this page: the app itself is light-only (ADR 0014). Leave it be. -->
+            <select id="theme" aria-label="Render theme">
+              <option value="">Default</option>
+              <option value="blueprint">Blueprint</option>
+              <option value="dark">Dark</option>
+              <option value="mono">Mono</option>
+              <option value="presentation">Presentation</option>
+              <option value="rendered">Rendered</option>
+            </select>
+            <label class="tb-check" title="Emit SVG <title>/<desc>/role accessibility metadata (accTitle/accDescr, else the describe() caption)">
+              <input type="checkbox" id="accessible" />
+              a11y
+            </label>
+          </div>
+          <nav class="tools-group tools-links" aria-label="Related sites">
+            <p class="tools-h">Links</p>
+            <a href="https://archlang.uk/agents" target="_blank" rel="noopener" title="Use ArchLang from an agent: CLI, MCP server, skill, llms.txt">Agents ↗</a>
+            <a href="https://archlang.uk" target="_blank" rel="noopener">Docs ↗</a>
+            <a href="https://archlang.uk/guide">Guide</a>
+            <a href="https://archlang.uk/reference">Language reference</a>
+            <a href="https://archlang.uk/spec">One-page spec</a>
+            <a href="/examples/"><!--prerender:count--> example plans</a>
+            <a href="https://www.npmjs.com/package/@chanmeng666/archlang">npm</a>
+            <a href="https://github.com/ChanMeng666/archlang" target="_blank" rel="noopener">GitHub</a>
+            <a href="https://archcanvas.uk" target="_blank" rel="noopener">ArchCanvas ↗</a>
+          </nav>
+        </div>
+      </details>
+      <button id="makeOwn" class="hd-btn hd-primary" type="button" aria-haspopup="dialog">Make your own</button>
+    </header>
+    <noscript>
+      <p class="noscript-note">
+        The editor compiles in the browser, so it needs JavaScript. Without it, the language is
+        documented in full at <a href="https://archlang.uk/reference">archlang.uk/reference</a>, every
+        example plan is published as a static page under <a href="/examples/">/examples/</a>, and the
+        same compiler runs offline from the command line via
+        <a href="https://www.npmjs.com/package/@chanmeng666/archlang">npm</a>.
+      </p>
+    </noscript>
+    <!-- Phone-width view switcher of edit mode (≤900px only; CSS hides it above). Below the
+         breakpoint the workspace shows ONE view at a time, full-height, and this is its one view
+         control (card PG5b ①): the output tab row is hidden there, so each function has one
+         button. Plan, 3D, Facts and Checks are the output tabs (Checks with the compile
+         diagnostics over it, counted on its button); Code is the editor. mobile-views.ts sets
+         `main[data-mview]`. Toggle buttons, not a tablist: the views are layout states of one
+         workspace, and the desktop layout shows the editor and the output at once. -->
+    <nav class="mviews" id="mviews" aria-label="Workspace view">
+      <button class="mview" type="button" data-mview="code" aria-pressed="false">Code</button>
+      <button class="mview" type="button" data-mview="plan" aria-pressed="true">Plan</button>
+      <button class="mview" type="button" data-mview="3d" aria-pressed="false">3D</button>
+      <button class="mview" type="button" data-mview="facts" aria-pressed="false">Facts</button>
+      <button class="mview" type="button" data-mview="checks" aria-pressed="false">Checks <span class="mview-count" id="mviewCount"></span></button>
+    </nav>
+    <main data-mview="plan">
+      <section class="pane">
+        <h2 class="src-tab">SOURCE.ARCH</h2>
+        <div id="editor"></div>
+        <div id="errors"></div>
+        <p class="problems-empty">No problems — the plan compiles clean.</p>
+      </section>
+      <section class="pane">
+        <!-- Edit mode's one row of output tabs (ruling PG-D3): Plan · 3D · Facts · Checks. View mode
+             has no tab row at all: the stage's Plan | 3D switch below is its only view control, and
+             in edit mode these tabs replace that switch, so each mode has exactly one Plan/3D
+             control. The tabs stay the one mechanism under both (main.ts), so `&3d`, the switch and
+             the tabs can never disagree. -->
+        <h2 class="out-tabs">
+          <span class="tabs" role="tablist" aria-label="Output view">
+            <button class="tab active" id="tab-preview" data-tab="preview" type="button" role="tab" aria-selected="true" aria-controls="preview">Plan</button>
+            <button class="tab" id="tab-preview3d" data-tab="preview3d" type="button" role="tab" aria-selected="false" aria-controls="preview3d">3D</button>
+            <button class="tab" id="tab-facts" data-tab="facts" type="button" role="tab" aria-selected="false" aria-controls="factsView">Facts</button>
+            <button class="tab" id="tab-checks" data-tab="checks" type="button" role="tab" aria-selected="false" aria-controls="checksView">Checks</button>
+          </span>
+        </h2>
+        <!-- The stage's own overlay row, of no height, over whichever view is on screen, so what
+             sits in it stays put, and keeps its focus, as the view under it changes:
+             - Plan | 3D (public-surfaces card X5): view mode's switch between the drawing and the 3D
+               preview, top-left. It drives the Plan and 3D tabs; edit mode hides it (the tabs are
+               its control there).
+             - The storey switcher (`#storeys`, level-switcher.ts), just under it, in both modes: the
+               one home of the storey on screen, which drives the drawing, the 3D preview, the facts
+               and every export. Toggle buttons in a `role="group"`, not tabs. Empty and hidden
+               until a plan with `level` blocks is compiled.
+             - The status (`#status`): a notice, top centre, only while the plan is compiling (and
+               slow enough to notice) or broken, or for a moment after an action; dismissible. When
+               the plan is fine nothing shows. Its live region is `#statusLive`, a mirror under
+               <body> (below `main`), never inside a box that is not drawn.
+             Hidden until main.ts wires it: with no script there is nothing to switch to. -->
+        <div class="stage-switch-row" id="stageSwitchRow" hidden>
+          <div class="stage-switch" role="group" aria-label="View">
+            <button type="button" id="viewPlan" aria-pressed="true" title="Show the drawing">Plan</button>
+            <button type="button" id="view3d" aria-pressed="false" title="Show the 3D preview, from the same source">3D</button>
+          </div>
+          <span class="lv-group" id="storeys" role="group" aria-label="Storey" hidden></span>
+          <div class="stage-status" id="status">
+            <span id="statusText"></span>
+            <button type="button" class="stage-status-x" id="statusDismiss" aria-label="Dismiss this message" hidden>×</button>
+          </div>
+        </div>
+        <div id="preview" class="tabview active" role="tabpanel" aria-labelledby="tab-preview">
+          <div class="pz-viewport">
+            <div class="pz-stage"><!--prerender:plan--></div>
+            <div class="pz-toolbar">
+              <button data-pz="out" type="button" title="Zoom out" aria-label="Zoom out">−</button>
+              <button data-pz="in" type="button" title="Zoom in" aria-label="Zoom in">+</button>
+              <button data-pz="fit" type="button" title="Fit to view" aria-label="Fit to view">⤢</button>
+              <button data-pz="full" type="button" title="Fullscreen" aria-label="Fullscreen">⛶</button>
+              <span class="pz-sep"></span>
+              <!-- Checks (card P6; on the stage since PG-D3): a layer of the drawing, like Paths. It
+                   rings what compile and lint warn about, as `arch preview --review` does. The rings
+                   are 2D only, so it leaves with the drawing when the 3D preview is on screen. -->
+              <button id="checks" data-layer="checks" type="button" aria-pressed="false" title="Ring what compile and lint warn about, as arch preview --review does">Checks</button>
+              <button data-pz="paths" type="button" aria-pressed="false" title="Toggle circulation paths overlay" aria-label="Toggle circulation paths">Paths</button>
+            </div>
+          </div>
+        </div>
+        <!-- Filled on the tab's first open by preview3d.ts (lazy: three.js never loads before). -->
+        <div id="preview3d" class="tabview" role="tabpanel" aria-labelledby="tab-preview3d"></div>
+        <!-- Facts (edit mode): describe()'s facts and the takeoff, two sections of one panel, from the
+             same describe() data. The takeoff is filled on the tab's first open by takeoff-panel.ts. -->
+        <div id="factsView" class="tabview tv-sections" role="tabpanel" aria-labelledby="tab-facts">
+          <section class="tv-section" aria-labelledby="describeHead">
+            <h3 class="tv-h" id="describeHead">Describe</h3>
+            <div id="describe"></div>
+          </section>
+          <section class="tv-section" aria-labelledby="takeoffHead">
+            <h3 class="tv-h" id="takeoffHead">Takeoff</h3>
+            <div id="takeoff"></div>
+          </section>
+        </div>
+        <!-- Checks (edit mode; on a phone, under the compile diagnostics): the review findings the drawing's Checks
+             layer rings (checks-panel.ts lists them here in edit mode), the lint panel with its
+             profile, Repair, Suggest and the Finish results, and the intent check, as sections of
+             one panel. -->
+        <div id="checksView" class="tabview tv-sections" role="tabpanel" aria-labelledby="tab-checks">
+          <!-- The review findings: checks-panel.ts's own section ("Checks (default checks): …"),
+               put here by main.ts on the tab's first open. -->
+          <div class="tv-section" id="checksHost"></div>
+          <section class="tv-section" id="lint" aria-labelledby="lintHead">
+            <h3 class="tv-h" id="lintHead">Lint</h3>
+            <div class="lint-controls">
+              <label for="lintProfile">Profile</label>
+              <select id="lintProfile" aria-label="Lint profile"></select>
+              <button id="repair" class="repair-btn" hidden title="Deterministically fix furniture placement (ADR 0006)">Repair furniture ▸</button>
+              <button id="suggest" class="repair-btn" hidden title="Suggest door/window statements that resolve reachability and window faults">Suggest topology ▸</button>
+              <p id="lintCaption" class="lint-caption"></p>
+            </div>
+            <div id="finishPanel" class="repair-panel" role="region" aria-label="Finish results" hidden></div>
+            <div id="repairPanel" class="repair-panel" hidden></div>
+            <div id="suggestPanel" class="repair-panel" hidden></div>
+            <div id="lintOutput"></div>
+          </section>
+          <section class="tv-section" id="intent" aria-labelledby="intentHead">
+            <h3 class="tv-h" id="intentHead">Intent</h3>
+            <div class="lint-controls">
+              <label for="intentSrc">Brief (intent JSON)</label>
+              <button id="intentRun" class="repair-btn">Check ▸</button>
+              <p class="lint-caption">
+                Write the brief down as data, then gate the plan on it — the same contract
+                <code>arch validate --intent</code> and <code>arch score --brief</code> use.
+              </p>
+            </div>
+            <textarea id="intentSrc" class="intent-src" spellcheck="false" aria-label="Intent JSON"></textarea>
+            <div id="intentOutput"></div>
+          </section>
+        </div>
+        <!-- The stage's foot (ruling PG-D6), shared by the drawing and the 3D preview: the facts on
+             the left (filled by main.ts), the page's lede on the right. Outside both views, so it
+             stays put as the Plan | 3D switch flips them; main.ts hides it under edit mode's Facts
+             and Checks tabs, which say the facts themselves. The lede is served bytes, small and
+             VISIBLE (never hidden text): no crawler runs this page's JavaScript, so the heading in
+             the header, this sentence and the drawing above are all it reads. The sentence is
+             doors.json's canonical line, filled in at build time by vite.config.js
+             (`canonicalLine`), never retyped here. The facts' `role="group"` is what makes their
+             `aria-label` count (a bare <div>'s is not reliably exposed): the figures describe the
+             SELECTED storey, and the name says so. -->
+        <div class="facts-row" id="factsRow">
+          <div id="facts" class="facts" role="group" aria-label="Plan facts"></div>
+          <p class="lede" id="lede"><!--doors:canonical-line--></p>
+        </div>      </section>
+    </main>
+    <!-- The status's live region (main.ts `sayStatus`): the stage notice's text, mirrored here,
+         visually hidden. A child of <body>, so no layout ever puts it in a `display: none` box (the
+         stage's pane is not drawn in the phone's Code view): assistive tech hears every state,
+         errors typed on a phone included (card PG5b ②). -->
+    <p class="vh" id="statusLive" role="status" aria-live="polite"></p>
+    <!-- Make your own: the ways to get a plan of your own. A native <dialog> opened with
+         showModal(), so focus stays inside it and Escape closes it. Its body is written on the
+         first open by make-own.ts (its own chunk), from site-shared/doors.json, the one file every
+         public surface reads its doors from: no door URL is typed into this page. -->
+    <dialog id="makeOwnDialog" class="mo" aria-labelledby="makeOwnTitle">
+      <div class="mo-head">
+        <h2 id="makeOwnTitle">Make your own plan</h2>
+        <button type="button" class="mo-close" data-mo-close aria-label="Close">×</button>
+      </div>
+      <div id="makeOwnBody" class="mo-body"></div>
+    </dialog>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

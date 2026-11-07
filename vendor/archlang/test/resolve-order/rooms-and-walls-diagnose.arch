@@ -1,0 +1,16 @@
+# Resolve-order corpus (ADR 0028 §1): rooms AND walls both raise resolve-time diagnostics,
+# interleaved in source order, so a resolver that emitted them in its own pass order would
+# reorder `compile().diagnostics`. Every diagnostic here is deliberate.
+plan "Rooms and walls diagnose" {
+  units mm
+  grid 50
+
+  room id=a at (0,0) size 0x3000 label "Zero wide"
+  wall exterior thickness -5 { (0,0) (6000,0) }
+  room id=b at (0,0) size 3000x missing_h label "Unknown size"
+  wall id=w2 partition thickness 100 material marble { (0,3000) (6000,3000) }
+  room id=c at (3000,0) size 3000x3000 label "Label off" at (9000,9000)
+  wall id=w3 exterior thickness 200 { (0,0) (6000,0) (6000,6000) (0,6000) close }
+  door at (99999,99999) width 900
+  furniture sofa against wall nowhere in c
+}

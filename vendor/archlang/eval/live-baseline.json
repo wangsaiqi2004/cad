@@ -1,0 +1,11 @@
+{
+  "provider": "openai",
+  "model": "gpt-5.5-2026-04-23",
+  "date": "2026-07-12",
+  "judge": "2",
+  "valid": 23,
+  "semanticPass": 14,
+  "sound": 3,
+  "total": 26,
+  "note": "Calibrated L0 baseline, re-measured 2026-07-12 under the post-v1.15.0 author prompt (spec.llm.md gained the metric-unit-suffix line; judge v2 unchanged, seed 20260711, max_completion_tokens 16384, GH Actions run 29190294073). Supersedes the 2026-07-11 baseline (valid 25 / intent 13 / sound 4, pre-suffix prompt): movement is within run noise at n=26 and intent stays inside the predicted 45-60% band - the spec drift did not materially move the numbers. Same run's deterministic dividend (--l1): intent 18/26 (69%, ΔL0->L1 +4), sound 7/26 (+4), 8 briefs healed / 1 regressed by 41 repair moves + 0 fix edits - L1 numbers recorded for reference only; this baseline and every delta against it are L0. All 8 area assertions passed again (0 failures), re-confirming Gate G2's residual-0 verdict under the current prompt."
+}

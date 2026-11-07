@@ -1,0 +1,14 @@
+# Resolve-order corpus (ADR 0028 §1): the plan's positioning axes are part of the datum
+# table, so they are evaluated before walls; an axis beyond the modelling range must
+# still report AFTER every element diagnostic, exactly where it always did.
+plan "Axes and elements" {
+  units mm
+  grid 100
+  let big = 99999999999
+
+  axes { x at 0, 4000, big y at 0, missing_y, 3000 }
+  wall exterior thickness 200 material plush { (0,0) (8000,0) (8000,6000) (0,6000) close }
+  room id=r1 at (0,0) size 4000x6000 label "One"
+  room id=r2 right-of r1 size 4000x6000 label "Two" at (100,100)
+  window at (2000,0) width 1200 wall exterior
+}

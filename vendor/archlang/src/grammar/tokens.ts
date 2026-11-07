@@ -1,0 +1,632 @@
+/**
+ * The single source of truth for ArchLang's lexical grammar.
+ *
+ * Keyword categories, operators, and the comment/string/number rules live here
+ * once. `scripts/gen-grammars.ts` generates the editor grammars
+ * (`editors/archlang.tmLanguage.json` + the playground StreamLanguage) from this
+ * file, and `src/parser.ts` derives its statement-start set from
+ * {@link STATEMENT_STARTS}. CI regenerates and asserts no drift
+ * (`test/grammar-drift.test.ts`), so editing a keyword here updates both editor
+ * grammars. Borrows the one-grammar idea from Mermaid's `langium generate`.
+ *
+ * NB: the hand-written lexer (`src/lexer.ts`) emits every word as an `ident`;
+ * keywords are recognised at parse time. So this file feeds the *parser* and the
+ * *editor grammars* — it is the spec the lexer's operator/number/string rules
+ * mirror, not a table the lexer indexes at runtime.
+ */
+
+/**
+ * The `title { … }` block's field words, in the order the title block draws them — the one
+ * list the parser, the formatter, Plan JSON, the GBNF and the spec all read.
+ */
+export const TITLE_FIELDS = ["project", "drawn_by", "date", "number", "revision"] as const;
+export type TitleField = (typeof TITLE_FIELDS)[number];
+
+/** Keyword categories, by highlighting role. Order within each is stable. */
+export const KEYWORDS = {
+  /** Statement / declaration keywords → TextMate `keyword.control`, CM `keyword`. */
+  control: [
+    "plan",
+    "component",
+    "let",
+    "theme",
+    "title",
+    "style",
+    "import",
+    "for",
+    "if",
+    "while",
+    "else",
+    "set",
+    "strip",
+    "level",
+    "zone",
+    "place",
+    "axes",
+    "schedule",
+    "legend",
+    "site",
+    // `notes "…"` — the sheet's general-notes table. A statement keyword like `legend`;
+    // appended at the end so every earlier keyword keeps its position.
+    "notes",
+    // `keep <form> [grade]` (ADR 0033): the one reserved word the declared invariants add. Its
+    // form and grade words are contextual (`KEEP_WORDS` below), read in position after it only.
+    "keep",
+  ],
+  /** Built-in element kinds → `storage.type.element`, CM `typeName`. */
+  element: [
+    "wall",
+    "room",
+    "door",
+    "window",
+    "opening",
+    "furniture",
+    "dim",
+    "column",
+    "stair",
+    "elevator",
+    "escalator",
+    "roof",
+    "void",
+    // Appended at the END: `KEYWORDS.element` must equal `BUILTIN_DEFS`'s keyword
+    // list ELEMENT FOR ELEMENT AND IN ORDER (`test/element-keyword-drift.test.ts`), so a
+    // new element goes on the end of both lists or neither.
+    "outdoor",
+    "fence",
+    // `walls from rooms` (ADR 0028 §3). The word was an `enum` value (`dims auto walls`)
+    // and moved here: no word sits in two categories.
+    "walls",
+  ],
+  /** Setting / attribute keywords → `keyword.other`, CM `propertyName`. */
+  attribute: [
+    "units",
+    "grid",
+    "paper",
+    "scale",
+    "north",
+    "dims",
+    "accTitle",
+    "accDescr",
+    "material",
+    "angle",
+    "at",
+    "size",
+    "polygon",
+    "circle",
+    "arc",
+    "radius",
+    "width",
+    "thickness",
+    "label",
+    "hinge",
+    "swing",
+    "slide",
+    "open",
+    "offset",
+    "text",
+    "close",
+    "id",
+    // The pieces of a block `stair`, read only inside its `{ … }`: never `STATEMENT_STARTS`, or
+    // `room id=landing` would stop parsing.
+    "flight",
+    "landing",
+    "winders",
+    // The `title { … }` field words, from their one list.
+    ...TITLE_FIELDS,
+    "from",
+    "as",
+    "right-of",
+    "left-of",
+    "below",
+    "above",
+    "align",
+    "gap",
+    "uses",
+    // `room … floor tile`: leads a clause of the `room` line. Its values are in `enum` below or
+    // are the hatch words. `floor(x)`, the built-in, reads the same word in an expression.
+    "floor",
+    "rotate",
+    "against",
+    "segment",
+    "side",
+    "on",
+    "into",
+    "near",
+    "anchor",
+    "inset",
+    "flush",
+    "mirror",
+    "height",
+    "faces",
+    "clear",
+    "dir",
+    // `site { street <compass> [hemisphere <h>] }` — the two clause introducers inside
+    // the site block. They belong here, beside `north`, for the same reason: a word
+    // that LEADS a clause is a setting keyword, not one of its values (the values —
+    // `south`/`east`/`west` — are in `enum` below). Absent from this table, every
+    // renderer would draw them as bare identifiers.
+    "street",
+    "hemisphere",
+    // `roof overhang <len>` — the clause that introduces the projection distance. A word
+    // that LEADS a clause is a setting keyword, so it sits here beside `thickness` and
+    // `width` rather than in `enum` (which holds the VALUES a clause takes).
+    "overhang",
+    // `rail <edges>` leads a clause of the `outdoor balcony` line and `boundary
+    // (x,y) …` leads one of the `site` block, so both are settings, not values — the same
+    // rule that put `street`/`hemisphere`/`overhang` here and their VALUES in `enum`.
+    "rail",
+    "boundary",
+    // The vertical datum layer. `sill` and `head` LEAD a clause of a `window` /
+    // `door` / `opening` line (`window … sill 900 head 2100`), which is the rule that put
+    // `thickness` and `overhang` here rather than in `enum`: those hold the VALUES a
+    // clause takes, and a height's value is a number, not a word.
+    //
+    // `height` itself is NOT added — it has been in this table since `strip … height <mm>`
+    // shipped, and the datum layer reuses that same word at three new sites (a plan
+    // setting, a `level` header and a `wall` clause) rather than inventing a fourth
+    // spelling for the same idea.
+    "sill",
+    "head",
+    // `walls from rooms … { except <room> … }` — leads the one body clause of the statement.
+    "except",
+    // `walls from rooms … { open between <A> and <B> … between <A> and <B> thickness <t> }`:
+    // `between` leads a pair clause, `and` joins its two rooms (ADR 0028 §3).
+    "between",
+    "and",
+    // `door … at axis <label>` (ADR 0028 §5): leads a position that stands on a positioning axis.
+    "axis",
+    // `wall … around [<A> <B> …]` (ADR 0028 §4): the wall is the outline of the listed rooms.
+    "around",
+    // `furniture … facing <id>` (ADR 0029 §3): the quarter-turn is derived from the target.
+    "facing",
+    // `segment containing <room>.<edge>` (plan card PS3.5): a segment selector. The compass
+    // selector words (`segment north`) are already here or in `enum`.
+    "containing",
+    // The `keep` form words that lead a clause (ADR 0033; `KEEP_WORDS`). Contextual: read as
+    // form words only in position after `keep`, so a binding of the same name keeps its
+    // meaning everywhere else. `align`, `offset`, `clear`, `on`, `axis`, `from`, `at`,
+    // `width` and `segment` are already here; `min` stays the built-in function.
+    "equal",
+    "depth",
+    "stacked",
+    "levels",
+    "fixed",
+    // `wall … status existing|demolish|new` and `walls from rooms … status <s>` (preview-and-remodel
+    // B3a): leads the clause; its values (`WALL_STATUSES`) are in `enum`.
+    "status",
+    // `sheet text { … }`: read only when `text {` follows it, so never a `STATEMENT_STARTS` word and
+    // not a `control` one: `room id=sheet` keeps parsing. `text` is already here.
+    "sheet",
+  ],
+  /** Enum value keywords → `constant.language`, CM `atom`. */
+  enum: [
+    "up",
+    "down",
+    "left",
+    "right",
+    "in",
+    "out",
+    // `swing inward|outward` (DOOR_SWING_BUILDING): the building-relative swing values.
+    "inward",
+    "outward",
+    "mm",
+    "true",
+    "false",
+    "top",
+    "middle",
+    "bottom",
+    "center",
+    "corner",
+    "centered",
+    "start",
+    "end",
+    "top-left",
+    "top-right",
+    "bottom-left",
+    "bottom-right",
+    "auto",
+    // `dims auto <mode>` selectors (AUTO_DIMS_MODES) and the `schedule <subject>` subject
+    // (SCHEDULE_SUBJECTS: `rooms`, the same word, and `openings`). Values following a
+    // keyword, so they sit here beside `auto` itself rather than in `attribute`. They are
+    // the reason `test/closed-vocabularies.test.ts` exists: both sets live in
+    // `src/ast.ts` as the parser's accept-list AND the spec's grammar line, and without a
+    // check that the highlighting bucket has heard of them `dims auto overall` draws its
+    // own mode word as an identifier in every renderer.
+    "overall",
+    "rooms",
+    "openings",
+    "all",
+    // `schedule rooms net`: the stamp reads the schedule's net area.
+    "net",
+    "cw",
+    "ccw",
+    "major",
+    // Door kinds — the bare word that leads a `door` statement. Values, not
+    // clause introducers, so they live here beside `left`/`in`; the per-kind grouping
+    // is `DOOR_KINDS` below (this bag is flat highlighting only).
+    "hinged",
+    "sliding",
+    "barn",
+    "bifold",
+    "pocket",
+    "double",
+    // `door glazed_sliding` (`DOOR_KINDS`, issue #369), and the `window` kinds (`WINDOW_KINDS`) no
+    // other list spells: `sliding` is above, and `fixed`, a `keep` word, is in `attribute`.
+    "glazed_sliding",
+    "casement",
+    "tilt",
+    "tilt_turn",
+    "A4",
+    "A3",
+    "A2",
+    "A1",
+    "A0",
+    "landscape",
+    "portrait",
+    // `north … hidden`, `scale … hidden`, `title hidden`: a value that trails three settings.
+    "hidden",
+    "living",
+    "kitchen",
+    "dining",
+    "bedroom",
+    "bath",
+    "wc",
+    "hall",
+    "circulation",
+    "storage",
+    "utility",
+    "office",
+    "entry",
+    // `site { street … }` / `hemisphere …` values. `north` is the fourth compass word
+    // and is DELIBERATELY ABSENT: it already sits in `attribute` above (because `north
+    // up` is a statement), and no word in this file appears in two categories — the
+    // generators build flat alternations from these lists and would have to learn about
+    // duplicates. The cost is cosmetic (in `street north` the word is coloured as a
+    // setting keyword rather than an enum value, one word in one position); the trap is
+    // that three-of-four invites a "fix". `test/site.test.ts` pins the absence.
+    "south",
+    "east",
+    "west",
+    // The `outdoor` ground surfaces (`OUTDOOR_KINDS`) and the `fence` styles
+    // (`FENCE_STYLES`). Values that follow a keyword, so they sit here. The `rail` edge
+    // words (`RAIL_EDGES`) are deliberately NOT repeated: all six — `top`, `bottom`,
+    // `left`, `right`, `all`, `none` — are already in this bucket for other clauses, and
+    // this file's standing rule is that a word appears in exactly one category once.
+    // `none` earns its place twice over: it is also the `wall … material none` value.
+    "none",
+    // `furniture … clear front|sides <mm>` (ADR 0029 §4): the two zones `clear` names.
+    "front",
+    "sides",
+    "lawn",
+    "planting",
+    "paving",
+    "deck",
+    "gravel",
+    "water",
+    "driveway",
+    "patio",
+    "balcony",
+    "picket",
+    "panel",
+    "post",
+    // `uses garage` (a USE_KINDS value) and `door garage …` (a DOOR_KINDS one) are the SAME
+    // word in the highlighting bucket, and one entry is what serves both — the bucket is flat
+    // and per-word, while the two semantic groupings live in `USE_KINDS` and `DOOR_KINDS`.
+    // That is the ordinary case, not a special one: `left` is already a hinge side, a slide
+    // direction, a furniture side and a strip direction from this one entry. What must NOT
+    // happen is a second `"garage"` here — the generators build flat alternations from these
+    // lists and would emit the word twice.
+    "garage",
+    // The `keep` grades (`KEEP_GRADES`): values, so they sit here.
+    "hard",
+    "soft",
+    "advisory",
+    // The wall statuses (`WALL_STATUSES`): values, so they sit here.
+    "existing",
+    "demolish",
+    "new",
+  ],
+} as const;
+
+/**
+ * `wall … status <s>` / `walls from rooms … status <s>` (preview-and-remodel B3a): what becomes of
+ * the wall in a remodel. `existing` and `new` are walls like any other; a `demolish` wall is drawn
+ * dashed (B3b) but encloses nothing, hosts nothing and counts in no area. Absent, a wall is
+ * `existing`. The one list the parser, the printer, Plan JSON, the GBNF and the spec read.
+ */
+export const WALL_STATUSES = ["existing", "demolish", "new"] as const;
+/** One of {@link WALL_STATUSES}. */
+export type WallStatus = (typeof WALL_STATUSES)[number];
+
+/**
+ * Door clause value sets — the ONE source for the `hinge` / `swing` / `slide`
+ * allow-lists.
+ *
+ * Six places used to retype these two pairs: the parser's inline check and the
+ * resolver's `set door(…)` allow-list (`src/elements/door.ts`), the Plan JSON
+ * validator and the Plan JSON schema (`src/plan-json.ts`), and — the dangerous two —
+ * `scripts/gen-gbnf.ts`'s door productions and `scripts/gen-llm-spec.ts`'s door
+ * grammar line, where a retyped literal reproduces the same *wrong* text forever
+ * while `check:drift` stays green (the hazard AGENTS.md names, and the one that
+ * shipped a GBNF grammar which could not decode `polygon`/`arc`). Everything reads
+ * this table now, both generators carry a guard that throws when a clause here has
+ * no rendering, and `test/door-enums.test.ts` fails if a seventh copy appears.
+ *
+ * It **sits beside** {@link KEYWORDS}.enum rather than deriving from it or feeding
+ * it. `KEYWORDS.enum` is the flat *highlighting* bucket — one bag of value words
+ * shared across the language, where `left` is equally a `strip` direction and a
+ * furniture `side` — while this is the *per-clause* semantic grouping, which the
+ * bucket cannot express. The weld between them is a subset law (every value here
+ * must appear in `KEYWORDS.enum`, so a new one can never ship unhighlighted),
+ * enforced by `test/door-enums.test.ts`.
+ *
+ * The keys are the clause keywords themselves (`door … hinge <v>`, `door … swing
+ * <v>`), which is what lets `gen-gbnf.ts` render one `<key>-val` production per key
+ * and fail loudly when a key has none.
+ */
+export const DOOR_ENUMS = {
+  hinge: ["left", "right"],
+  swing: ["in", "out"],
+  slide: ["left", "right"],
+} as const;
+
+/**
+ * `hinge near start|end` — the same clause addressed by wall VERTEX instead of by
+ * traversal direction. A second spelling of `hinge`, not a third clause, so it lives
+ * beside {@link DOOR_ENUMS} rather than as a key of it (a key means "a clause of its
+ * own", which is what both generators iterate).
+ */
+export const DOOR_HINGE_NEAR = ["start", "end"] as const;
+
+/**
+ * `swing inward|outward` — the same clause addressed by the BUILDING instead of by the
+ * wall's drawn direction: `inward` opens toward the one face of the host wall that has floor,
+ * `outward` away from it. A second spelling of `swing` (the {@link DOOR_HINGE_NEAR} shape), so
+ * it lives beside {@link DOOR_ENUMS} rather than as a key of it, and the resolver turns it into
+ * the same internal `in|out` the wall-relative word would have named. A host with floor on both
+ * faces (a partition) or on neither (a garden wall) has no building side: `E_SWING_SIDE`.
+ */
+export const DOOR_SWING_BUILDING = ["inward", "outward"] as const;
+
+/**
+ * The door KINDS — the bare word that may lead a `door` statement
+ * (`door pocket on w1 at 40% width 900 slide left`).
+ *
+ * It sits beside {@link DOOR_ENUMS} for the same reason {@link DOOR_HINGE_NEAR} does:
+ * a key of that table means "a clause of its own", which is what both generators
+ * iterate to emit `<key> rws <key>-val`. A kind is not a clause — it is the leading
+ * shape word, the `room polygon` / `room circle` / `dim faces` precedent — so it gets
+ * its own list, its own generator rendering and its own guard in each generator.
+ *
+ * `hinged` is the default and is EXACTLY equivalent to writing nothing: the resolver
+ * drops it, so `door hinged …` and `door …` produce byte-identical output. Order is
+ * the order both generators render; `double` (plan-soundness PS2.11e: two hinged leaves, each
+ * half the width, hung on the two jambs and meeting in the middle) and `glazed_sliding` (a fixed
+ * and a moving glass panel) come last, so every kind before them renders where it always did.
+ */
+export const DOOR_KINDS = [
+  "hinged",
+  "sliding",
+  "barn",
+  "bifold",
+  "pocket",
+  "garage",
+  "double",
+  "glazed_sliding",
+] as const;
+
+/** The optional door clauses whose legality depends on the kind. */
+export type DoorClauseName = "hinge" | "swing" | "slide" | "open";
+
+/**
+ * Which clauses each kind accepts. Beside the value sets because it is the same kind
+ * of fact — part of the door vocabulary, read by the resolver (which raises
+ * `E_DOOR_KIND_CLAUSE` from it), by the Plan JSON projection (which must not emit a
+ * clause it would then refuse on the way back in) and by the docs.
+ *
+ * The rule is REFUSE, never approximate: a clause a kind has no meaning for is an
+ * error, not a silently-ignored word — the `room polygon` precedent, where rectangle-only
+ * clauses refuse a polygon room rather than approximate it. "A pocket door with a
+ * `hinge left` clause draws as if the clause were absent" is silent-error design.
+ *
+ * `swing` on `barn`/`bifold` is legal and deliberately OVERLOADED: for those two it
+ * selects which FACE of the wall the panel hangs on or folds toward, not a leaf arc.
+ * The overload buys the one handed rule already proved correct under a reflection
+ * (`frame.ts` flips `swing` when `det < 0`); a new `face in|out` keyword would re-open
+ * that proof for no semantic gain. The price is prose, and it is paid in the error
+ * catalog, in `spec.llm.md`'s door line and in `docs/language-reference.md`.
+ */
+export const DOOR_KIND_CLAUSES: Readonly<Record<DoorKind, Readonly<Record<DoorClauseName, boolean>>>> = {
+  hinged: { hinge: true, swing: true, slide: false, open: false },
+  sliding: { hinge: false, swing: false, slide: true, open: true },
+  barn: { hinge: false, swing: true, slide: true, open: true },
+  bifold: { hinge: false, swing: true, slide: true, open: true },
+  pocket: { hinge: false, swing: false, slide: true, open: true },
+  // A sectional or roller garage door takes NO clause at all, and each refusal is its own
+  // argument rather than a blanket one.
+  //
+  // `hinge` and `slide`: the leaf travels UP, not around a jamb and not along the wall.
+  //
+  // `swing`: for `barn`/`bifold` this word selects which FACE the panel sits on, and that is
+  // the one clause a garage door could plausibly borrow — but its panel goes overhead into
+  // the room, and which side is the room is a fact about the plan, not a choice. The resolver
+  // derives it by probing one wall thickness off each face and asking which side has floor
+  // (the poly-aware `swingInto` rule, over every room instead of one named one), so an
+  // author-supplied value could only ever contradict the building.
+  //
+  // `open`: a sectional door retracts VERTICALLY, out of the plan's cut plane entirely, so
+  // there is no intermediate position a plan can draw — at any fraction between 0 and 1 the
+  // leaf is neither in the reveal nor visible. The dashed overhead projection already says
+  // where it goes, and it says the same thing at every position. Accepting a clause that
+  // changed nothing would be silent-error design, which is what this table exists to refuse.
+  garage: { hinge: false, swing: false, slide: false, open: false },
+  // Two hinged leaves, one on each jamb: `swing` says which side both sweep, as a hinged
+  // door's does. No `hinge` (each jamb carries a leaf, so there is no side to choose) and no
+  // `slide`/`open` (nothing slides; a leaf is drawn open, as a hinged one is).
+  double: { hinge: false, swing: true, slide: false, open: false },
+  // The sliding family's clauses: a glass panel runs on a track in the plane of the wall, as a
+  // `sliding` panel does. Lifting, if the hardware lifts, is not a plan fact.
+  glazed_sliding: { hinge: false, swing: false, slide: true, open: true },
+};
+
+/**
+ * The WINDOW kinds, the bare word that may lead a `window` statement after any `id=`
+ * (`window casement on a.top width 1500 hinge left`), as a kind leads a `door` (issue #369).
+ *
+ * There is no word for the default: a window with no kind states nothing about how it opens,
+ * and every payload of it is byte-identical to a plan written before kinds existed.
+ *
+ * The words are English trade words that read outside any one country's window market:
+ * `tilt_turn` is "tilt and turn". The order is the order both generators render.
+ */
+export const WINDOW_KINDS = ["fixed", "casement", "tilt", "tilt_turn", "sliding"] as const;
+
+/** Which window kinds hang on a jamb, and so take `hinge left|right`, whose value set is
+ *  {@link DOOR_ENUMS}'s. A kind that does not refuses the clause (`E_WINDOW_KIND_CLAUSE`), as a
+ *  window with no kind does. Left out, the side is unstated: no default supplies it. */
+export const WINDOW_KIND_HINGED: Readonly<Record<WindowKind, boolean>> = {
+  fixed: false,
+  casement: true,
+  tilt: false,
+  tilt_turn: true,
+  sliding: false,
+};
+
+/** A door clause that takes a closed value set — a key of {@link DOOR_ENUMS}. */
+export type DoorEnumClause = keyof typeof DOOR_ENUMS;
+/** `hinge left|right`, relative to the host wall's traversal direction. */
+export type DoorHinge = (typeof DOOR_ENUMS.hinge)[number];
+/** `swing in|out`, relative to the host wall's normal. */
+export type DoorSwingDir = (typeof DOOR_ENUMS.swing)[number];
+/** `slide left|right`, relative to the host wall's traversal direction (like `hinge`). */
+export type DoorSlideDir = (typeof DOOR_ENUMS.slide)[number];
+/** `swing inward|outward`, relative to the face of the host wall that has floor. */
+export type DoorSwingBuilding = (typeof DOOR_SWING_BUILDING)[number];
+/** `hinge near start|end`. */
+export type DoorHingeNear = (typeof DOOR_HINGE_NEAR)[number];
+/** The leading kind word of a `door` statement; `hinged` is the default. */
+export type DoorKind = (typeof DOOR_KINDS)[number];
+/** The leading kind word of a `window` statement; a window with none has no kind. */
+export type WindowKind = (typeof WINDOW_KINDS)[number];
+
+/**
+ * Render a closed value set the way every enum diagnostic in the tree phrases it —
+ * `"left" or "right"`. Kept here so the message text is derived from the same table
+ * as the check that produces it, and cannot drift from it word by word.
+ */
+export const enumList = (values: readonly string[]): string => values.map((v) => `"${v}"`).join(" or ");
+
+/** All operators the lexer recognises (multi-char forms first when generating regex). */
+export const OPERATORS = [
+  "->",
+  "==",
+  "!=",
+  "<=",
+  ">=",
+  "&&",
+  "||",
+  "..",
+  "+",
+  "-",
+  "*",
+  "/",
+  "%",
+  "=",
+  ":",
+  ",",
+  "<",
+  ">",
+  "!",
+  "[",
+  "]",
+] as const;
+
+/** One numeric literal with its optional unit suffix (`scanNum` in `src/lexer.ts`): digits, an
+ *  optional fraction, then `mm`|`cm`|`m`, `ft`, `in`, or the compound `<ft>ft<in>in`. */
+const NUM_LITERAL = "[0-9]+(?:\\.[0-9]+)?(?:mm|cm|m|ft(?:(?:[0-9]+(?:\\.[0-9]+)?|\\.[0-9]+)in)?|in)?";
+
+/** Lexical-rule fragments shared by the editor grammars. */
+export const RULES = {
+  /** Identifier (also matches keywords; the parser/highlighter classifies). A
+   *  dotted tail names an element inside a `place`d component instance
+   *  (`west.perimeter`); it is legal in REFERENCE positions only — a declaration
+   *  (`id=`, `let`, `as`) rejects it with `E_DOTTED_DECL`. */
+  ident: "[A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*",
+  /** Line comment to end of line. */
+  comment: "#.*$",
+  /** A number, optionally a literal dimension `WxH`. Either component may carry
+   *  an optional unit suffix, folded to mm at lex time: metric `mm`|`cm`|`m`, or
+   *  imperial `ft`|`in`|`<ft>ft<in>in` (exact 25.4 mm/in, rounded to whole mm). */
+  dimension: `${NUM_LITERAL}x${NUM_LITERAL}`,
+  number: NUM_LITERAL,
+} as const;
+
+/**
+ * Keywords that begin a plan-body statement (settings + declarations + control
+ * flow). Registry element keywords are added per-parse, so they are not listed
+ * here. Consumed by `src/parser.ts` for statement dispatch and error recovery.
+ */
+export const STATEMENT_STARTS: readonly string[] = [
+  "units",
+  "grid",
+  "paper",
+  "scale",
+  "north",
+  "dims",
+  "title",
+  "accTitle",
+  "accDescr",
+  "theme",
+  "style",
+  "let",
+  "component",
+  "import",
+  "for",
+  "if",
+  "while",
+  "set",
+  "strip",
+  "level",
+  "zone",
+  "place",
+  "axes",
+  "schedule",
+  "legend",
+  "site",
+  // The plan-level `height <expr>` setting (the vertical datum layer). It is here
+  // for the same reason `paper` is: the parser's plan-statement switch leads with it, and
+  // error recovery has to know the word can start a statement. `strip … height <mm>` is
+  // unaffected — that clause is consumed inside `parseStrip`, which never re-enters this
+  // dispatch.
+  "height",
+  // The sheet's `notes "…"` statement, for the same reason `legend` is here.
+  "notes",
+  // `keep <form> [grade]` (ADR 0033): a body statement, legal wherever a statement is.
+  "keep",
+];
+
+/**
+ * The `keep` vocabulary (ADR 0033, PS4.3 design §2) — the one source the parser, the printer, the
+ * GBNF and the spec line read. Every word here is contextual: it means a form, a measure or a
+ * grade only in its position after `keep`.
+ *
+ * - `forms`: each form's leading words, in the order the spec teaches them;
+ * - `measures`: the extents `keep equal` compares;
+ * - `levels`: the words `keep stacked <id>` takes before its level list.
+ */
+export const KEEP_WORDS = {
+  forms: {
+    align: ["align"],
+    equal: ["equal"],
+    offset: ["offset"],
+    "min-clear": ["min", "clear"],
+    "on-axis": ["on", "axis"],
+    stacked: ["stacked"],
+    fixed: ["fixed"],
+  },
+  measures: ["width", "depth"],
+  levels: ["on", "levels"],
+} as const;
+
+/** The `keep` grades, weakest last; the first is the default (ADR 0033 decision 3). */
+export const KEEP_GRADES = ["hard", "soft", "advisory"] as const;

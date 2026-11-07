@@ -1,0 +1,19 @@
+# class: clearances
+# twin-of: wardrobe-front-550
+# origin: audits/2026-10-18-first-contact.md H5 with the bed 100 mm further from the wardrobe
+# expect: none
+# fact: the wardrobe's front is y 700 and the bed's north side y 1350: 650 mm
+plan "Wardrobe 550 mm from the bed" {
+  units mm
+  grid 50
+  wall id=shell exterior thickness 200 { (0,0) (7000,0) (7000,4000) (0,4000) close }
+  wall id=w_mid partition thickness 100 { (3500,0) (3500,4000) }
+  room id=r_bed at (0,0) size 3500x4000 label "Master Bedroom" uses bedroom
+  room id=r_living at (3500,0) size 3500x4000 label "Living Room" uses living
+  door id=d_entry at (5250,4000) width 900 wall shell
+  door id=d_bed at (3500,3200) width 800 wall w_mid swing into r_living
+  window at (1750,4000) width 1200 wall shell
+  window at (5250,0) width 1500 wall shell
+  furniture wardrobe against wall shell segment 0 offset 1500 in r_bed
+  furniture double_bed against wall shell segment 3 offset 1750 in r_bed
+}

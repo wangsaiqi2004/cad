@@ -1,0 +1,22 @@
+{
+  "name": "archlang-mcp-worker",
+  "version": "0.1.0",
+  "private": true,
+  "description": "The hosted ArchLang MCP server: a stateless Streamable-HTTP Cloudflare Worker serving the stdio server's tool set at /mcp, an MCP App viewer, and /svg/<payload> images. Deployed by CI, never published to npm.",
+  "license": "MIT",
+  "type": "module",
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "typecheck": "tsc --noEmit",
+    "measure": "node scripts/measure-cpu.mjs"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/ext-apps": "1.7.5",
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "zod": "^4.6.6"
+  },
+  "devDependencies": {
+    "esbuild": "^0.28.2",
+    "typescript": "^5.7.2"
+  }
+}

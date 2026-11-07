@@ -1,0 +1,71 @@
+# The hand-typed twin of examples/two-bed.arch (the swap-back law, ADR 0028 §3): the same
+# rooms, every wall the example derives typed as points in the order `walls from rooms`
+# emits them, every opening hosted `on <wall> at <mm>` along that wall's own direction, and
+# the `open between` written as the cased opening it derives (across the clear span between
+# the meeting partitions' faces, listed after the authored openings, where a derived child
+# enters). SVG and lint() are byte-identical to the example (test/walls-from-rooms.test.ts).
+plan "Two-Bedroom Flat" {
+  units mm
+  grid 100
+  scale 1:100
+  north right
+
+  room id=r_living at (0,0)       size 4000x8000 label "Kitchen / Living" uses kitchen living
+  room id=r_bed1   at (4000,0)    size 6000x3600 label "Master Bedroom"
+  room id=r_hall   at (4000,3600) size 6000x1400 label "Hall"
+  room id=r_bath   at (4000,5000) size 2400x3000 label "Bathroom"
+  room id=r_bed2   at (6400,5000) size 3600x3000 label "Bedroom 2"
+
+  # The ring starts at its top-left vertex and runs clockwise on the page; a partition runs
+  # from its end with the smaller y, then the smaller x.
+  wall id=w_ring   exterior  thickness 300 { (0,0) (10000,0) (10000,8000) (0,8000) close }
+  wall id=w_lb1    partition thickness 100 { (4000,0) (4000,3600) }
+  wall id=w_lh     partition thickness 100 { (4000,3600) (4000,5000) }
+  wall id=w_lbath  partition thickness 100 { (4000,5000) (4000,8000) }
+  wall id=w_b1h    partition thickness 100 { (4000,3600) (10000,3600) }
+  wall id=w_hbath  partition thickness 100 { (4000,5000) (6400,5000) }
+  wall id=w_hb2    partition thickness 100 { (6400,5000) (10000,5000) }
+  wall id=w_bathb2 partition thickness 100 { (6400,5000) (6400,8000) }
+
+  # Ring positions run along the ring: the east edge starts at 10000, the south at 18000,
+  # the west at 28000.
+  door id=d_front on w_ring at 14300 width 900 hinge near start swing into r_hall
+  door on w_b1h   at 1000 width 900 swing into r_bed1
+  door on w_hbath at 1000 width 800 swing into r_bath
+  door on w_hb2   at 1000 width 900 swing into r_bed2
+
+  window on w_ring at 2000  width 2000
+  window on w_ring at 30500 width 1500
+  window on w_ring at 7400  width 2400
+  window on w_ring at 19800 width 1400
+
+  # The open pair: the 1400 run less the two 50 mm half-partitions at its ends.
+  opening on w_lh at 700 width 1300
+
+  furniture bed      in r_bed1 anchor top-left flush inset 300 size 1800x2100 label "Bed"
+  furniture wardrobe in r_bed1 anchor top-right flush size 1200x600
+  furniture bed      in r_bed2 anchor top-right flush size 1400x2000 label "Bed"
+  furniture wardrobe in r_bed2 anchor bottom-left flush size 600x1200 rotate 270
+
+  furniture fridge       against wall w_ring segment 3 offset 7500 in r_living
+  furniture stove        against wall w_ring segment 3 offset 5300 in r_living
+  furniture kitchen_sink against wall w_ring segment 3 offset 6100 in r_living
+  furniture counter      against wall w_ring segment 3 offset 6800 in r_living
+  furniture sofa  at (2850,5400) size 850x2000 label "Sofa"  in r_living
+  furniture table at (800,5800)  size 1200x800 label "Table" in r_living
+
+  furniture shower in r_bath anchor bottom-left flush size 900x900
+  furniture wc     against r_bath.bottom offset 1600 size 400x700
+  furniture basin  in r_bath anchor right flush size 450x600
+
+  roof overhang 500
+
+  dim faces (0,8000)->(10000,8000) offset 700
+  dim faces (0,0)->(0,8000) offset 700
+
+  title {
+    project "Two-Bedroom Flat"
+    drawn_by "ArchCanvas"
+    date "2026-06-25"
+  }
+}

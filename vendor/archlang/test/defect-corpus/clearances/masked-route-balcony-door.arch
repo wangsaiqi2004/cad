@@ -1,0 +1,29 @@
+# class: clearances
+# origin: audits/2026-10-18-first-contact.md A2 (first-contact-plans/1-apartment.arch: the laundry's walk measured
+#   from the balcony door hides a 400 mm squeeze from the front door; reduced: the pinch is a sofa and a table across
+#   the living room); README PS0.10
+# expect: W_PATH_TOO_NARROW
+# status: done
+# fact: from d_front the laundry lies past a sofa (x 2450-4650) and a table (x 4650-7700) across the living room at y
+#   3000; the gaps are 400 mm to the w_a face x 2050 and 200 mm to the east face x 7900. describe measures the
+#   laundry from d_bal (740 mm, entranceId d_bal), so lint is silent; with d_bal made a window, lint gives
+#   W_PATH_TOO_NARROW "Laundry" 500 mm. Since PS0.10 the walk is judged from the main entrance (d_front, the only
+#   door from the ground once the balcony slider is set aside), so lint reports it as it stands
+plan "Pinched route to the laundry, masked by the balcony door" {
+  units mm
+  grid 50
+  wall id=shell exterior thickness 200 { (0,0) (8000,0) (8000,6000) (0,6000) close }
+  wall id=w_a partition thickness 100 { (2000,0) (2000,6000) }
+  wall id=w_b partition thickness 100 { (0,3000) (2000,3000) }
+  room id=r_hall at (0,0) size 2000x3000 label "Hall" uses hall
+  room id=r_laun at (0,3000) size 2000x3000 label "Laundry" uses utility
+  room id=r_liv at (2000,0) size 6000x6000 label "Living Room" uses living
+  door id=d_front at (1000,0) width 900 wall shell
+  door id=d_liv at (2000,1500) width 900 wall w_a swing into r_liv
+  door id=d_laun at (2000,4800) width 800 wall w_a swing into r_laun
+  door id=d_bal sliding at (5500,6000) width 2000 wall shell
+  window at (5000,0) width 1500 wall shell
+  outdoor id=o_bal balcony at (4400,6100) size 2200x1200 label "Balcony" rail left right bottom
+  furniture sofa at (2450,3000) size 2200x900 label "Sofa"
+  furniture table at (4650,3000) size 3050x450
+}

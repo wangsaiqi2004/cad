@@ -1,0 +1,73 @@
+plan "Two-storey townhouse" {
+  units mm
+  grid 100
+  paper A3 landscape
+  north up
+  height 2800
+  dims auto all
+  schedule rooms
+
+  level 0 "Ground floor" {
+    room id=wc at (0,0) size 1500x3000 uses wc
+    room id=hall right-of wc size 2500x3000 uses hall
+    room id=stairg right-of hall size 1500x3000 label "Stair" uses circulation
+    room id=living at (0,3000) size 5500x3500 uses living
+    room id=kitchen at (0,6500) size 5500x3500 label "Kitchen / Dining" uses kitchen
+    walls from rooms exterior 250 partition 100 { open between living and kitchen width 2400 }
+
+    door on hall.top at center width 1000 swing into hall
+    door between hall and wc at 1500 from start width 800 swing into wc
+    door between hall and living at 1250 from start width 900 swing into living
+    door between hall and stairg at 1500 from start width 800 swing into stairg
+    window on wc.left width 600
+    window on living.left width 1800
+    window on living.right width 1800
+    window on kitchen.left width 1500
+    window on kitchen.right width 1500
+    window on kitchen.bottom width 1800
+
+    stair id=st at (4200,300) size 1100x2400 dir up
+    furniture wc in wc anchor top-left flush size 400x700
+    furniture basin in wc anchor bottom-right flush size 400x500
+    furniture sofa in living anchor left flush size 900x2200
+    furniture tv_unit in living anchor right flush size 450x1600
+    furniture kitchen_sink against kitchen.left offset 500 size 700x600
+    furniture counter against kitchen.left offset 1500 size 1200x600
+    furniture stove against kitchen.left offset 2400 size 600x600
+    furniture fridge against kitchen.left offset 3000 size 600x650
+    furniture table in kitchen centered size 1800x900
+  }
+
+  level 1 "First floor" {
+    room id=bed1 at (0,0) size 4000x3000 label "Bedroom 1" uses bedroom
+    room id=stairu right-of bed1 size 1500x3000 label "Stair" uses circulation
+    room id=landing at (0,3000) size 5500x1500 label "Landing" uses circulation
+    room id=bed2 at (0,4500) size 3500x5500 label "Bedroom 2" uses bedroom
+    room id=bath at (3500,4500) size 2000x2500 uses bath
+    room id=dress at (3500,7000) size 2000x3000 label "Dressing" uses storage
+    walls from rooms exterior 250 partition 100
+
+    door between bed1 and landing at 3000 from start width 800 swing into bed1
+    door between bed2 and landing at 2700 from start width 800 swing into bed2
+    door between bath and landing at 700 from start width 800 swing into bath
+    door between bed2 and dress at 1500 from start width 800 swing into dress
+    opening between landing and stairu at 750 from start width 900
+    window on bed1.left width 1500
+    window on bed1.top width 1500
+    window on bed2.left width 1500
+    window on bed2.bottom width 1500
+    window on bath.right width 800
+    window on dress.right width 800
+
+    stair id=st at (4200,300) size 1100x2400 dir down
+    furniture double_bed in bed1 anchor top-right flush size 1600x2000
+    furniture wardrobe in bed1 anchor bottom-left flush size 1800x600
+    furniture double_bed in bed2 anchor bottom flush size 1600x2000
+    furniture wardrobe in bed2 anchor top-left flush size 1800x600
+    furniture bathtub in bath anchor bottom flush size 1700x750
+    furniture wc in bath anchor top-right flush size 400x700
+    furniture basin in bath anchor right flush size 400x500
+  }
+
+  title { project "Townhouse 2 x 55 m2" drawn_by "ArchLang" date "2026-10-24" number "TH-01" revision "A" }
+}

@@ -1,0 +1,14 @@
+# class: openings-ignore-walls
+# origin: audits/archcanvas-public-examples.md FH1 (family-house win_living starts at x=0, through the NW corner)
+# expect: W_OPENING_AT_JUNCTION
+# status: done
+# fact: win spans x 0-1800 on the north run; the west wall's inner face is at 100, so 100 mm of glazing
+#   runs into the corner (clearance -100 mm)
+plan "Window through a corner" {
+  units mm
+  grid 50
+  wall id=shell exterior thickness 200 { (0,0) (6000,0) (6000,4000) (0,4000) close }
+  room id=a at (0,0) size 6000x4000 label "Living" uses living
+  door id=d_front on shell at 13000 width 900
+  window id=win on shell at 900 width 1800
+}

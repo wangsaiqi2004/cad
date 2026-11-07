@@ -1,0 +1,27 @@
+plan "Studio Flat 30 m2" {
+  units mm
+  grid 100
+  north up
+  dims auto all
+  room id=bath at (0,0) size 2000x2500 label "Bath" uses bath
+  room id=entry below bath size 2000x2500 label "Entrance" uses entry
+  room id=main right-of bath align top size 4000x5000 label "Studio" uses living
+  walls from rooms exterior 200 partition 100
+  door on entry.bottom at center width 900 swing into entry
+  door between entry and main at center width 900 swing into main
+  door between bath and entry at center width 800 swing into bath
+  window on main.right at 1250 from start width 1500
+  window on main.right at 3750 from start width 1500
+  window on main.top at center width 1600
+  window on bath.left width 600
+  furniture wc against bath.left
+  furniture basin against bath.top offset 600
+  furniture shower in bath anchor top-right flush size 800x800
+  furniture kitchen_sink in main anchor top flush size 800x600
+  furniture stove in main anchor top-right flush size 600x600
+  furniture fridge in main anchor top-left flush size 600x600
+  furniture double_bed in main anchor bottom-right flush size 1600x2000
+  furniture nightstand in main anchor bottom flush size 450x450
+  furniture sofa_l in main anchor top-right inset 1300 size 900x1300
+  title { project "Studio Flat" drawn_by "Author" date "2026-10-25" number "S-01" revision "A" }
+}

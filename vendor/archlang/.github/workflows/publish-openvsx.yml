@@ -1,0 +1,71 @@
+# Publish the VS Code extension to Open VSX via trusted publishing (OIDC)
+#
+# WHAT THIS DOES
+#   On a manual dispatch, packages editors/vscode into a .vsix and publishes it to Open VSX as
+#   ChanMeng.archlang. It is idempotent: it reads the version from editors/vscode/package.json
+#   and skips the publish when Open VSX already has that exact version, so a re-run is safe.
+#   The VS Code Marketplace upload stays the owner's manual web upload (/release-check); run
+#   this after it, for the same version.
+#
+# TRUSTED PUBLISHING — NO OPEN VSX TOKEN EXISTS ANYWHERE
+#   ovsx exchanges the workflow's GitHub OIDC ID token (`permissions: id-token: write`) for a
+#   short-lived Open VSX token. Open VSX issues it only because a namespace owner registered
+#   this workflow ONCE, by hand, as a trusted publisher of the verified namespace `ChanMeng`:
+#     open-vsx.org → Settings → Trusted publishers → GitHub Actions, with
+#       Repository = ChanMeng666/archlang  and  Workflow = publish-openvsx.yml
+#   Without it, `ovsx publish --trusted-publishing` fails with an auth error — that is the
+#   signal to (re)do the registration, not to add an OVSX_PAT secret.
+#
+# House style mirrors release.yml (pinned action SHAs, Node 22, npm ci).
+
+name: Publish VS Code extension (Open VSX via OIDC)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write # OIDC token exchange for Open VSX trusted publishing
+
+jobs:
+  publish:
+    name: Publish to Open VSX
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+          check-latest: true
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      # The public API answers 404 for a version it does not have.
+      - name: Decide whether this version is already on Open VSX
+        id: check
+        run: |
+          version=$(node -p "require('./editors/vscode/package.json').version")
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          status=$(curl -s -o /dev/null -w '%{http_code}' "https://open-vsx.org/api/ChanMeng/archlang/$version")
+          if [ "$status" = "200" ]; then
+            echo "ChanMeng.archlang $version is already on Open VSX; skipping."
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build the core
+        if: steps.check.outputs.publish == 'true'
+        run: npm run build
+
+      - name: Package the extension
+        if: steps.check.outputs.publish == 'true'
+        run: npm -w editors/vscode run package
+
+      - name: Publish to Open VSX
+        if: steps.check.outputs.publish == 'true'
+        run: npx -y ovsx@1.3.0 publish "editors/vscode/archlang-${{ steps.check.outputs.version }}.vsix" --trusted-publishing

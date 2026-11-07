@@ -1,0 +1,93 @@
+import { describe, expect, it } from "vitest";
+import { compile, toDxf } from "../src/index.js";
+import { registry, registryOrder } from "../src/elements/index.js";
+import { KEYWORDS } from "../src/grammar/tokens.js";
+
+describe("element registry", () => {
+  it("registers every element keyword in canonical order", () => {
+    // Derived from the grammar's single source (itself drift-tested against
+    // BUILTIN_DEFS in element-keyword-drift.test.ts) so adding an element is
+    // genuinely a one-module + one-keyword change, not a third hand-edit here.
+    expect(registryOrder.map((d) => d.keyword)).toEqual([...KEYWORDS.element]);
+    expect(registry.get("room")?.kind).toBe("room");
+  });
+});
+
+describe("column — extensibility proof", () => {
+  // `column` is a whole element type added as one module + one register line,
+  // with no edits to parser/render cores. If this renders, the registry works.
+  const src = `plan "C" { column id=c1 at (1000,1000) size 400x400 }`;
+
+  it("parses, resolves, and renders a registered-only element", () => {
+    const { svg, errors, ast } = compile(src, { noCache: true });
+    expect(errors).toEqual([]);
+    expect(ast!.body[0]!.kind).toBe("column");
+    expect(svg).toContain('fill="#4a4a4a"'); // column fill
+    expect(svg).toContain("1000,1000 1400,1000 1400,1400 1000,1400"); // snapped square
+  });
+
+  it("reports a positive-size error via the generic resolve path", () => {
+    const { svg, diagnostics } = compile(`plan "C" { column at (0,0) size 0x400 }`, { noCache: true });
+    expect(svg).toBe("");
+    expect(diagnostics.some((d) => d.code === "E_COLUMN_SIZE")).toBe(true);
+  });
+});
+
+describe("computed dimensions (T3.6)", () => {
+  it("shows the measured length when no text is given", () => {
+    const { svg } = compile(`plan "D" { dim (0,0)->(7000,0) offset 600 }`, { noCache: true });
+    expect(svg).toContain(">7000</text>");
+  });
+
+  it("computes a diagonal length from |to−from|", () => {
+    const { svg } = compile(`plan "D" { dim (0,0)->(3000,4000) offset 600 }`, { noCache: true });
+    expect(svg).toContain(">5000</text>"); // 3-4-5 triangle
+  });
+
+  it("an explicit text still wins over the measured length", () => {
+    const { svg } = compile(`plan "D" { dim (0,0)->(7000,0) offset 600 text "7.0 m" }`, { noCache: true });
+    expect(svg).toContain(">7.0 m</text>");
+    expect(svg).not.toContain(">7000</text>");
+  });
+
+  it("shows the same computed value in SVG and DXF", () => {
+    const src = `plan "D" { dim (0,0)->(3000,4000) offset 600 }`;
+    const { svg, scene } = compile(src, { noCache: true });
+    const dxf = toDxf(scene!);
+    expect(svg).toContain(">5000</text>");
+    expect(dxf).toContain("\n5000\n"); // DXF TEXT group-1 value
+  });
+});
+
+describe("render passes — global draw order is independent of source order", () => {
+  it("draws all wall fills before any wall faces", () => {
+    const src = [
+      'plan "W" {',
+      "  wall a thickness 200 { (0,0) (4000,0) }",
+      "  wall b thickness 200 { (0,2000) (4000,2000) }",
+      "}",
+    ].join("\n");
+    const { svg } = compile(src, { noCache: true });
+    // Walls are unioned: one poché fill path in wallFill, then the miter
+    // outline in wallFace — fill still precedes face.
+    const fill = svg.indexOf('fill="url(#poche)"');
+    const face = svg.indexOf('stroke-linejoin="miter"');
+    expect(fill).toBeGreaterThan(-1);
+    expect(face).toBeGreaterThan(fill);
+  });
+
+  it("draws doors before windows even when the window is declared first", () => {
+    const src = [
+      'plan "O" {',
+      "  wall exterior thickness 200 { (0,0) (4000,0) (4000,4000) (0,4000) close }",
+      "  window at (3000,0) width 800 wall exterior",
+      "  door at (1000,0) width 900 wall exterior",
+      "}",
+    ].join("\n");
+    const { svg } = compile(src, { noCache: true });
+    const doorLeaf = svg.indexOf('stroke="#555555"'); // door leaf
+    const windowPane = svg.indexOf('stroke="#3a6ea5"'); // window glazing
+    expect(doorLeaf).toBeGreaterThan(-1);
+    expect(windowPane).toBeGreaterThan(doorLeaf);
+  });
+});

@@ -1,0 +1,12 @@
+# criterion: R7
+# origin: design 2026-10-24-ps5-taste-design.md §3 R7 acceptance (a 12 m² net living room)
+# fact: net floor 12 m² (3000 x 4000 inside a 200 shell); one 600 mm window at the default
+#   900/2100 heights glazes 0.72 m², G/A = 0.06, under the generic 8 % target (score 0.75)
+plan "R7 small window" {
+  units mm
+  grid 100
+  room id=r_living at (0,0) size 3200x4200 label "Living Room" uses living
+  walls from rooms exterior 200 partition 100
+  door id=d_front on r_living.bottom at center width 900 swing into r_living
+  window id=w_n on r_living.top at center width 600
+}

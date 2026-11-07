@@ -1,0 +1,234 @@
+/**
+ * Scene3D v0: a renderer-independent, plan-aligned 2.5D scene read off a resolved plan
+ * (archlang-3d plan §3.5, appendix A). Plan axes: x right, y DOWN; z up. Every length is an
+ * integer number of micrometres ({@link Um}); handedness is resolved only by exporters.
+ *
+ * Mirrored by `scene3d.schema.json` and checked by `validateScene3D`; a test holds the three
+ * together on the whole corpus.
+ */
+
+/** Integer micrometres (mm × 1000). */
+export type Um = number;
+/** `[x, y]` in micrometres, plan axes. */
+export type Pt = [Um, Um];
+/** A closed ring, no repeated last vertex. */
+export type Ring3 = Pt[];
+export interface Polygon {
+  outer: Ring3;
+  holes?: Ring3[];
+}
+
+export type Provenance = "authored" | "derived" | "default" | "user-param";
+
+/** The plan element a Scene3D item was read from. `span` is its byte span in the source. */
+export interface Source {
+  kind: string;
+  id: string;
+  span?: [number, number];
+}
+
+/** One entry of the assumption ledger: every value the plan did not state (ADR 0005). */
+export interface Assumption {
+  kind: string;
+  id?: string;
+  field: string;
+  value: unknown;
+  provenance: Provenance;
+  rule: string;
+}
+
+export interface Meta {
+  name: string;
+  units: "mm";
+  tool: { archlang3d: string; archlang: string };
+  north?: "up" | "down" | "left" | "right" | number;
+  siteBoundary?: Ring3;
+  params?: Record<string, unknown>;
+  assumptions: Assumption[];
+}
+
+export interface Floor {
+  id: string;
+  source: Source;
+  polygon: Polygon;
+  uses?: string[];
+  /** How far (µm) the floor finish is lifted because it overlaps an earlier room's (V-GEO-05,
+   *  `W3D_FLOOR_OVERLAP`): 0.5 mm per step, absent when it overlaps none. */
+  lift?: Um;
+}
+
+/**
+ * A wall's OWNED region after the core's joinery (H1), one polygon per connected piece, with the
+ * openings NOT removed: each opening lists its cut, and the geometry stage removes it from every
+ * piece it covers, keeping the sill and lintel.
+ */
+export interface Wall {
+  id: string;
+  source: Source;
+  category?: string;
+  material?: string;
+  footprint: Polygon[];
+  /** The same pieces with every opening's cut removed: the wall between each opening's sill and head. */
+  body: Polygon[];
+  height: Um;
+  thickness: Um;
+  /** Ids of the openings whose cut is hosted by this wall. */
+  cuts: string[];
+}
+
+export type DoorKind = "hinged" | "sliding" | "barn" | "bifold" | "pocket" | "garage" | "double" | "glazed_sliding";
+
+export interface Opening {
+  id: string;
+  source: Source;
+  kind: "door" | "window" | "opening";
+  doorKind?: DoorKind;
+  /** The host wall's id. */
+  host: string;
+  /** The plan footprint the opening removes, from the core's `openingCut`. */
+  cut: Ring3;
+  centre: Pt;
+  /** The two jambs on the host's centreline (the opening's chord along the wall, its tangent on a curve). */
+  jambs: [Pt, Pt];
+  /** A door's swinging leaves, each `[hinge, far jamb, open tip]` from the core's `doorLeaves` (two
+   *  for a `double` door): closed, the leaf runs hinge → far jamb; swung as the plan draws it (`--doors
+   *  plan`), hinge → open tip, 90° on. Absent for a kind that sweeps no leaf (sliding, barn, bifold,
+   *  pocket, garage). The writer always gives the tip; a pre-A7 Scene3D's 2-point leaf (no tip) still
+   *  validates, and its door stays closed under `--doors plan`. */
+  leaves?: Array<[Pt, Pt] | [Pt, Pt, Pt]>;
+  width: Um;
+  sill: Um;
+  head: Um;
+  hinge?: "left" | "right";
+  swing?: "in" | "out";
+  slide?: "left" | "right";
+}
+
+export interface Furniture {
+  id: string;
+  source: Source;
+  category: string;
+  room?: string;
+  centre: Pt;
+  /**
+   * The footprint ON THE PLAN, already turned: `w` along plan x, `d` along plan y, whatever the
+   * quarter-turn. An exporter places the box as is; `yawDeg` orients the asset INSIDE it (an
+   * asset's own width runs along plan y at ±90°). Never apply `yawDeg` to this box a second time.
+   */
+  size: { w: Um; d: Um };
+  /** Rotation about the vertical axis in the exporters' convention: minus the plan's `rotate`. */
+  yawDeg: number;
+  /** What the mesh builds it with: `t0:<family>` (a parametric generator) or `greybox`. */
+  asset: string;
+  /**
+   * The piece is reflected across its own width (its `mirror`, or a reflecting `place`), as the
+   * core's Plan JSON says (`planToJson`'s `mirror`, a public field). Recorded only on a piece whose
+   * asset is handed (`T0_HANDED`): a mirror-symmetric asset is its own reflection, so the fact
+   * would change nothing there and is not read. Absent when the piece is not reflected.
+   */
+  mirror?: true;
+}
+
+export interface Box {
+  id: string;
+  source: Source;
+  at: Pt;
+  size: { w: Um; h: Um };
+}
+
+/** A plan rectangle's edge. */
+export type Side = "top" | "bottom" | "left" | "right";
+
+/**
+ * One straight flight of a stair, as the core resolves it: its rectangle, the edge a person
+ * CLIMBING it starts from (`foot`, the same on every storey whatever `dir` that storey draws), and
+ * the tread divisions the plan draws on it (the core's `treadCount` of its run).
+ */
+export interface StairFlight {
+  at: Pt;
+  size: { w: Um; h: Um };
+  foot: Side;
+  treads: number;
+}
+
+/** A landing between two flights of a turning stair: its rectangle. */
+export interface StairLanding {
+  at: Pt;
+  size: { w: Um; h: Um };
+}
+
+export interface Stair {
+  id: string;
+  source: Source;
+  /** The footprint's bounding box (on a turning stair it holds floor that is no stair: read `flights`). */
+  box: Box;
+  dir: "up" | "down";
+  /** The flight band's width, centred across each flight. */
+  width: Um;
+  /**
+   * The flights in climbing order (one on a straight stair), from the core's `RStair.flights` or
+   * the stair itself. Absent when the core does not export `treadCount`, or on a Scene3D written
+   * before 0.4.0: such a stair is not built (ledgered `stair-no-flights`).
+   */
+  flights?: StairFlight[];
+  /** `landings[i]` stands between `flights[i]` and `flights[i + 1]`; present with `flights`. */
+  landings?: StairLanding[];
+}
+
+export interface Outdoor {
+  id: string;
+  source: Source;
+  surface: string;
+  polygon: Polygon;
+  rail?: string[];
+}
+
+export interface Fence {
+  id: string;
+  source: Source;
+  style: string;
+  points: Pt[];
+  closed: boolean;
+}
+
+export interface Roof {
+  id: string;
+  source: Source;
+  form: "flat";
+  ring: Ring3;
+  provenance: Provenance;
+}
+
+export interface Level {
+  level: number;
+  name?: string;
+  /** Top of this storey's floor above the lowest storey's floor. */
+  elevation: Um;
+  storeyHeight: Um;
+  /** The outer rings of the storey's joined wall solid: the building's wall footprint. */
+  footprint: Ring3[];
+  floors: Floor[];
+  walls: Wall[];
+  /**
+   * The storey's `status demolish` walls (B3a), read from the plan AS DRAWN (`ir.drawn`): joined
+   * among themselves only, never with the standing walls (whose ownership, H1, is the plan after
+   * the demolition), and hosting nothing (`cuts` empty). Drawn as a ghost, never as structure.
+   * Absent when the storey demolishes nothing.
+   */
+  demolished?: Wall[];
+  openings: Opening[];
+  furniture: Furniture[];
+  stairs: Stair[];
+  voids: Box[];
+  columns: Box[];
+  outdoor: Outdoor[];
+  fences: Fence[];
+  roofs: Roof[];
+}
+
+export interface Scene3D {
+  version: 0;
+  kind: "scene3d";
+  meta: Meta;
+  levels: Level[];
+}

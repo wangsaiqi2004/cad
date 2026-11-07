@@ -1,0 +1,676 @@
+/**
+ * `door [id=] [<kind>] at (x,y) width N [wall ref] [hinge <side>] [swing <dir>]
+ *  [slide <dir>] [open <0..1>]` — opening + leaf + swing arc, or (for a non-hinged
+ *  kind) opening + panels/track/cavity.
+ */
+
+import type { DoorNode, Point } from "../ast.js";
+import type { Span } from "../diagnostics.js";
+import type { ElementDef, ParseCtx, RenderCtx, ResolveCtx, TransformCtx } from "../registry.js";
+import type { CadPart, SceneNode } from "../scene.js";
+import type { RDoor, RRoom } from "../ir.js";
+import type { Value } from "../expr.js";
+import type { DoorSwing, WallSegment } from "../geometry.js";
+import { cadTurnOf, weightWidth } from "../scene.js";
+import { add, doorLeaves, mul, nearestWallNote, normal, segmentDirAt, sub, unit, wallFaceProbes } from "../geometry.js";
+import { pointInPolygon, pointOnPolygonEdge } from "../geometry/polygon.js";
+import type { DoorClauseName, DoorKind, DoorSwingDir } from "../grammar/tokens.js";
+import type { DoorSwingBuilding } from "../grammar/tokens.js";
+import { DOOR_ENUMS, DOOR_HINGE_NEAR, DOOR_KIND_CLAUSES, DOOR_KINDS, DOOR_SWING_BUILDING } from "../grammar/tokens.js";
+import { eatEnumValue, parseAttachTarget, resolveOpeningLead } from "../attach.js";
+import {
+  doorKindClauseFix,
+  doorOpenRangeFix,
+  emitOpening,
+  fixesFrom,
+  offWallFix,
+  openingWidthFix,
+} from "../fix-producers.js";
+import { renderDoorPanels } from "./door-panels.js";
+import { DOOR_HEAD, parseOpeningHeights, resolveOpeningHeights } from "../datum.js";
+
+/** Read an enum override from the active `set` defaults, if valid. */
+function enumDefault<T extends string>(
+  defaults: ReadonlyMap<string, Value> | undefined,
+  key: string,
+  allowed: readonly T[],
+): T | undefined {
+  const v = defaults?.get(key);
+  return v && v.t === "str" && (allowed as readonly string[]).includes(v.v) ? (v.v as T) : undefined;
+}
+
+/**
+ * Choose the internal `in|out` value so a `swing into <room>` door opens toward
+ * that room. The leaf sweeps to the wall's `+normal` side when `in` and `-normal`
+ * when `out` (see {@link doorSwing}). Returns `undefined` (after a
+ * `W_SWING_ROOM_NOT_ADJACENT` warning) when the room does not border the host wall,
+ * so the caller falls back to the default.
+ *
+ * Two questions, and both are asked of the room's own FLOOR, not of its bounding box:
+ *
+ * - **Does the room border this wall?** — the door point must lie on the room's
+ *   perimeter. A rectangle's perimeter is its four sides; a `polygon`/`circle` room's
+ *   is its ring ({@link RRoom.poly}, which a circle also carries).
+ * - **Which side is the room on?** — a probe one wall thickness off each face; the
+ *   room is on the side whose probe lands on the floor. For a rectangle that is the
+ *   historical centre-of-the-rectangle answer, byte for byte, because the rectangle's
+ *   centre is always on the inward side of every one of its own edges. For a concave
+ *   ring it is not: an L's bounding-box centre sits in the notch, which is not floor,
+ *   so a bbox-derived side is a coin flip. A probe is local and exact.
+ *
+ * Neither probe landing on the floor (or both) means the door is not on a face of this
+ * room after all — the same "does not border its wall" answer, reported the same way.
+ */
+function swingInto(
+  roomId: string,
+  at: Point,
+  host: WallSegment | null,
+  rooms: readonly RRoom[],
+  ctx: ResolveCtx,
+  id: string,
+  span: Span | undefined,
+): "in" | "out" | undefined {
+  const notAdjacent = (): undefined => {
+    ctx.diag({
+      severity: "warning",
+      message: `Door "${id}" swings into "${roomId}", which does not border its wall — using the default swing`,
+      code: "W_SWING_ROOM_NOT_ADJACENT",
+      span,
+    });
+    return undefined;
+  };
+  const room = rooms.find((r) => r.id === roomId);
+  if (!room || !host || room._unplaced) return notAdjacent();
+  // The room borders the wall if the door position sits on the room's perimeter.
+  const tol = host.thickness / 2 + Math.max(host.thickness, 1);
+  // —— Ring path: a `polygon` or `circle` room (a circle carries the 48-gon in `poly`). ——
+  if (room.poly) {
+    const ring = room.poly;
+    if (!pointOnPolygonEdge(at, ring, tol)) return notAdjacent();
+    // One wall thickness clears the solid on either face, so a probe that lands on the
+    // floor is genuinely inside the room rather than inside the wall. The normal is the
+    // TANGENT's (the one `doorSwing` sweeps the leaf toward), not the chord's: on a major
+    // arc the two point to opposite faces, and `in` must mean the side the leaf is drawn on.
+    const { plus, minus } = wallFaceProbes(host, at, Math.max(host.thickness, 1));
+    const inPos = pointInPolygon(plus.x, plus.y, ring);
+    const inNeg = pointInPolygon(minus.x, minus.y, ring);
+    if (inPos === inNeg) return notAdjacent();
+    return inPos ? "in" : "out";
+  }
+  // —— Rectangle path: UNCHANGED, byte-identical. ——
+  // Not `wallFaceProbes`: a box-CENTRE dot product against the CHORD normal. Right on a straight host,
+  // where chord and tangent coincide; NOT on an arc host, where it can pick the face opposite the one
+  // `doorSwing` draws the leaf toward (near a major arc's ends — `docs/backlog.md` P.2).
+  const n = normal(unit(sub(host.b, host.a)));
+  const { x, y } = room.at;
+  const x1 = x + room.size.w;
+  const y1 = y + room.size.h;
+  const onVert = (ex: number) => Math.abs(at.x - ex) <= tol && at.y >= y - tol && at.y <= y1 + tol;
+  const onHoriz = (ey: number) => Math.abs(at.y - ey) <= tol && at.x >= x - tol && at.x <= x1 + tol;
+  if (!(onVert(x) || onVert(x1) || onHoriz(y) || onHoriz(y1))) return notAdjacent();
+  const cx = x + room.size.w / 2;
+  const cy = y + room.size.h / 2;
+  const dot = (cx - at.x) * n.x + (cy - at.y) * n.y;
+  if (dot === 0) return notAdjacent();
+  return dot > 0 ? "in" : "out";
+}
+
+/**
+ * Which face of the host wall the floor is on: `"in"` for the wall's `+normal` side, `"out"`
+ * for the other, `undefined` when neither side (or both) is a room.
+ *
+ * The same probe {@link swingInto} makes, asked of EVERY room instead of one named one, and
+ * asked for a different purpose: a `garage` door's panel parks overhead INSIDE the building,
+ * and which side that is is a fact about the plan rather than a choice — which is exactly why
+ * `DOOR_KIND_CLAUSES` gives that kind no `swing` clause to contradict it with.
+ *
+ * Poly-aware for the reason every derived position in this compiler is: a room's shape is its
+ * ring when it has one, and a bounding box's answer is a coin flip on a concave floor (an L's
+ * box centre sits in the notch, which is not floor). The probe is one wall thickness off each
+ * face, which clears the solid on either side, so a hit is genuinely floor and not wall.
+ *
+ * `undefined` is a real answer and the caller must handle it: an opening in a garden wall has
+ * rooms on neither side, and one in a party wall has them on both.
+ */
+function roomSideOf(at: Point, host: WallSegment | null, rooms: readonly RRoom[]): "in" | "out" | undefined {
+  const side = floorSides(at, host, rooms);
+  return side === "in" || side === "out" ? side : undefined;
+}
+
+/**
+ * {@link roomSideOf}'s probe with its two `undefined` answers told apart: `"both"` when floor
+ * lies on both faces (a wall between two rooms, or one free-standing inside a room), `"none"`
+ * when on neither (a garden wall), `"nohost"` when there is no wall at all. `swing
+ * inward|outward` needs the difference for its message.
+ */
+function floorSides(
+  at: Point,
+  host: WallSegment | null,
+  rooms: readonly RRoom[],
+): "in" | "out" | "both" | "none" | "nohost" {
+  if (!host) return "nohost";
+  // The tangent's normal, as in `swingInto`'s ring path: `in` is the face `doorSwing` uses.
+  const { plus, minus } = wallFaceProbes(host, at, Math.max(host.thickness, 1));
+  const onFloor = ({ x: px, y: py }: Point): boolean =>
+    rooms.some((r) => {
+      if (r._unplaced) return false;
+      if (r.poly) return pointInPolygon(px, py, r.poly);
+      return px >= r.at.x && px <= r.at.x + r.size.w && py >= r.at.y && py <= r.at.y + r.size.h;
+    });
+  const pos = onFloor(plus);
+  const neg = onFloor(minus);
+  if (pos && neg) return "both";
+  if (!pos && !neg) return "none";
+  return pos ? "in" : "out";
+}
+
+/**
+ * Choose the internal `in|out` value for `swing inward|outward`: `inward` is the face of the host
+ * wall that has floor ({@link floorSides}, the probe a `garage` door's side comes from),
+ * `outward` the other. The result is exactly the wall-relative word an author who knew the
+ * wall's drawn direction would have written, so everything downstream (the drawing,
+ * `describe()`, `lint()`, a `place` frame's reflection) sees that twin and nothing else.
+ *
+ * A host with floor on both faces or on neither has no building side, and guessing one would
+ * put a leaf where the author did not mean it: `E_SWING_SIDE` on the word's own span, and the
+ * caller falls back to the default swing (the error is what tells the author).
+ */
+function swingBuilding(
+  word: DoorSwingBuilding,
+  at: Point,
+  host: WallSegment | null,
+  rooms: readonly RRoom[],
+  ctx: ResolveCtx,
+  id: string,
+  span: Span | undefined,
+): "in" | "out" | undefined {
+  const side = floorSides(at, host, rooms);
+  if (side === "in" || side === "out") {
+    if (word === "inward") return side;
+    return side === "in" ? "out" : "in";
+  }
+  const why =
+    side === "both"
+      ? "its wall has floor on both faces"
+      : side === "none"
+        ? "its wall has floor on neither face (no room borders the doorway)"
+        : "it has no host wall";
+  ctx.diag({
+    severity: "error",
+    message: `Door "${id}" swings ${word}, but ${why}, so there is no inside to swing ${word === "inward" ? "towards" : "away from"}`,
+    code: "E_SWING_SIDE",
+    span,
+    hints: [
+      side === "both"
+        ? "Name the room the leaf opens into: `swing into <room>`."
+        : side === "nohost"
+          ? "Put the door on a wall (`on <wall> at <pos>`, or `at (x,y)` on one), then name its side."
+          : `Use \`swing into <room>\` with a room that borders this wall, or the wall-relative \`swing ${DOOR_ENUMS.swing.join("|")}\`.`,
+    ],
+  });
+  return undefined;
+}
+
+/** `open` when the author writes none — the drawn rest position of a sliding-family panel. */
+const DEFAULT_OPEN = 0.5;
+
+/**
+ * How thick an open hinged leaf is DRAWN, mm: a real interior leaf is 35–45 mm, and every
+ * door block in a CAD library draws it as a slab of about that, not as a line.
+ */
+const LEAF_SLAB_MM = 40;
+/**
+ * The slab's ceiling as a fraction of the door width, so a narrow door never draws a
+ * leaf that reads as a wall: 54 mm on a 900 mm door, 36 mm on a 600 mm cupboard door.
+ * It is the ceiling, so it wins over the floor below.
+ */
+const LEAF_SLAB_MAX_FRACTION = 0.06;
+
+/**
+ * The thickness an open hinged leaf is drawn at: {@link LEAF_SLAB_MM}, but never thinner
+ * than TWO leaf pens — the stroke is centred on each long edge, so that is what leaves one
+ * pen of white between them and keeps the slab reading as a slab rather than as one fat
+ * line once a 1:100 sheet (or a large unscaled drawing) widens the pen — and never thicker
+ * than {@link LEAF_SLAB_MAX_FRACTION} of the door's width.
+ */
+export function leafSlabThickness(width: number, leafPen: number): number {
+  return Math.min(Math.max(LEAF_SLAB_MM, 2 * leafPen), LEAF_SLAB_MAX_FRACTION * width);
+}
+
+/**
+ * The open leaf as a closed slab, built from {@link doorSwing}'s own points so it can never
+ * disagree with the sector `W_SWING_OBSTRUCTED`, `repair()` and the symmetry probe read.
+ *
+ * `[hinge, leafEnd, tip, heel]`: the first edge IS the swing's open-leaf radius (the line the
+ * leaf used to be drawn as), and the thickness `t` is laid off toward the FAR jamb — the
+ * inside of the quarter-disc, which is where a leaf's thickness sits when it stands open
+ * against its hinge jamb. The fourth corner `heel` is on the closed-leaf radius; the third,
+ * `tip`, is put ON the swing circle (`√(r² − t²)` along the leaf, `t` across), so every
+ * corner lies in the closed sector and the drawn leaf never pokes past the arc it sweeps.
+ * The tip edge is therefore a chord of that circle, a fraction of a millimetre off square.
+ */
+function leafSlab(s: DoorSwing, t: number): Point[] {
+  const r = s.radius;
+  // Unit vectors along the open leaf and along the closed one, read off the swing's own
+  // points (both radii are exactly `r` long by construction). A zero-width door (already
+  // `E_DOOR_WIDTH`) collapses to its hinge rather than dividing by zero.
+  const k = r === 0 ? 0 : 1 / r;
+  const out = mul(sub(s.leafEnd, s.hinge), k);
+  const across = mul(sub(s.farJamb, s.hinge), k);
+  const reach = Math.sqrt(Math.max(r * r - t * t, 0));
+  return [s.hinge, s.leafEnd, add(add(s.hinge, mul(out, reach)), mul(across, t)), add(s.hinge, mul(across, t))];
+}
+
+/** Clamp `v` into `[0,1]`. */
+const clamp01 = (v: number): number => Math.min(Math.max(v, 0), 1);
+
+export const door: ElementDef = {
+  kind: "door",
+  keyword: "door",
+  doc: "A door: an opening in its host wall with a leaf and swing arc.",
+  params: [
+    { name: "at", type: "point", doc: "Hinge/center position (x, y) in mm." },
+    { name: "width", type: "number", doc: "Door width (leaf length) in mm." },
+    { name: "wall", type: "name", optional: true, doc: "Host wall by id or category (else nearest)." },
+    {
+      name: "hinge",
+      type: DOOR_ENUMS.hinge.join("|"),
+      optional: true,
+      doc: "Hinge side relative to wall direction.",
+    },
+    {
+      name: "swing",
+      type: DOOR_ENUMS.swing.join("|"),
+      optional: true,
+      doc: "Hinged: which side the leaf sweeps to. Barn/bifold: which face the panel hangs on or folds toward.",
+    },
+    {
+      name: "slide",
+      type: DOOR_ENUMS.slide.join("|"),
+      optional: true,
+      doc: "Which way the panel travels to open (sliding family only), along the wall's direction.",
+    },
+    { name: "open", type: "number", optional: true, doc: "How far the panel is drawn open, 0–1 (default 0.5)." },
+  ],
+
+  parse(ctx: ParseCtx): DoorNode {
+    const kw = ctx.eatKeyword("door");
+    const id = ctx.parseIdOpt();
+    // A bare KIND word may lead, after any `id=` — the shipped `room polygon` /
+    // `room circle` / `dim faces` shape. Unambiguous by construction: the only other
+    // legal leads here are `at` and `on` (see `parseAttachTarget`), neither of which
+    // is a kind, so a lookahead against the closed table decides it with no backtrack.
+    const doorKind = DOOR_KINDS.find((k) => ctx.isKeyword(k));
+    if (doorKind) ctx.next();
+    const { at, attach, between } = parseAttachTarget(ctx, true);
+    ctx.eatKeyword("width");
+    const width = ctx.parseExpr();
+    const node: DoorNode = {
+      kind: "door",
+      id,
+      ...(doorKind ? { doorKind } : {}),
+      width,
+      line: kw.line,
+      ...(at ? { at } : {}),
+      ...(attach ? { attach } : {}),
+      ...(between ? { between } : {}),
+    };
+    if (at && ctx.isKeyword("wall")) {
+      ctx.next();
+      node.wall = ctx.eatIdent().value;
+    }
+    if (ctx.isKeyword("hinge")) {
+      ctx.next();
+      // `hinge near start|end` fixes the hinge to a wall vertex; `hinge left|right`
+      // is relative to the wall's traversal direction (the older form).
+      if (ctx.isKeyword("near")) {
+        ctx.next();
+        node.hingeNear = eatEnumValue(ctx, DOOR_HINGE_NEAR, "hinge near");
+      } else {
+        node.hinge = eatEnumValue(ctx, DOOR_ENUMS.hinge, "hinge");
+      }
+    }
+    if (ctx.isKeyword("swing")) {
+      ctx.next();
+      // `swing into <room>` picks in/out toward that room; `swing inward|outward` toward or
+      // away from the building's floor; `swing in|out` is explicit, relative to the wall.
+      if (ctx.isKeyword("into")) {
+        ctx.next();
+        node.swingInto = ctx.eatIdent().value;
+      } else {
+        // One read and one message for every bare word, so the refusal names all four.
+        const word = ctx.peek();
+        const v = eatEnumValue(ctx, [...DOOR_ENUMS.swing, ...DOOR_SWING_BUILDING], "swing", "`into <room>`");
+        if ((DOOR_SWING_BUILDING as readonly string[]).includes(v)) {
+          node.swingBuilding = v as DoorSwingBuilding;
+          node.swingBuildingSpan = { start: word.start, end: word.end };
+        } else {
+          node.swing = v as DoorSwingDir;
+        }
+      }
+    }
+    // `slide left|right` — which way the panel travels. Its byte span (or the
+    // zero-width point where one could be inserted, which is HERE — before the
+    // trailing `open`, which the grammar puts last) is recorded so `W_POCKET_RUN`'s
+    // reverse-slide fix can rewrite exactly that clause. Same shape as
+    // `FurnitureNode.rotateSpan`, with one difference: it is recorded ONLY on a door
+    // that names a kind or writes `slide`, so a plan that uses none of this feature
+    // has a byte-identical `arch ast --json` too, not merely a byte-identical drawing.
+    const slideAt = ctx.peek(-1).end;
+    if (ctx.isKeyword("slide")) {
+      const slideKw = ctx.next();
+      node.slide = eatEnumValue(ctx, DOOR_ENUMS.slide, "slide");
+      node.slideSpan = { start: slideKw.start, end: ctx.peek(-1).end };
+    } else if (doorKind !== undefined && doorKind !== "double") {
+      // A `double` door slides nothing, so it records no insertion point for one.
+      node.slideSpan = { start: slideAt, end: slideAt };
+    }
+    if (ctx.isKeyword("open")) {
+      ctx.next();
+      node.open = ctx.parseExpr();
+    }
+    // The vertical datum: `head` only, and after `open` — the height clauses
+    // trail every clause the statement already had, on all three opening elements, which
+    // is what keeps `slideSpan`'s insertion point (recorded above, before `open`)
+    // meaning exactly what it meant.
+    Object.assign(node, parseOpeningHeights(ctx, { sill: false }));
+    return node;
+  },
+
+  idPrefix: () => "door",
+
+  resolve(node, ctx: ResolveCtx): RDoor {
+    const n = node as DoorNode;
+    const id = ctx.id;
+    const wv = ctx.eval(n.width);
+    const width = ctx.snap(wv) || wv;
+    if (width <= 0) {
+      ctx.diag({
+        severity: "error",
+        message: `Door "${id}" must have a positive width`,
+        code: "E_DOOR_WIDTH",
+        span: n.span,
+        ...fixesFrom(openingWidthFix("door", n)),
+      });
+    }
+    // Position + host: either walk the attached wall, or the classic point + nearest
+    // wall (with the off-wall check kept for the point form only).
+    let at: Point;
+    let host: WallSegment | null;
+    const lead = resolveOpeningLead(n, "door", width, ctx, `Door "${id}"`);
+    if (lead) {
+      at = lead.at;
+      host = lead.host;
+    } else {
+      at = ctx.snapPt(ctx.evalPt(n.at!));
+      host = ctx.hostSegment(at, n.wall);
+      if (ctx.walls.length > 0 && !ctx.isOnWall(at, n.wall)) {
+        const note = nearestWallNote(at, ctx.walls);
+        ctx.diag({
+          severity: "warning",
+          message: `Door "${id}" does not lie on any wall`,
+          code: "W_DOOR_OFF_WALL",
+          span: n.span,
+          relatedSpans: note ? [note] : undefined,
+          ...fixesFrom(offWallFix("door", n, at, ctx.walls)),
+        });
+      }
+    }
+    // —— Kind, and the clauses it does and does not accept ——
+    // `hinged` is dropped: an omitted kind word and an explicit `door hinged …` must be
+    // indistinguishable from here down, which is what keeps a kind-free plan's bytes
+    // (and its `describe`/`lint`/Plan JSON payloads) independent of door kinds.
+    const named: DoorKind = n.doorKind ?? "hinged";
+    const doorKind = named === "hinged" ? undefined : named;
+    const allowed = DOOR_KIND_CLAUSES[named];
+    const written: ReadonlyArray<readonly [DoorClauseName, boolean]> = [
+      ["hinge", n.hinge !== undefined || n.hingeNear !== undefined],
+      ["swing", n.swing !== undefined || n.swingInto !== undefined || n.swingBuilding !== undefined],
+      ["slide", n.slide !== undefined],
+      ["open", n.open !== undefined],
+    ];
+    for (const [clause, present] of written) {
+      if (!present || allowed[clause]) continue;
+      const alternatives = DOOR_KINDS.filter((k) => DOOR_KIND_CLAUSES[k][clause]);
+      ctx.diag({
+        severity: "error",
+        message: `Door "${id}" is a "${named}" door, which has no \`${clause}\` clause`,
+        code: "E_DOOR_KIND_CLAUSE",
+        span: n.span,
+        hints: [
+          `Delete the \`${clause}\` clause — the fix does exactly that.`,
+          alternatives.length > 0
+            ? `Or make it one of the kinds that takes it: ${alternatives.map((k) => `\`${k}\``).join(", ")}.`
+            : `No door kind takes \`${clause}\`.`,
+        ],
+        ...fixesFrom(doorKindClauseFix(n, clause)),
+      });
+    }
+    // The sliding family is drawn as a straight panel on a straight track, and a
+    // pocket is a straight cavity — none of that survives on a curved reveal. Refuse
+    // with a code rather than draw a straight panel across an arc (§10's explicit
+    // stage-1 decision: decide, never let it fall out silently). A HINGED leaf does
+    // survive, because its swing is taken from the tangent at the doorway.
+    // A `double` door's two leaves survive as a hinged leaf does: both are taken from the tangent
+    // at the doorway's centre (`doorLeaves`), so it is not refused.
+    if (doorKind !== undefined && doorKind !== "double" && host?.arc) {
+      ctx.diag({
+        severity: "error",
+        message: `Door "${id}" is a "${named}" door on a curved wall — its panel and track are straight`,
+        code: "E_DOOR_KIND_CURVED",
+        span: n.span,
+        hints: [
+          "Use the default hinged door here (delete the kind word) — its leaf and swing come from the tangent at the doorway.",
+          "Or move the door onto one of the wall's straight runs.",
+        ],
+      });
+    }
+    // `open` is a DRAWING fact and nothing else reads it, so an impossible value is
+    // reported (with the clamped value as a fix) rather than silently clamped — the
+    // shipped `E_ARC_RADIUS` pattern.
+    const openRaw = n.open !== undefined ? ctx.eval(n.open) : undefined;
+    if (openRaw !== undefined && !(openRaw >= 0 && openRaw <= 1)) {
+      const clamped = Number.isNaN(openRaw) ? 0 : clamp01(openRaw);
+      ctx.diag({
+        severity: "error",
+        message: `Door "${id}" has \`open ${openRaw}\`, which is outside the 0–1 range a panel can travel`,
+        code: "E_DOOR_OPEN_RANGE",
+        span: n.span,
+        hints: [`Use a fraction in [0,1] — \`open ${clamped}\` is the nearest legal value.`],
+        ...fixesFrom(doorOpenRangeFix(n, clamped)),
+      });
+    }
+    // The drawn fraction after the diagnostic above: an out-of-range value still has to
+    // draw something, and the nearest legal position is the honest choice (the error is
+    // what tells the author; the drawing never silently accepts the impossible value).
+    const open = openRaw === undefined || Number.isNaN(openRaw) ? DEFAULT_OPEN : clamp01(openRaw);
+    // Precedence: explicit attribute > derived (`near`/`into`) > `set door(...)` > hard default.
+    const hingeNear = n.hingeNear ? (n.hingeNear === "start" ? "left" : "right") : undefined;
+    const hinge = n.hinge ?? hingeNear ?? enumDefault(ctx.defaults, "hinge", DOOR_ENUMS.hinge) ?? "left";
+    // A refused placement (`lead.host` null, always after an error) has no wall to read a side
+    // of, and that error is the whole story. A door with no host by position still hears this.
+    const intoSwing =
+      n.swingInto && lead?.host !== null ? swingInto(n.swingInto, at, host, ctx.rooms, ctx, id, n.span) : undefined;
+    // `swing inward|outward` sits at the same derived tier as `swing into`: a measurement of where
+    // the floor is, resolved to the wall-relative word it means. Not on a kind that takes no
+    // `swing` (that is `E_DOOR_KIND_CLAUSE` above, and a second error would only repeat it), nor
+    // on a refused placement, for the same reason `swing into` is not.
+    const buildingSwing =
+      n.swingBuilding && allowed.swing && lead?.host !== null
+        ? swingBuilding(n.swingBuilding, at, host, ctx.rooms, ctx, id, n.swingBuildingSpan ?? n.span)
+        : undefined;
+    // A `garage` panel projects overhead into the BUILDING, so its face is derived from the
+    // plan rather than written: the author has no `swing` clause for this kind (it would be a
+    // choice about a fact), and the probe is the same one `swing into <room>` makes. It sits
+    // at the DERIVED tier of the precedence chain below, beside `swing into`, so a plan-wide
+    // `set door(swing …)` cannot override a measurement of where the floor is. When neither
+    // side is a room — a garage door in a garden wall — the chain falls through as it always
+    // did and the panel projects to the wall's `+normal` side.
+    const garageSide = named === "garage" ? roomSideOf(at, host, ctx.rooms) : undefined;
+    const swing =
+      n.swing ??
+      intoSwing ??
+      buildingSwing ??
+      garageSide ??
+      enumDefault(ctx.defaults, "swing", DOOR_ENUMS.swing) ??
+      "in";
+    // Pre-emit the hinge-flipped statement for `W_SWING_OBSTRUCTED`'s fix: lint sees
+    // only the IR, and re-emitting here keeps the authored placement/width expressions
+    // (rather than baking in resolved numbers). Internal field — no Scene, no bytes.
+    const flipText =
+      n.span && named !== "double" ? emitOpening("door", n, { hinge: hinge === "left" ? "right" : "left" }) : undefined;
+    // The vertical datum. A door's sill is the floor by definition, so only the
+    // head is authorable and the `sill: 0` below is the fact, not a default.
+    const { head } = resolveOpeningHeights(ctx, `Door "${id}"`, n, { sill: 0, head: DOOR_HEAD }, host, n.span);
+    return {
+      kind: "door",
+      id,
+      at,
+      width,
+      hinge,
+      swing,
+      host,
+      head,
+      span: n.span,
+      ...(flipText ? { _flipHingeText: flipText } : {}),
+      ...(n.swingBuilding && allowed.swing ? { _swingBuilding: n.swingBuilding } : {}),
+      ...(lead?.relation ? { _placement: "relational" as const, _relation: lead.relation } : {}),
+      // Everything below is present ONLY on a non-hinged door, so a plan that names
+      // no kind produces exactly the IR (and therefore exactly the bytes, exactly the
+      // `describe()` payload and exactly the Plan JSON) as if door kinds did not exist.
+      // A `double` door carries its kind alone: it has two hinged leaves and nothing that slides.
+      ...(doorKind === "double"
+        ? { doorKind }
+        : doorKind !== undefined
+          ? {
+              doorKind,
+              slide: n.slide ?? "left",
+              open,
+              ...(n.slideSpan ? { _slideSpan: n.slideSpan } : {}),
+            }
+          : {}),
+    };
+  },
+
+  bounds: () => [],
+  /**
+   * Its centre and width: a door adds nothing to the bounds, but it is still geometry. A
+   * `glazed_sliding` door draws jamb to jamb inside the wall's thickness, so it adds how far that
+   * reaches, as `window.measures` does.
+   */
+  measures(resolved): number[] {
+    const d = resolved as RDoor;
+    if (d.doorKind !== "glazed_sliding") return [d.at.x, d.at.y, d.width];
+    const across = (d.host?.thickness ?? 0) / 2;
+    const r = d.width / 2 + across;
+    return [d.at.x, d.at.y, d.width, across, d.at.x - r, d.at.x + r, d.at.y - r, d.at.y + r];
+  },
+
+  /**
+   * Opening cover + leaf slab + swing arc. The swing geometry (hinge, leaf,
+   * far jamb, minor-arc orientation) is computed **once**, by `doorSwing` — every backend
+   * (SVG, DXF, PDF) serializes the same `arc` primitive rather than re-deriving it.
+   */
+  /** At most 5 primitives (the drawing budget, `MAX_DRAW_UNITS`): the opening cover, then a leaf slab and its swing arc (two of each for a `double` door), or at most four panel strokes for a sliding, barn, bifold, pocket, garage or glazed sliding door. */
+  drawCost: () => 5,
+
+  render(resolved, ctx: RenderCtx): SceneNode[] {
+    const dr = resolved as RDoor;
+    const seg = dr.host;
+    if (!seg) return [];
+    const { theme, sizes } = ctx;
+    // On a CURVED host the direction is the TANGENT at the doorway, so the cover spans a
+    // chord of the wall at that point and the jambs run radially — and the leaf and swing
+    // (computed from the same tangent inside `doorSwing`) can never disagree with it.
+    const d = segmentDirAt(seg, dr.at);
+    const n = normal(d);
+    // The wall solid is ALWAYS severed at a doorway: the joinery pass
+    // (`wall-lowering.ts`) cuts every opening on every host — straight, angled or curved
+    // — so the floor runs continuously through the reveal and only the capped jambs are
+    // drawn. The cover is therefore never painted: `theme.opening` is the page
+    // background, so painting it over a real hole laid a white band across the floor
+    // either side of the door.
+    //
+    // The polygon is still EMITTED, at the wall's own half-extent, because the ASCII and
+    // DXF backends locate the doorway by it on this pass.
+    const h = seg.thickness / 2;
+    const hw = dr.width / 2;
+    const cover: Point[] = [
+      add(add(dr.at, mul(d, -hw)), mul(n, h)),
+      add(add(dr.at, mul(d, hw)), mul(n, h)),
+      add(add(dr.at, mul(d, hw)), mul(n, -h)),
+      add(add(dr.at, mul(d, -hw)), mul(n, -h)),
+    ];
+    const nodes: SceneNode[] = [];
+    nodes.push({
+      layer: "doors",
+      prim: { t: "polygon", pts: cover },
+      paint: { fill: "none" },
+    });
+    // A NON-HINGED kind draws panels/tracks/cavity in the reveal instead of a leaf and
+    // arc, and `doorSwing` returns null for it — so the hinged branch below is the
+    // EXISTING code, unmoved and unrewritten, and a plan that names no kind emits the
+    // same primitives in the same order it always did.
+    if (dr.doorKind !== undefined && dr.doorKind !== "double") {
+      nodes.push(...renderDoorPanels(dr, { theme, sizes, dir: d, thickness: seg.thickness }));
+      return nodes;
+    }
+    // Leaf + minor-arc geometry is shared with the swing-clearance lint rule: one leaf for a
+    // hinged door, two (each half the width, one per jamb) for a `double` one, drawn alike.
+    for (const swing of doorLeaves(dr)) {
+      // The open leaf is a SLAB (see `leafSlab`), filled with the page colour so the floor
+      // tint does not read through it, and stroked at the leaf pen.
+      const leafPen = sizes.thin * 1.3;
+      nodes.push({
+        layer: "doors",
+        prim: { t: "polygon", pts: leafSlab(swing, leafSlabThickness(swing.radius, leafPen)) },
+        paint: { fill: theme.opening, stroke: theme.doorLeaf, width: leafPen },
+      });
+      // The swing is a SOLID fine line. A dash means above the cut plane or hidden (an
+      // `upper_cabinet`, a `roof`, a garage door's overhead projection), and the path a
+      // leaf sweeps at floor level is neither. The named weight carries the pen ramp to
+      // the SVG serializer, `paint.width` the same number to the PDF one.
+      nodes.push({
+        layer: "doors",
+        prim: {
+          t: "arc",
+          center: swing.hinge,
+          r: swing.radius,
+          start: swing.leafEnd,
+          end: swing.farJamb,
+          sweep: swing.sweep,
+        },
+        paint: { fill: "none", stroke: theme.doorLeaf, width: weightWidth("extraThin", sizes) },
+        lineWeight: "extraThin",
+      });
+    }
+    return nodes;
+  },
+  /** A block at the door's centre, in the frame of its wall. Each kind is a door, `glazed_sliding` too. */
+  cadPart(resolved): CadPart | undefined {
+    const dr = resolved as RDoor;
+    if (!dr.host) return undefined;
+    const name = `DOOR-${dr.doorKind ?? "hinged"}-${dr.width}`;
+    return { t: "block", name, at: dr.at, turn: cadTurnOf(segmentDirAt(dr.host, dr.at)) };
+  },
+  /**
+   * The frame's action on a door (`frame.ts`'s `transformElement` calls this). A reflection
+   * flips `swing` (measured off the wall normal) and records `_mirror` (XORed, as a fixture's
+   * is), which the track choice of a `sliding` or `glazed_sliding` door reads; `hinge` and
+   * `slide` ride the traversal.
+   */
+  transform(resolved, t: TransformCtx): RDoor {
+    const el = resolved as RDoor;
+    const { id, reflected } = t;
+    const out: RDoor = {
+      ...el,
+      id,
+      at: t.point(el.at),
+      host: el.host ? t.segment(el.host) : null,
+      swing: reflected ? (el.swing === "in" ? "out" : "in") : el.swing,
+    };
+    if (reflected !== (el._mirror === true)) out._mirror = true;
+    else delete out._mirror;
+    return out;
+  },
+};

@@ -1,0 +1,14 @@
+# The widening drill (docs/plans/plan-soundness/repro/widen-before.arch) written in the
+# room-graph form: change `let AW` and the shell, the partition, the door through it and
+# the window follow, with no other literal to edit (ADR 0028 Consequences).
+plan "widen" {
+  units mm
+  grid 50
+  let AW = 4000
+  room id=a at (0,0) size AW x 5000 label "Living"
+  room id=b right-of a align top gap 0 size 4000x5000 label "Bed"
+  walls from rooms exterior 200 partition 100
+  door at (1000, 0) width 900 wall exterior
+  door at (a.right, 2500) width 800 wall partition
+  window at (b.cx, 0) width 1500 wall exterior
+}

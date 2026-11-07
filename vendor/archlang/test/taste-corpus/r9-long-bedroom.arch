@@ -1,0 +1,14 @@
+# criterion: R9
+# origin: design 2026-10-24-ps5-taste-design.md §3 R9 acceptance (a 2000 × 5000 bedroom)
+# fact: the bedroom's minimum enclosing rectangle is its own 2000 × 5000 ring, aspect 2.5: R9
+#   scores it 0.5 on the habitable ramp 3 → 2; the hall is circulation and exempt
+plan "R9 long bedroom" {
+  units mm
+  grid 100
+  room id=r_hall at (0,0) size 2000x5000 label "Hall" uses hall
+  room id=r_bed at (2000,0) size 2000x5000 label "Bedroom" uses bedroom
+  walls from rooms exterior 200 partition 100
+  door id=d_front on r_hall.left at center width 900 swing into r_hall
+  door id=d_bed between r_hall and r_bed at 700 from start width 900 swing into r_bed
+  window id=w_bed on r_bed.right at center width 1500
+}

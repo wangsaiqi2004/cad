@@ -1,0 +1,40 @@
+plan "Small Clinic" {
+  units mm
+  grid 100
+  paper A3 landscape
+  north up
+  dims auto all
+  room id=c1 at (0,0) size 4000x4000 label "Consulting 1" uses office
+  room id=c2 right-of c1 size 4000x4000 label "Consulting 2" uses office
+  room id=c3 right-of c2 size 4000x4000 label "Consulting 3" uses office
+  room id=corr below c1 size 12000x2000 label "Corridor" uses circulation
+  room id=waiting below corr size 5000x4000 label "Waiting" uses entry
+  room id=wc right-of waiting size 2500x4000 label "Access. WC" at (6600,7000) uses wc
+  room id=staff right-of wc size 3000x4000 label "Staff Room" uses utility
+  room id=store right-of staff size 1500x4000 label "Store" uses storage
+  walls from rooms exterior 200 partition 100 { open between waiting and corr width 1600 }
+  door between c1 and corr at 2000 from start width 900 swing into c1
+  door between c2 and corr at 2000 from start width 900 swing into c2
+  door between c3 and corr at 2000 from start width 900 swing into c3
+  door between wc and corr at 1250 from start width 900 swing into wc
+  door between staff and corr at 1500 from start width 900 swing into staff
+  door between store and corr at 750 from start width 800 swing into store
+  door on waiting.bottom at center width 1400 swing into waiting
+  door on corr.right at center width 1000 swing outward
+  window on c1.top width 1500
+  window on c2.top width 1500
+  window on c3.top width 1500
+  window on waiting.left width 1800
+  window on staff.bottom width 1500
+  window on wc.bottom width 600
+  furniture reception_desk against waiting.left offset 2000
+  furniture sofa_l in waiting anchor right flush size 900x2400
+  furniture bed in c1 anchor top-right flush size 900x1900
+  furniture bed in c2 anchor top-right flush size 900x1900
+  furniture bed in c3 anchor top-right flush size 900x1900
+  furniture wc against wc.bottom
+  furniture basin against wc.left
+  furniture counter against staff.right
+  furniture locker against store.bottom
+  title { project "Small Clinic" drawn_by "ArchLang" date "2026-10-25" number "A-01" revision "A" }
+}

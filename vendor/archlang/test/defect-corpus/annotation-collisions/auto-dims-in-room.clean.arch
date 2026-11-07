@@ -1,0 +1,25 @@
+# class: annotation-collisions
+# twin-of: auto-dims-in-room
+# origin: the same plan with `dims auto rooms` (the openings and room chains, no thickness tier)
+# expect: none
+# fact: every number `dims auto rooms` prints lies outside the shell (x < 0 or y > 7000); no label falls on a room floor
+plan "Auto dimensions outside the rooms" {
+  units mm
+  grid 50
+  paper A3 landscape
+  dims auto rooms
+  wall id=shell exterior thickness 200 { (0,0) (8000,0) (8000,7000) (0,7000) close }
+  wall id=hall_w partition thickness 100 { (2200,0) (2200,7000) }
+  wall id=bath_w partition thickness 100 { (0,4600) (2200,4600) }
+  wall id=bed_w partition thickness 100 { (2200,3600) (8000,3600) }
+  room id=landing at (0,0) size 2200x4600 label "Landing" uses circulation
+  room id=bath at (0,4600) size 2200x2400 label "Bath" uses bath
+  room id=bed1 at (2200,0) size 5800x3600 label "Bedroom 1" uses bedroom
+  room id=bed2 at (2200,3600) size 5800x3400 label "Bedroom 2" uses bedroom
+  door id=d_front on shell at 27000 width 900
+  door id=d_bed1 on hall_w at 1800 width 900 swing into bed1
+  door id=d_bed2 on hall_w at 4100 width 900 swing into bed2
+  door id=d_bath on bath_w at 1100 width 800 swing into bath
+  window on shell at 5000 width 1500
+  window on shell at 13300 width 1200
+}

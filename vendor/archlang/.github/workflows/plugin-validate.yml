@@ -1,0 +1,33 @@
+name: Plugin validate
+
+# Validates the plugin and marketplace manifests with Claude Code's own
+# validator. It installs the latest Claude Code on purpose: a red run here with
+# green tests elsewhere means upstream tightened a manifest rule, not that the
+# code regressed. `validate` needs no credentials.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  plugin-validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "22"
+
+      - name: Install Claude Code
+        run: npm install -g @anthropic-ai/claude-code
+
+      - name: Validate plugin (strict)
+        run: |
+          claude --version
+          claude plugin validate --strict plugins/archlang
+
+      - name: Validate marketplace (strict)
+        run: claude plugin validate --strict .

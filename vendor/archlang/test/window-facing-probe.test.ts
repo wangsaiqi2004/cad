@@ -1,0 +1,244 @@
+import { describe as vDescribe, expect, it } from "vitest";
+import { describe } from "../src/describe.js";
+import { compile } from "../src/index.js";
+import type { SceneNode } from "../src/scene.js";
+
+/**
+ * **A window's outward side comes from a local probe, not from the plan's centre.**
+ *
+ * `describe().windows[].facing` has three rules. With a rectangular host room it is the
+ * room edge the window sits nearest — exact, and untouched here. Without one (no room on
+ * the window's point, or a `polygon`/`circle` room whose four "sides" do not exist) the
+ * host wall segment fixes the AXIS, and the outward SIDE used to be "the half of the plan
+ * the window sits in, relative to the bounding-box midpoint of the union of room
+ * rectangles".
+ *
+ * A **courtyard** puts that midpoint in the courtyard — i.e. outside the building — so
+ * every window on a courtyard wall was reported facing the wrong way, silently, as a
+ * published `describe()` fact. Both fixtures below are courtyards built so the bbox
+ * answer and the true answer are **opposite**; both failed before the probe landed.
+ */
+
+/** The single window's page-relative facing (these fixtures declare no `north`). */
+function facing(src: string): string {
+  const s = describe(src);
+  expect(s.diagnostics.filter((d) => d.severity === "error")).toEqual([]);
+  return s.windows[0]?.facing ?? "?";
+}
+
+/**
+ * A courtyard whose ring of rooms is drawn to the courtyard wall's INNER FACE — a 600mm
+ * wall, so the 300mm inset clears the 200mm host tolerance and the window sits on NO
+ * room's perimeter. The rooms' union spans the whole building, so `planCenter` is
+ * (6000, 6000): inside the courtyard, SOUTH of the window, which made the old rule read
+ * "the window is in the northern half, so it faces N".
+ *
+ * The floor is north of that wall and the open courtyard is south of it, so it faces S.
+ */
+const HOSTLESS = `plan "courtyard" {
+  units mm
+  wall id=shell exterior thickness 200 { (0,0) (12000,0) (12000,12000) (0,12000) close }
+  wall id=court exterior thickness 600 { (4000,4000) (8000,4000) (8000,8000) (4000,8000) close }
+  room id=r_north at (100,100)  size 11800x3600 label "North wing"
+  room id=r_south at (100,8300) size 11800x3600 label "South wing"
+  window id=w_court at (6000,4000) width 1200 wall court
+}`;
+
+/**
+ * The same defect reached the other way: a re-entrant `polygon` room whose ring IS the
+ * courtyard wall. The window has a host room, but a polygon has no four sides to pick the
+ * nearest of, so it falls through to the same rule — and the C-shape's bounding-box
+ * midpoint (6000, 6000) sits in the notch, not on the floor.
+ */
+const POLY_RING = `plan "courtyard" {
+  units mm
+  wall id=shell exterior thickness 200 { (0,0) (12000,0) (12000,12000) (0,12000) close }
+  wall id=court partition thickness 200 { (4000,12000) (4000,4000) (8000,4000) (8000,12000) }
+  room id=r_ring polygon (0,0) (12000,0) (12000,12000) (8000,12000) (8000,4000) (4000,4000) (4000,12000) (0,12000) label "Ring"
+  window id=w_court at (6000,4000) width 1200 wall partition
+}`;
+
+vDescribe("window facing: the outward side is probed locally", () => {
+  it("a courtyard window with no host room faces the courtyard, not the plan centre", () => {
+    // Before the probe: "N" — the bounding-box midpoint of the room union is in the
+    // courtyard, so the window read as "in the northern half of the plan".
+    expect(facing(HOSTLESS)).toBe("S");
+  });
+
+  it("a window on a re-entrant polygon room's courtyard wall faces the courtyard", () => {
+    expect(facing(POLY_RING)).toBe("S");
+  });
+
+  it("the probe decides the PAGE direction; `north` still turns it afterwards", () => {
+    const s = describe(HOSTLESS.replace("units mm", "units mm\n  north right"));
+    // `north right` = one clockwise quarter-turn, so page-S is compass E.
+    expect(s.windows[0]?.facingPage).toBe("S");
+    expect(s.windows[0]?.facing).toBe("E");
+  });
+});
+
+vDescribe("window facing: the probe declines, and the plan-centre rule settles it", () => {
+  /**
+   * Rooms on BOTH sides — an interior window, whose compass facing is not a meaningful
+   * fact anyway. `facing` is a required field, so it cannot be dropped; the historical
+   * plan-centre rule is the stated tie-break. Room union y spans 0…10000, centre y 5000,
+   * window at y 4000 → the northern half → "N".
+   */
+  it("rooms on both sides fall back to the plan-centre rule", () => {
+    const src = `plan "interior" {
+  units mm
+  wall id=mid partition thickness 600 { (0,4000) (12000,4000) }
+  room id=r_north at (0,0)    size 12000x3700 label "North"
+  room id=r_south at (0,4300) size 12000x5700 label "South"
+  window id=w at (6000,4000) width 1200 wall partition
+}`;
+    expect(facing(src)).toBe("N");
+  });
+
+  /**
+   * Rooms on NEITHER side — a free-standing wall. Same tie-break: the room union is
+   * y 6000…10000, centre y 8000, and the window at y 2000 is north of it.
+   */
+  it("a free-standing wall falls back to the plan-centre rule", () => {
+    const src = `plan "free" {
+  units mm
+  wall id=free partition thickness 200 { (5000,2000) (9000,2000) }
+  room id=r at (0,6000) size 12000x4000 label "Hall"
+  window id=w at (7000,2000) width 1200 wall partition
+}`;
+    expect(facing(src)).toBe("N");
+  });
+});
+
+vDescribe("window facing: the host-room rule is untouched", () => {
+  /**
+   * The overwhelmingly common case — a rectangular host room — never reaches the probe:
+   * the facing is the room edge the window sits nearest, exactly as before. Pinned on the
+   * flagship so a change to the probe cannot leak into it.
+   */
+  it("the flagship's windows keep their edge-derived facings", () => {
+    const src = `plan "Studio" {
+  units mm
+  wall exterior thickness 200 { (0,0) (7000,0) (7000,6000) (0,6000) close }
+  room id=r_living at (0,0) size 7000x6000 label "Living"
+  window id=w_w at (0,2000)    width 1500 wall exterior
+  window id=w_e at (7000,1500) width 1200 wall exterior
+  window id=w_n at (3000,0)    width 1200 wall exterior
+  window id=w_s at (3000,6000) width 1200 wall exterior
+}`;
+    const s = describe(src);
+    expect(s.windows.map((w) => `${w.id}:${w.facing}`)).toEqual(["w_w:W", "w_e:E", "w_n:N", "w_s:S"]);
+  });
+});
+
+/**
+ * **The drawn window: double glazing, and a sill on the EXTERIOR face — decided by the same
+ * probe.** A sill is a fact about which face is outside, so it is drawn only where the plan
+ * says: one wall thickness off each face, the side with no floor is outside. The courtyard
+ * fixtures above are exactly the cases a bounding-box guess gets backwards; a window with
+ * floor on both faces (interior) or on neither (a free-standing wall) has no outside and
+ * draws no sill.
+ */
+vDescribe("window drawing: double glazing, and a sill only on the probed exterior face", () => {
+  const nodesOf = (src: string, id: string): SceneNode[] => {
+    const r = compile(src, { annotate: true, noCache: true });
+    expect(r.errors.map((e) => e.message)).toEqual([]);
+    return r.scene!.nodes.filter((n) => n.elementId === id);
+  };
+  /** The sill is the window's one STROKED polygon (the cover is unstroked). */
+  const sillPts = (nodes: SceneNode[]): { x: number; y: number }[] | null => {
+    const sills = nodes.filter((n) => n.prim.t === "polygon" && n.paint.stroke !== undefined);
+    expect(sills.length).toBeLessThanOrEqual(1);
+    return sills[0] ? (sills[0].prim as { pts: { x: number; y: number }[] }).pts : null;
+  };
+  const STUDIO = `plan "Studio" {
+  units mm
+  wall exterior thickness 200 { (0,0) (7000,0) (7000,6000) (0,6000) close }
+  room id=r_living at (0,0) size 7000x6000 label "Living"
+  window id=w_w at (0,2000)    width 1500 wall exterior
+  window id=w_e at (7000,1500) width 1200 wall exterior
+  window id=w_n at (3000,0)    width 1200 wall exterior
+  window id=w_s at (3000,6000) width 1200 wall exterior
+}`;
+
+  it("glazes with TWO panes, centred on the wall a quarter of its thickness apart", () => {
+    const r = compile(STUDIO, { annotate: true, noCache: true });
+    const panes = r.scene!.nodes.filter(
+      (n) => n.elementId === "w_n" && n.prim.t === "line" && n.paint.stroke === r.scene!.theme.windowPane,
+    );
+    expect(panes.map((n) => (n.prim as { a: { y: number } }).a.y).sort((a, b) => a - b)).toEqual([-25, 25]);
+  });
+
+  it("puts the sill outside each face of a rectangular shell — W, E, N and S", () => {
+    const outside: Record<string, (p: { x: number; y: number }) => boolean> = {
+      w_w: (p) => p.x <= -100,
+      w_e: (p) => p.x >= 7100,
+      w_n: (p) => p.y <= -100,
+      w_s: (p) => p.y >= 6100,
+    };
+    for (const [id, isOut] of Object.entries(outside)) {
+      const pts = sillPts(nodesOf(STUDIO, id));
+      expect(pts, id).not.toBeNull();
+      for (const p of pts!) expect(isOut(p), `${id} ${p.x},${p.y}`).toBe(true);
+    }
+  });
+
+  it("puts a courtyard window's sill on the COURTYARD face, where a bbox guess puts it indoors", () => {
+    // Both fixtures: floor to the north of the court wall, the open court to the south.
+    const hostless = sillPts(nodesOf(HOSTLESS, "w_court"));
+    expect(hostless).not.toBeNull();
+    for (const p of hostless!) expect(p.y).toBeGreaterThanOrEqual(4000 + 300); // 600 mm wall
+    const ring = sillPts(nodesOf(POLY_RING, "w_court"));
+    expect(ring).not.toBeNull();
+    for (const p of ring!) expect(p.y).toBeGreaterThanOrEqual(4000 + 100); // 200 mm wall
+  });
+
+  it("draws no sill where there is no outside: an interior window, a free-standing wall", () => {
+    const interior = `plan "interior" {
+  units mm
+  wall id=mid partition thickness 600 { (0,4000) (12000,4000) }
+  room id=r_north at (0,0)    size 12000x3700 label "North"
+  room id=r_south at (0,4300) size 12000x5700 label "South"
+  window id=w at (6000,4000) width 1200 wall partition
+}`;
+    const free = `plan "free" {
+  units mm
+  wall id=free partition thickness 200 { (5000,2000) (9000,2000) }
+  room id=r at (0,6000) size 12000x4000 label "Hall"
+  window id=w at (7000,2000) width 1200 wall partition
+}`;
+    for (const src of [interior, free]) {
+      const nodes = nodesOf(src, "w");
+      expect(sillPts(nodes)).toBeNull();
+      // …and the window is otherwise whole: cover, two faces, two panes.
+      expect(nodes.map((n) => n.prim.t)).toEqual(["polygon", "line", "line", "line", "line"]);
+    }
+  });
+
+  it("counts a `void` as INSIDE: no sill into a stair well, a sill outside a double-height space", () => {
+    // Room | partition | void: a void has no floor on this storey, but it is not outside —
+    // a sill projecting into the stair well would be a window looking out of the building.
+    const ontoVoid = `plan "well" {
+  units mm
+  wall id=shell exterior thickness 200 { (0,0) (8000,0) (8000,6000) (0,6000) close }
+  wall id=mid partition thickness 200 { (4000,0) (4000,6000) }
+  room id=r at (0,0) size 4000x6000 label "Room"
+  void at (4000,0) size 4000x6000
+  window id=w at (4000,3000) width 1200 wall mid
+}`;
+    expect(sillPts(nodesOf(ontoVoid, "w"))).toBeNull();
+    // A double-height space against the shell: inside on the void side, nothing on the
+    // other, so the sill goes on the OUTSIDE face (y < -100) — not nowhere, as it would if
+    // the void read as outside too.
+    const doubleHeight = `plan "atrium" {
+  units mm
+  wall id=shell exterior thickness 200 { (0,0) (8000,0) (8000,6000) (0,6000) close }
+  void at (0,0) size 8000x3000
+  room id=r at (0,3000) size 8000x3000 label "Gallery"
+  window id=w at (4000,0) width 1200 wall shell
+}`;
+    const pts = sillPts(nodesOf(doubleHeight, "w"));
+    expect(pts).not.toBeNull();
+    for (const p of pts!) expect(p.y).toBeLessThanOrEqual(-100);
+  });
+});

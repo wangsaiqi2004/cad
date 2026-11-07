@@ -1,0 +1,16 @@
+# class: clearances
+# twin-of: sofa-transposed
+# origin: audits/2026-10-18-first-contact.md H2 with `rotate 90`
+# expect: none
+# fact: `size 900x2200 rotate 90` puts the back on the east edge: three seats along y, facing west to the tv_unit
+#   (PNG checked)
+plan "Sofa written as a transposed footprint" {
+  units mm
+  grid 50
+  wall id=shell exterior thickness 200 { (0,0) (6000,0) (6000,4500) (0,4500) close }
+  room id=r_liv at (0,0) size 6000x4500 label "Living Room" uses living
+  door id=d_entry at (3000,4500) width 900 wall shell
+  window at (3000,0) width 1500 wall shell
+  furniture tv_unit against wall shell segment 3 offset 2250 in r_liv
+  furniture sofa at (4200,1150) size 900x2200 label "Sofa" rotate 90
+}

@@ -1,0 +1,18 @@
+# class: annotation-collisions
+# twin-of: label-over-bed
+# origin: repro/family-apartment.arch Bedroom 4 with a 900 mm single bed in place of the 1500 mm one
+# expect: none
+# fact: the label (about x 270-2000, y 2155-2505) is 250 mm clear of the 900 mm bed (x 2250-3150), below the
+#   wardrobe (y 100-700) and the door swing (y 1100-1900)
+plan "Room label clear of the bed" {
+  units mm
+  grid 50
+  paper A4 landscape
+  scale 1:100
+  wall id=shell exterior thickness 200 { (0,0) (3250,0) (3250,3000) (0,3000) close }
+  room id=r_bed4 at (0,0) size 3250x3000 label "Bedroom 4" uses bedroom
+  door at (0,1500) width 800 wall shell hinge left swing in
+  window at (3250,1000) width 1600 wall shell
+  furniture bed at (2250,900) size 900x2000
+  furniture wardrobe at (100,100) size 1800x600
+}

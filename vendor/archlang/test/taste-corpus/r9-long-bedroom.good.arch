@@ -1,0 +1,14 @@
+# criterion: R9
+# twin-of: r9-long-bedroom
+# origin: the same hall and doors with the bedroom made 3000 × 3400 (10.2 m² against 10 m²)
+# fact: the bedroom's minimum enclosing rectangle is 3000 × 3400, aspect 1.13: R9 = 1
+plan "R9 square bedroom" {
+  units mm
+  grid 100
+  room id=r_hall at (0,0) size 2000x5000 label "Hall" uses hall
+  room id=r_bed at (2000,0) size 3000x3400 label "Bedroom" uses bedroom
+  walls from rooms exterior 200 partition 100
+  door id=d_front on r_hall.left at center width 900 swing into r_hall
+  door id=d_bed between r_hall and r_bed at 700 from start width 900 swing into r_bed
+  window id=w_bed on r_bed.right at center width 1500
+}

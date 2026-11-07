@@ -1,0 +1,321 @@
+/**
+ * Module linking — the `import` system.
+ *
+ * Between parse and resolve, `link()` walks a plan's `import` statements,
+ * resolves each spec to a module path, reads it through the {@link World},
+ * parses it, and merges the requested **components** into the importing plan.
+ * This is the compiler's only file-reading phase; parse and resolve stay pure.
+ *
+ * Spec shapes (borrowed from Typst): a relative `.arch` path (`"lib/x.arch"`,
+ * `"./x.arch"`) resolved against the importer's directory, or a namespaced
+ * package `@local/name:major.minor.patch`. Named items may be renamed with
+ * `as`; `*` brings in every component. Cyclic imports yield a diagnostic rather
+ * than looping; a plan with no imports is a strict no-op (same PlanNode back).
+ */
+
+import type { ComponentDef, ImportNode, PlanNode, Statement } from "./ast.js";
+import type { Diagnostic, Span } from "./diagnostics.js";
+import type { Registry } from "./registry.js";
+import type { World } from "./world.js";
+import { parse } from "./parser.js";
+
+/** Directory portion of a forward-slash path ("" for a bare filename). */
+function dirOf(path: string): string {
+  const i = path.lastIndexOf("/");
+  return i < 0 ? "" : path.slice(0, i);
+}
+
+/** Join + normalize a base dir with a relative spec into a canonical path (pure; no node:path). */
+function joinPath(base: string, rel: string): string {
+  const out: string[] = [];
+  for (const seg of (base ? base.split("/") : []).concat(rel.split("/"))) {
+    if (seg === "" || seg === ".") continue;
+    if (seg === "..") {
+      if (out.length && out[out.length - 1] !== "..") out.pop();
+      else out.push(seg);
+    } else out.push(seg);
+  }
+  return out.join("/");
+}
+
+/** A namespaced package spec: `@namespace/name:major.minor.patch`. */
+const PKG_SPEC = /^@([a-z0-9_-]+)\/([a-z0-9_./-]+):(\d+\.\d+\.\d+)$/i;
+
+/** Resolve an import spec to a canonical module path, or an error message. */
+function resolveSpec(spec: string, baseDir: string): { path: string } | { error: string } {
+  if (spec.startsWith("@")) {
+    const m = PKG_SPEC.exec(spec);
+    if (!m) return { error: `Malformed package spec "${spec}" (expected @namespace/name:major.minor.patch)` };
+    const [, ns, name, ver] = m;
+    if (ns !== "local")
+      return { error: `Unknown package namespace "@${ns}" in "${spec}" (only "@local" is supported)` };
+    return { path: `@local/${name}/${ver}/index.arch` };
+  }
+  return { path: joinPath(baseDir, spec) };
+}
+
+type CompMap = Map<string, ComponentDef>;
+
+/**
+ * The statements that bind a module's plan-level names, keyed by each component the module
+ * DECLARES (see {@link moduleBindings}). A side table rather than a field, so a linked
+ * `ComponentDef` keeps exactly the keys it had; it is filled once per link, from the parsed
+ * module, and read by the resolver.
+ */
+const bindingsByDef = new WeakMap<ComponentDef, Statement[]>();
+
+/**
+ * The plan-level binding statements of the module `def` was declared in, when it came in
+ * through an `import` and that module binds anything: its top-level `let`s and
+ * reassignments, the control flow that can reach them, and those inside a top-level `zone`
+ * (a zone is not a scope). Its body falls back to the names they bind, evaluated in the
+ * module's own scope (`ir.ts` `moduleFallback`) — "the plan" an imported component was
+ * written against is its own module. Undefined for a component declared in the compiled
+ * source and for the synthetic whole-file component, whose body runs those statements itself.
+ */
+export function moduleBindings(def: ComponentDef): Statement[] | undefined {
+  return bindingsByDef.get(def);
+}
+
+/**
+ * {@link moduleBindings} of one module body — the body the whole-file component is built
+ * from, less every statement that draws, declares a default or places: what is left is
+ * what binds a plan-level name, in source order. A `level` block is dropped as it is for
+ * the whole-file component (its `let`s are the storey's, not the plan's).
+ */
+function bindingsOf(body: Statement[]): Statement[] {
+  const out: Statement[] = [];
+  for (const s of body) {
+    switch (s.kind) {
+      case "let":
+      case "assign":
+        out.push(s);
+        break;
+      case "zone":
+        out.push(...bindingsOf(s.body));
+        break;
+      case "for":
+      case "while": {
+        const inner = bindingsOf(s.body);
+        if (inner.length > 0) out.push({ ...s, body: inner });
+        break;
+      }
+      case "if": {
+        const then = bindingsOf(s.then);
+        const els = s.else ? bindingsOf(s.else) : [];
+        if (then.length > 0 || els.length > 0) out.push({ ...s, then, ...(els.length > 0 ? { else: els } : {}) });
+        break;
+      }
+    }
+  }
+  return out;
+}
+
+/** One loaded module: the components it exports, plus the whole-file body it *is*. */
+interface Module {
+  comps: CompMap;
+  /** The module's own top-level statements — the body of its implicit whole-file component. */
+  body: Statement[];
+}
+
+/**
+ * Build the implicit zero-parameter component a `import "<path>" as <name>` names: the
+ * module's own top-level DRAWABLE statements, in source order.
+ *
+ * Two deliberate rules, both because ONE drawing is issued on ONE sheet at ONE scale:
+ *
+ *  - the module's plan-level **settings** (`units`/`grid`/`paper`/`scale`/`north`/`site`/
+ *    `dims`/`title`/`axes`/`schedule`/`legend`) are IGNORED — they are not body statements, so
+ *    they simply never reach here; the root plan's settings govern;
+ *  - a module's `level` blocks are DROPPED (a storey is a page, and a component is a
+ *    piece of one page, so a multi-storey file cannot be a component). Everything else —
+ *    elements, `let`/`set`, control flow, `strip`, nested `place` — comes through.
+ *
+ * `scope` is the module's OWN component map, so a file that calls its private helpers
+ * still expands when the importer knows only the file's name.
+ */
+function wholeFileComponent(name: string, path: string, body: Statement[], comps: CompMap): ComponentDef {
+  return {
+    name,
+    params: [],
+    body: body.filter((s) => s.kind !== "level"),
+    line: 1,
+    file: path,
+    scope: comps,
+    wholeFile: true,
+  };
+}
+
+/**
+ * Load a module's component set (its own components plus those it imports),
+ * memoized per canonical path. Returns `null` (and emits a diagnostic at the
+ * import site) on a missing module or a cycle.
+ */
+function loadModule(
+  path: string,
+  world: World,
+  registry: Registry,
+  diagnostics: Diagnostic[],
+  atSpan: Span | undefined,
+  stack: Set<string>,
+  cache: Map<string, Module | null>,
+): Module | null {
+  const cached = cache.get(path);
+  if (cached !== undefined) return cached;
+  if (stack.has(path)) {
+    diagnostics.push({
+      severity: "error",
+      code: "E_IMPORT_CYCLE",
+      message: `Cyclic import of module "${path}"`,
+      span: atSpan,
+    });
+    return null;
+  }
+  const src = world.read(path);
+  if (src == null) {
+    diagnostics.push({
+      severity: "error",
+      code: "E_IMPORT_NOT_FOUND",
+      message: `Cannot resolve imported module "${path}"`,
+      span: atSpan,
+    });
+    cache.set(path, null);
+    return null;
+  }
+  stack.add(path);
+  const { plan, diagnostics: pdiags } = parse(src, registry);
+  // Module spans don't map onto the importing source, so surface parse *errors*
+  // at the import site, prefixed with the module path. (Most warnings are dropped —
+  // see below for the two named exceptions.)
+  for (const d of pdiags) {
+    if (d.severity === "error") {
+      diagnostics.push({
+        severity: "error",
+        code: "E_IMPORT_PARSE",
+        message: `In module "${path}": ${d.message}`,
+        span: atSpan,
+      });
+    } else if (d.code === "W_WHILE_DEPRECATED" || d.code === "W_REASSIGN_DEPRECATED") {
+      // W7: forwarded (unlike every other module warning) because the deprecation is
+      // about the LANGUAGE FORM, not this plan's own content — an importer should still
+      // learn a library it pulled in uses a construct scheduled for removal. Tagged with
+      // the module's own `file` (its span is already measured in THAT source, unchanged)
+      // and never carries a `fixes` array to begin with (parse-time never attaches one;
+      // `applyFixes` refuses a suggestion with `file` besides). No other module warning
+      // is forwarded: that would move `compile().diagnostics` for every plan that merely
+      // imports a library, which is exactly the byte-identity law this deprecation must
+      // not break.
+      diagnostics.push({ ...d, file: path });
+    }
+  }
+  // Tag every component DECLARED here with its file. Its body's spans are offsets into
+  // THIS source, not the importer's, and that provenance is what stops a diagnostic (and
+  // its machine-applicable fix) from being applied to the wrong file — see
+  // `Diagnostic.file` and `applyFixes`.
+  const comps: CompMap = new Map();
+  const bindings = plan ? bindingsOf(plan.body) : [];
+  for (const [k, def] of plan?.components ?? []) {
+    const linked: ComponentDef = { ...def, file: path };
+    if (bindings.some((s) => s.kind === "let")) bindingsByDef.set(linked, bindings);
+    comps.set(k, linked);
+  }
+  if (plan) {
+    for (const imp of plan.imports) mergeImport(comps, imp, dirOf(path), world, registry, diagnostics, stack, cache);
+  }
+  stack.delete(path);
+  const mod: Module = { comps, body: plan ? plan.body : [] };
+  cache.set(path, mod);
+  return mod;
+}
+
+/** Resolve one import statement and merge its components into `target`. */
+function mergeImport(
+  target: CompMap,
+  imp: ImportNode,
+  baseDir: string,
+  world: World,
+  registry: Registry,
+  diagnostics: Diagnostic[],
+  stack: Set<string>,
+  cache: Map<string, Module | null>,
+): void {
+  const r = resolveSpec(imp.spec, baseDir);
+  if ("error" in r) {
+    diagnostics.push({ severity: "error", code: "E_IMPORT_BAD_SPEC", message: r.error, span: imp.span });
+    return;
+  }
+  const mod = loadModule(r.path, world, registry, diagnostics, imp.span, stack, cache);
+  if (!mod) return;
+
+  // `import "<path>" as <name>` — the whole file becomes one component (see
+  // `wholeFileComponent`). A name clash is the same conflict error as a named import.
+  if (imp.wholeAs !== undefined) {
+    if (target.has(imp.wholeAs)) {
+      diagnostics.push({
+        severity: "error",
+        code: "E_IMPORT_CONFLICT",
+        message: `Imported name "${imp.wholeAs}" conflicts with an existing component`,
+        span: imp.span,
+      });
+      return;
+    }
+    if (mod.body.filter((s) => s.kind !== "level").length === 0) {
+      diagnostics.push({
+        severity: "warning",
+        code: "W_IMPORT_EMPTY_FILE",
+        message: `Module "${r.path}" has no top-level statements, so \`import … as ${imp.wholeAs}\` binds an empty component`,
+        span: imp.span,
+        hints: [`draw in the module's plan body, or import a named \`component\` with \`import "…": <name>\``],
+      });
+    }
+    target.set(imp.wholeAs, wholeFileComponent(imp.wholeAs, r.path, mod.body, mod.comps));
+    return;
+  }
+
+  const bind = (name: string, as: string): void => {
+    const def = mod.comps.get(name);
+    if (!def) {
+      diagnostics.push({
+        severity: "error",
+        code: "E_IMPORT_NOT_EXPORTED",
+        message: `Module "${r.path}" has no exported component "${name}"`,
+        span: imp.span,
+      });
+      return;
+    }
+    if (target.has(as)) {
+      diagnostics.push({
+        severity: "error",
+        code: "E_IMPORT_CONFLICT",
+        message: `Imported name "${as}" conflicts with an existing component`,
+        span: imp.span,
+      });
+      return;
+    }
+    target.set(as, def);
+  };
+
+  if (imp.star) {
+    for (const name of mod.comps.keys()) bind(name, name);
+  } else {
+    for (const it of imp.items) bind(it.name, it.alias ?? it.name);
+  }
+}
+
+/**
+ * Resolve a plan's imports, returning a plan whose `components` map is augmented
+ * with the imported ones. A no-import plan is returned **unchanged** (same
+ * reference), guaranteeing byte-identical output for every import-free source.
+ */
+export function link(plan: PlanNode, world: World, registry: Registry): { plan: PlanNode; diagnostics: Diagnostic[] } {
+  const diagnostics: Diagnostic[] = [];
+  if (plan.imports.length === 0) return { plan, diagnostics };
+
+  // Clone the components map so the (possibly stage-cached) parsed AST is never mutated.
+  const merged: CompMap = new Map(plan.components);
+  const stack = new Set<string>();
+  const cache = new Map<string, Module | null>();
+  for (const imp of plan.imports) mergeImport(merged, imp, "", world, registry, diagnostics, stack, cache);
+
+  return { plan: { ...plan, components: merged }, diagnostics };
+}

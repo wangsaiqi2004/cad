@@ -1,0 +1,15 @@
+# class: openings-ignore-walls
+# origin: audits/archcanvas-public-examples.md CA5 (accessible-clinic d_staff, jamb 50 mm from the w_s2 face)
+# expect: W_OPENING_AT_JUNCTION
+# status: done
+# fact: d_staff spans x 3100-4000 on the south run; partition p's face is at 3050, so the jamb nib is 50 mm
+plan "Door jamb at a tee" {
+  units mm
+  grid 50
+  wall id=shell exterior thickness 200 { (0,0) (8000,0) (8000,5000) (0,5000) close }
+  wall id=p partition thickness 100 { (3000,0) (3000,5000) }
+  room id=a at (0,0) size 3000x5000 label "Store" uses storage
+  room id=b at (3000,0) size 5000x5000 label "Staff room"
+  door id=d_staff at (3550,5000) width 900 wall shell
+  door on p at 50% width 800
+}

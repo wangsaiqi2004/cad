@@ -1,0 +1,761 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+# A new push to a PR cancels that PR's superseded run (B in docs/plans/ci-throughput.md).
+# A push to `main` gets a group of its own (keyed on the commit, not the ref), so a main
+# build is never cancelled, and never left pending behind another one either: GitHub
+# replaces a PENDING run in a group even when cancel-in-progress is false.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Record-only PRs skip the heavy work (C in docs/plans/ci-throughput.md).
+  #
+  # `code` is true when ANY changed path lies outside RECORDS, the negated globs below:
+  # Markdown that nothing publishes and that only the docs leg's checks read. Measured,
+  # not assumed: every `fs` read of the full suite was traced per test file, and the
+  # only suites that read a record are the ones the docs leg runs (`docs-*`, the seven
+  # that compile every `arch` fence of every Markdown page under `docs/` and the root,
+  # and `npm-tarball`, which ships CHANGELOG.md). NOT records: published pages,
+  # `docs/adr/` (synced to the site), the README, `spec.llm.md`, skills, package READMEs,
+  # `packages/archlang-3d/CHANGELOG.md` (`npm pack` in check:3d's pack.e2e.ts reads it),
+  # and every non-Markdown file under `docs/plans/` (the `.arch` plans the suites read
+  # live in `test/plans/`). A suite that starts reading a record joins
+  # the docs leg's list below, or the record leaves this list.
+  #
+  # Every gating job below keeps its check NAME (the required checks on `main` are those
+  # names) and only guards its steps on FULL_CI, so a record-only PR reports every check,
+  # green, in about a minute. FULL_CI fails OPEN: on a push, on a failed or empty
+  # `changes`, or on any non-record path, every leg runs in full.
+  #
+  # Code PRs drop the redundant legs (G in docs/plans/ci-throughput.md).
+  #
+  # Node 18, Node 20 and Windows guard their steps on FULL_LEG: true on every push, and on
+  # a PR only if `changes` failed (the same fail-open as FULL_CI). On a PR they report
+  # green with a job-summary line and run nothing. Their breaks surface after the merge,
+  # in the push run on `main` and in nightly's `full-matrix`; `/release-check` reads both.
+  #
+  # Node 22 is an aggregator: its check gates on `node-22-checks` (typecheck, lint, drift,
+  # eval) and on the three `node-22-tests` shards, on PRs and pushes alike, and it also
+  # carries the docs leg. A push therefore still runs the whole suite on Node 22, split
+  # across the shards: `vitest --shard` puts every test file in exactly one shard.
+  # ---------------------------------------------------------------------------
+  changes:
+    name: Changed paths
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      code: ${{ steps.verdict.outputs.code }}
+    steps:
+      - name: Classify the PR's changed paths
+        id: filter
+        if: github.event_name == 'pull_request'
+        uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
+        with:
+          # `every`: a file counts as `code` only if it matches `**` AND none of the
+          # negated record globs, i.e. it is not a record.
+          predicate-quantifier: every
+          filters: |
+            code:
+              - '**'
+              - '!docs/plans/**/*.md'
+              - '!docs/agents/*.md'
+              - '!docs/backlog.md'
+              - '!docs/testing.md'
+              - '!docs/seo.md'
+              - '!docs/hosting-and-domains.md'
+              - '!docs/npm-oidc-publishing-playbook.md'
+              - '!eval/README.md'
+              - '!.claude/**/*.md'
+              - '!.github/ISSUE_TEMPLATE/**'
+              - '!AGENTS.md'
+              - '!CLAUDE.md'
+              - '!CHANGELOG.md'
+              - '!editors/vscode/CHANGELOG.md'
+
+      - name: Verdict
+        id: verdict
+        env:
+          EVENT: ${{ github.event_name }}
+          CODE: ${{ steps.filter.outputs.code }}
+        run: |
+          if [ "$EVENT" = "pull_request" ] && [ "$CODE" = "false" ]; then code=false; else code=true; fi
+          echo "code=$code" >> "$GITHUB_OUTPUT"
+          if [ "$code" = "false" ]; then
+            echo "Record-only change: the gating legs report green without running; Node 22 runs the docs leg." >> "$GITHUB_STEP_SUMMARY"
+          elif [ "$EVENT" = "pull_request" ]; then
+            echo "Code change: Node 22 (three shards), the builds and the E2E legs run; Node 18, Node 20 and Windows run on main and nightly." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "Push: every leg runs in full." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+  build:
+    name: Node ${{ matrix.node }}
+    runs-on: ubuntu-latest
+    needs: changes
+    # Runs even if `changes` failed: FULL_LEG then reads as true and every step runs.
+    if: ${{ !cancelled() }}
+    env:
+      FULL_LEG: ${{ github.event_name != 'pull_request' || needs.changes.result != 'success' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        node: [18, 20]
+    steps:
+      - name: Main-only leg, nothing to run on this PR
+        if: env.FULL_LEG != 'true'
+        run: echo "Node ${{ matrix.node }} runs on every push to main and nightly, not on PRs." | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: env.FULL_LEG == 'true'
+
+      - name: Set up Node.js ${{ matrix.node }}
+        if: env.FULL_LEG == 'true'
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: ${{ matrix.node }}
+          check-latest: true
+          cache: npm
+
+      - name: Install dependencies
+        if: env.FULL_LEG == 'true'
+        run: npm ci
+
+      - name: Type-check
+        if: env.FULL_LEG == 'true'
+        run: npm run typecheck
+
+      - name: Lint & format (Biome)
+        if: env.FULL_LEG == 'true'
+        run: npm run lint:ci
+
+      - name: Generated artifacts are in sync
+        if: env.FULL_LEG == 'true'
+        run: npm run check:drift
+
+      # Coverage no longer runs here: it moved to nightly.yml's `coverage` job, where it
+      # is still report-only. Every leg runs the plain suite, the pass/fail signal.
+      - name: Test
+        if: env.FULL_LEG == 'true'
+        run: npm test
+
+      - name: Authorability eval (offline golden regression guard)
+        if: env.FULL_LEG == 'true'
+        run: npm run eval:ci
+
+  # The non-test half of the Node 22 leg. A record-only PR skips the whole job, and the
+  # `Node 22` aggregator below expects exactly that skip; neither name here is required.
+  node-22-checks:
+    name: Node 22 checks
+    runs-on: ubuntu-latest
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Node.js 22
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+          check-latest: true
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Type-check
+        run: npm run typecheck
+
+      - name: Lint & format (Biome)
+        run: npm run lint:ci
+
+      - name: Generated artifacts are in sync
+        run: npm run check:drift
+
+      - name: Authorability eval (offline golden regression guard)
+        run: npm run eval:ci
+
+  # The suite on Node 22, one job per shard. Files carry no state to one another: a test
+  # writes to the repository only under an UPDATE flag and otherwise to a mkdtemp directory.
+  # That has to stay true: `vitest --shard` assigns files by sorted hash, so a new file can
+  # move others between shards.
+  node-22-tests:
+    name: Node 22 tests ${{ matrix.shard }}/3
+    runs-on: ubuntu-latest
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Node.js 22
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+          check-latest: true
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Test
+        run: npx vitest run --shard=${{ matrix.shard }}/3
+
+  # The required `Node 22` check. It decides from its needs' results, so a shard that failed,
+  # was cancelled or was skipped when it had work to do turns it red. `always()`, not
+  # `!cancelled()`: a job skipped by its `if` satisfies a required check, so a cancelled
+  # run must not leave this one skipped.
+  node-22:
+    name: Node 22
+    runs-on: ubuntu-latest
+    needs: [changes, node-22-checks, node-22-tests]
+    if: ${{ always() }}
+    env:
+      FULL_CI: ${{ needs.changes.outputs.code != 'false' }}
+    steps:
+      - name: Every Node 22 job gave the expected result
+        if: always()
+        env:
+          CHECKS: ${{ needs.node-22-checks.result }}
+          TESTS: ${{ needs.node-22-tests.result }}
+        run: |
+          if [ "$FULL_CI" = "true" ]; then want=success; else want=skipped; fi
+          echo "Node 22 checks: $CHECKS. Node 22 tests: $TESTS. Expected: $want." | tee -a "$GITHUB_STEP_SUMMARY"
+          if [ "$CHECKS" != "$want" ] || [ "$TESTS" != "$want" ]; then
+            echo "::error::A Node 22 job did not give the expected result ($want)."
+            exit 1
+          fi
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: env.FULL_CI != 'true'
+
+      - name: Set up Node.js 22
+        if: env.FULL_CI != 'true'
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+          check-latest: true
+          cache: npm
+
+      - name: Install dependencies
+        if: env.FULL_CI != 'true'
+        run: npm ci
+
+      # The docs leg: what still guards a record-only change, i.e. every suite that reads
+      # a record (see `changes`), the wiring check, the generators and the site build. A
+      # full run covers all of these elsewhere.
+      - name: "Docs leg: generated artifacts are in sync"
+        if: env.FULL_CI != 'true'
+        run: npm run check:drift
+
+      - name: "Docs leg: every test file is wired into the suite"
+        if: env.FULL_CI != 'true'
+        run: npm run check:test-wiring
+
+      - name: "Docs leg: the suites that read a record"
+        if: env.FULL_CI != 'true'
+        run: >-
+          npx vitest run
+          test/docs-
+          test/step-budget.test.ts
+          test/label-placement-oracle.test.ts
+          test/label-wrap.test.ts
+          test/room-adjacency-oracle.test.ts
+          test/room-overlap-oracle.test.ts
+          test/vocabulary-living-dining.test.ts
+          test/vocabulary-matcher-oracle.test.ts
+          test/npm-tarball.test.ts
+
+      - name: "Docs leg: build the docs site"
+        if: env.FULL_CI != 'true'
+        run: npm run docs:build
+
+  builds:
+    name: Workspace builds
+    runs-on: ubuntu-latest
+    needs: changes
+    if: ${{ !cancelled() }}
+    env:
+      FULL_CI: ${{ needs.changes.outputs.code != 'false' }}
+    # The core suite never compiles the downstream workspaces, so a change that
+    # breaks the docs site, the playground, the MCP shim or the VS Code extension
+    # used to reach `main` green. This job compiles all four.
+    steps:
+      - name: Record-only change, nothing to run on this leg
+        if: env.FULL_CI != 'true'
+        run: echo "Record-only change; see the Node 22 docs leg."
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: env.FULL_CI == 'true'
+
+      - name: Set up Node.js
+        if: env.FULL_CI == 'true'
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+          check-latest: true
+          cache: npm
+
+      - name: Install dependencies
+        if: env.FULL_CI == 'true'
+        run: npm ci
+
+      # Every workspace consumes the core's `dist/`, and the root
+      # `docs:build`/`playground:build`/`mcp:build` scripts each BEGIN with their
+      # own `npm run build`. Running those four here would rebuild the core four
+      # times, so the core is built once and CI calls the `:only` variants.
+      - name: Build core (once — every workspace below consumes dist/)
+        if: env.FULL_CI == 'true'
+        run: npm run build
+
+      # Fails fast, before the slower site builds. Covers the root dev tsconfig
+      # (src + test + eval + dataset + scripts + bench) plus the playground, the
+      # docs site (vue-tsc over .vitepress + every theme SFC, and tsc over the docs
+      # E2E specs), the MCP shim and the VS Code extension. The playground and docs
+      # legs both resolve the bare `archlang` specifier to ../dist/index.d.ts, hence
+      # after the build above; the docs leg also runs `sync-docs.mjs` first, since
+      # config.ts and CompileSeam.vue import its generated modules.
+      - name: Type-check every workspace
+        if: env.FULL_CI == 'true'
+        run: npm run typecheck:all
+
+      - name: Build docs site
+        if: env.FULL_CI == 'true'
+        run: npm run docs:build:only
+
+      - name: Build playground
+        if: env.FULL_CI == 'true'
+        run: npm run playground:build:only
+
+      - name: Build MCP shim
+        if: env.FULL_CI == 'true'
+        run: npm run mcp:build:only
+
+      - name: Build VS Code extension
+        if: env.FULL_CI == 'true'
+        run: npm run vscode:build:only
+
+      # The MCP shim bakes its context resources into dist/ at pack time — the
+      # 0.2.2 staleness incident shipped a v1.19 grammar against a current core.
+      # This proves every dist/ resource is byte-identical to its repo source.
+      - name: Check MCP dist resources are fresh
+        if: env.FULL_CI == 'true'
+        run: node packages/mcp/scripts/check-dist-resources.mjs
+
+      # The stdio smoke + bundle-freshness tests need the built extension
+      # (dist/server.js); the plain test matrix skips them by design.
+      - name: VS Code extension bundle tests
+        if: env.FULL_CI == 'true'
+        run: npx vitest run editors/vscode
+
+      # A `*.test.ts` outside vitest.config.ts's `test.include` list is not skipped
+      # and not reported — it is never collected, so it reads as coverage in the
+      # diff while `npm test` stays green. This proves every tracked test file is
+      # matched by a glob the suite actually runs (and that no glob has gone dead).
+      - name: Every test file is wired into the suite
+        if: env.FULL_CI == 'true'
+        run: npm run check:test-wiring
+
+      # The DXF through an independent reader (backlog U.13). ezdxf is a test tool, in a virtualenv
+      # because `python -I` ignores the user site. With no reader the check fails under CI, so this
+      # step cannot pass without having read anything.
+      - name: DXF read back by ezdxf
+        if: env.FULL_CI == 'true'
+        run: |
+          python3 -m venv "$RUNNER_TEMP/dxf-reader"
+          "$RUNNER_TEMP/dxf-reader/bin/pip" install --quiet -r e2e/requirements.txt
+          ARCHLANG_DXF_PYTHON="$RUNNER_TEMP/dxf-reader/bin/python" npm run check:dxf
+
+      # (appended by later workstreams)
+
+  windows:
+    name: Windows (tests + drift)
+    runs-on: windows-latest
+    needs: changes
+    if: ${{ !cancelled() }}
+    env:
+      FULL_LEG: ${{ github.event_name != 'pull_request' || needs.changes.result != 'success' }}
+    # Determinism is a core invariant, and the whole toolchain is developed on
+    # Windows — but CI only ever proved it on Linux. This leg catches the two
+    # things that actually differ: line endings (a golden/snapshot mismatch) and
+    # path handling in the generators.
+    #
+    # NOTE: git's line-ending settings are deliberately left at the RUNNER
+    # DEFAULTS (no core.autocrlf override). `.gitattributes` pins `* text=auto
+    # eol=lf`, and this job's whole point is to fail if that ever stops holding —
+    # forcing autocrlf here would hide exactly the regression it exists to catch.
+    #
+    # `eval:ci` and the benchmark are Linux-only on purpose: the eval is already
+    # covered by the Linux legs above and bench timings are runner-dependent.
+    #
+    # Off the PR path (see `changes`): the owner's local gate runs the full suite on
+    # Windows before a PR, so this leg confirms that on `main` and nightly.
+    steps:
+      - name: Main-only leg, nothing to run on this PR
+        if: env.FULL_LEG != 'true'
+        shell: bash
+        run: echo "Windows runs on every push to main and nightly, not on PRs." | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: env.FULL_LEG == 'true'
+
+      - name: Set up Node.js
+        if: env.FULL_LEG == 'true'
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+          check-latest: true
+          cache: npm
+
+      - name: Install dependencies
+        if: env.FULL_LEG == 'true'
+        run: npm ci
+
+      - name: Test
+        if: env.FULL_LEG == 'true'
+        run: npm test
+
+      - name: Generated artifacts are in sync
+        if: env.FULL_LEG == 'true'
+        run: npm run check:drift
+
+  bench:
+    name: Benchmark (informational)
+    runs-on: ubuntu-latest
+    # Timings are runner-dependent — this never gates the build; it writes the
+    # median per-stage deltas vs. bench/baseline.json to the job summary and, on
+    # same-repo PRs (a fork's GITHUB_TOKEN is read-only), posts them as a comment.
+    # Not a required check, so on a record-only PR the whole job is skipped.
+    needs: changes
+    if: ${{ !cancelled() && github.event_name == 'pull_request' && needs.changes.outputs.code != 'false' }}
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - name: Run benchmark
+        run: |
+          npx tsx bench/run.ts --json > bench-current.json
+          node bench/compare.mjs bench-current.json bench-comment.md
+      - name: Write benchmark summary
+        run: cat bench-comment.md >> "$GITHUB_STEP_SUMMARY"
+      - name: Post benchmark comment
+        if: github.event.pull_request.head.repo.full_name == github.repository
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        with:
+          script: |
+            const fs = require('fs');
+            const body = fs.readFileSync('bench-comment.md', 'utf8');
+            const marker = '<!-- archlang-bench -->';
+            const { owner, repo } = context.repo;
+            const issue_number = context.issue.number;
+            const { data: comments } = await github.rest.issues.listComments({ owner, repo, issue_number });
+            const existing = comments.find((c) => c.body.includes(marker));
+            const payload = `${marker}\n${body}`;
+            if (existing) {
+              await github.rest.issues.updateComment({ owner, repo, comment_id: existing.id, body: payload });
+            } else {
+              await github.rest.issues.createComment({ owner, repo, issue_number, body: payload });
+            }
+
+  e2e-playground:
+    name: Playground E2E (Playwright)
+    runs-on: ubuntu-latest
+    needs: changes
+    if: ${{ !cancelled() }}
+    env:
+      FULL_CI: ${{ needs.changes.outputs.code != 'false' }}
+    # The unit suite proves the playground's pure logic and `builds` proves it
+    # COMPILES — neither ever opens the page. This job drives the real built
+    # bundle in a real Chromium: boot, edit, apply a diagnostic fix, download
+    # every format, and the chrome-less embed page.
+    #
+    # It earned its keep on the first run by finding a live bug: click-to-source
+    # never fired with a real mouse, because the pan/zoom controller's
+    # `setPointerCapture` retargets the click away from the drawn element (fixed
+    # in `interact.ts` by hit-testing the POINT instead of reading `e.target`).
+    # That class of fault is invisible to `tsc`, vitest and `vite build` alike,
+    # which is the whole argument for this leg.
+    steps:
+      - name: Record-only change, nothing to run on this leg
+        if: env.FULL_CI != 'true'
+        run: echo "Record-only change; see the Node 22 docs leg."
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: env.FULL_CI == 'true'
+
+      - name: Set up Node.js
+        if: env.FULL_CI == 'true'
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+          check-latest: true
+          cache: npm
+
+      - name: Install dependencies
+        if: env.FULL_CI == 'true'
+        run: npm ci
+
+      # `vite preview` (the config's `webServer`) only SERVES playground/dist/ —
+      # it never builds it. Both builds below are prerequisites, not
+      # conveniences: the core first, since the playground aliases the bare
+      # `archlang` specifier to ../dist/index.js, then the app itself.
+      - name: Build core
+        if: env.FULL_CI == 'true'
+        run: npm run build
+
+      - name: Build playground
+        if: env.FULL_CI == 'true'
+        run: npm run playground:build:only
+
+      # Keyed on the RESOLVED @playwright/test version: a browser build is pinned
+      # to its driver, so a version bump must miss the cache rather than reuse an
+      # incompatible download.
+      - name: Resolve Playwright version
+        if: env.FULL_CI == 'true'
+        id: pw
+        run: |
+          version=$(node -p "require('@playwright/test/package.json').version")
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Cache Playwright browsers
+        if: env.FULL_CI == 'true'
+        id: pw-cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ steps.pw.outputs.version }}
+
+      # On a cache hit the browser binary is already there but the OS packages it
+      # links against are not (they live outside the cached path), so the two
+      # cases install different things. The cache-hit step is NOT skippable: on
+      # ubuntu-latest it installs nine packages, mostly fonts (ipafont-gothic,
+      # freefont, unifont, wqy-zenhei, xfonts-*) the image lacks, and the specs
+      # measure laid-out text (boundingBox). When it takes 10+ minutes that is the
+      # Azure apt mirror serving those debs slowly, not a cache miss.
+      - name: Install Chromium (browser + system deps)
+        if: env.FULL_CI == 'true' && steps.pw-cache.outputs.cache-hit != 'true'
+        run: npx playwright install --with-deps chromium
+
+      - name: Install Chromium system deps only (cached browser)
+        if: env.FULL_CI == 'true' && steps.pw-cache.outputs.cache-hit == 'true'
+        run: npx playwright install-deps chromium
+
+      - name: Run E2E specs
+        if: env.FULL_CI == 'true'
+        run: npx playwright test -c playground
+
+      - name: Upload Playwright report
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: playwright-report
+          path: |
+            playground/playwright-report
+            playground/test-results
+          retention-days: 7
+          if-no-files-found: ignore
+
+  check-3d:
+    name: 3D package (check:3d)
+    runs-on: ubuntu-latest
+    needs: changes
+    if: ${{ !cancelled() }}
+    env:
+      FULL_CI: ${{ needs.changes.outputs.code != 'false' }}
+      # The browsers live in the workspace, where the cache step below finds them.
+      PLAYWRIGHT_BROWSERS_PATH: ${{ github.workspace }}/.pw-browsers
+    # packages/archlang-3d's heavy tests (archlang-3d plan §8.2, isolation rule I2): the GLB through
+    # Khronos glTF-Validator and its determinism over the corpus, the CLI's exit codes, the licence
+    # gate and the tarball's `npm pack` check, and the replay in Playwright's Chromium on SwiftShader, including the
+    # key-frame pixel baseline, which is pinned to THIS environment (Linux, the Chromium build of the
+    # locked playwright-core; Q21). NOT a required check: the seven required names are a
+    # branch-protection setting the owner holds, and this job is not one of them.
+    steps:
+      - name: Record-only change, nothing to run on this leg
+        if: env.FULL_CI != 'true'
+        run: echo "Record-only change; see the Node 22 docs leg."
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: env.FULL_CI == 'true'
+
+      - name: Set up Node.js
+        if: env.FULL_CI == 'true'
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+          check-latest: true
+          cache: npm
+
+      - name: Install dependencies
+        if: env.FULL_CI == 'true'
+        run: npm ci
+
+      # The CLI test spawns `archlang3d` as a process, which reads the core through its built dist/.
+      - name: Build core
+        if: env.FULL_CI == 'true'
+        run: npm run build
+
+      # Keyed on the RESOLVED playwright-core version the package drives: its browser build is
+      # pinned to it, so a bump misses the cache instead of reusing another Chromium.
+      - name: Resolve playwright-core version
+        if: env.FULL_CI == 'true'
+        id: pw
+        run: |
+          version=$(node -p "require('playwright-core/package.json').version")
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Cache Playwright browsers
+        if: env.FULL_CI == 'true'
+        id: pw-cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ env.PLAYWRIGHT_BROWSERS_PATH }}
+          key: playwright-core-${{ runner.os }}-${{ steps.pw.outputs.version }}
+
+      # The pixel baseline pins only text-free frames, so no font packages are needed; the
+      # browser's own shared libraries still are, and they live outside the cached path.
+      - name: Install Chromium (browser + system deps)
+        if: env.FULL_CI == 'true' && steps.pw-cache.outputs.cache-hit != 'true'
+        run: npx playwright-core install --with-deps chromium
+
+      - name: Install Chromium system deps only (cached browser)
+        if: env.FULL_CI == 'true' && steps.pw-cache.outputs.cache-hit == 'true'
+        run: npx playwright-core install-deps chromium
+
+      # `view --video` encodes H.264 through ffmpeg; the e2e requires it under CI.
+      - name: Install ffmpeg
+        if: env.FULL_CI == 'true'
+        run: command -v ffmpeg || (sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg)
+
+      - name: Run check:3d
+        if: env.FULL_CI == 'true'
+        run: npm run check:3d
+
+  e2e-docs:
+    name: Docs site E2E (Playwright)
+    runs-on: ubuntu-latest
+    needs: changes
+    if: ${{ !cancelled() }}
+    env:
+      FULL_CI: ${{ needs.changes.outputs.code != 'false' }}
+    # `builds` proves the docs site COMPILES and `scripts/smoke.mjs` proves its routes
+    # exist AFTER a deploy — neither opens the site. This job serves the built output
+    # and checks the two contracts that are invisible to both:
+    #
+    #   1. The MACHINE routes llms.txt advertises — the raw `/<page>.md` copies (byte
+    #      -for-byte the repo's canonical markdown), /llms-full.txt, both JSON schemas,
+    #      /archlang.gbnf and one SVG per gallery example. A `srcExclude` or public/
+    #      mistake turns any of them into an HTML 404 while the site still builds,
+    #      still deploys and still looks perfect to a human.
+    #   2. `<ArchLive>` — the claim that every ```arch fence in the docs is a real
+    #      compiler in the reader's tab: the SSR fallback swapping to a live editor,
+    #      an edit recompiling, a hostile room label reaching the v-html'd SVG as TEXT,
+    #      and "Open in Playground" minting a `#z=` hash that the PLAYGROUND's own
+    #      decoder reads back. That last one is the runtime weld on the third copy of
+    #      the share codec (test/share-codec.test.ts is the static one).
+    #
+    # Route lists are derived from docs-site/sync-docs.mjs, so a new page or example
+    # extends this job the day it lands.
+    steps:
+      - name: Record-only change, nothing to run on this leg
+        if: env.FULL_CI != 'true'
+        run: echo "Record-only change; see the Node 22 docs leg."
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: env.FULL_CI == 'true'
+
+      - name: Set up Node.js
+        if: env.FULL_CI == 'true'
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          # Node 22, not 18/20: archlive.spec.ts decodes the widget's `#z=` hash with
+          # `DecompressionStream("deflate-raw")`, which Node only gained in 21.2.
+          node-version: 22
+          check-latest: true
+          cache: npm
+
+      - name: Install dependencies
+        if: env.FULL_CI == 'true'
+        run: npm ci
+
+      # `vitepress preview` (the config's `webServer`) only SERVES
+      # docs-site/.vitepress/dist/ — it never builds it. Both builds below are
+      # prerequisites, not conveniences: the core first, since the theme aliases the
+      # bare `archlang` specifier to ../dist/index.js (and sync-docs compiles every
+      # gallery example through it), then the site itself.
+      - name: Build core
+        if: env.FULL_CI == 'true'
+        run: npm run build
+
+      - name: Build docs site
+        if: env.FULL_CI == 'true'
+        run: npm run docs:build:only
+
+      # Keyed on the RESOLVED @playwright/test version: a browser build is pinned
+      # to its driver, so a version bump must miss the cache rather than reuse an
+      # incompatible download.
+      - name: Resolve Playwright version
+        if: env.FULL_CI == 'true'
+        id: pw
+        run: |
+          version=$(node -p "require('@playwright/test/package.json').version")
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Cache Playwright browsers
+        if: env.FULL_CI == 'true'
+        id: pw-cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ steps.pw.outputs.version }}
+
+      # On a cache hit the browser binary is already there but the OS packages it
+      # links against are not (they live outside the cached path), so the two
+      # cases install different things. The cache-hit step is NOT skippable: on
+      # ubuntu-latest it installs nine packages, mostly fonts (ipafont-gothic,
+      # freefont, unifont, wqy-zenhei, xfonts-*) the image lacks, and the specs
+      # measure laid-out text (boundingBox). When it takes 10+ minutes that is the
+      # Azure apt mirror serving those debs slowly, not a cache miss.
+      - name: Install Chromium (browser + system deps)
+        if: env.FULL_CI == 'true' && steps.pw-cache.outputs.cache-hit != 'true'
+        run: npx playwright install --with-deps chromium
+
+      - name: Install Chromium system deps only (cached browser)
+        if: env.FULL_CI == 'true' && steps.pw-cache.outputs.cache-hit == 'true'
+        run: npx playwright install-deps chromium
+
+      - name: Run E2E specs
+        if: env.FULL_CI == 'true'
+        run: npx playwright test -c docs-site
+
+      - name: Upload Playwright report
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: playwright-report-docs
+          path: |
+            docs-site/playwright-report
+            docs-site/test-results
+          retention-days: 7
+          if-no-files-found: ignore

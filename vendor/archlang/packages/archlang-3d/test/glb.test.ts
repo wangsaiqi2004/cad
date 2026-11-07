@@ -1,0 +1,241 @@
+/**
+ * The GLB (card A4), light half: written from the same Mesh3D the viewer reads, its node set is the
+ * Mesh3D's and the viewer's (diffed both ways), names and `extras` follow plan §3.6, and the bytes
+ * are pinned for laneway-house so CI's Node legs and its Windows leg compare across versions and
+ * platforms (V-DET-02's start). glTF-Validator, three-run SHA-256 over the corpus (V-DET-01) and the
+ * CLI are the heavy half, `e2e/glb.e2e.ts` under `npm run check:3d`.
+ */
+import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
+import { compile } from "@chanmeng666/archlang";
+import { describe, expect, it } from "vitest";
+import {
+  adaptPlan,
+  buildMesh,
+  FINISH_PALETTE,
+  type FloorFinish,
+  KIND_PALETTE,
+  type KindMaterial,
+  linearRgb,
+  PALETTE,
+  slotGroups,
+} from "../src/index.js";
+import { WebIO } from "@gltf-transform/core";
+import {
+  bodyMaterialName,
+  checkNaming,
+  GLB_GENERATOR,
+  glbJson,
+  glbLeaks,
+  glbNodeName,
+  readGlbNodes,
+  replayPayload,
+  writeGlb,
+} from "../src/node.js";
+import { LANEWAY_GLB_SHA256, PIN_GENERATOR } from "./pins.js";
+import { EXAMPLES_LIST, WORLD } from "./corpus.js";
+
+const meshOf = (name: string) => {
+  const src = EXAMPLES_LIST.find(([n]) => n === name)?.[1] ?? "";
+  const r = adaptPlan(src, { world: WORLD });
+  if (!r.ok) throw new Error(r.refusal.code);
+  return { src, mesh: buildMesh(r.scene) };
+};
+const sha = (b: Uint8Array): string => createHash("sha256").update(b).digest("hex");
+
+/** `a` less `b`, both ways: empty diffs mean equal sets. */
+const diff = (a: Iterable<string>, b: Iterable<string>) => {
+  const A = new Set(a);
+  const B = new Set(b);
+  return { onlyLeft: [...A].filter((x) => !B.has(x)), onlyRight: [...B].filter((x) => !A.has(x)) };
+};
+
+describe("GLB from Mesh3D", () => {
+  for (const name of ["laneway-house.arch", "two-storey.arch", "hexagon-pavilion.arch", "remodel.arch"]) {
+    it(`${name}: the GLB's nodes are the Mesh3D's, and the viewer's are the visible ones`, async () => {
+      const { src, mesh } = meshOf(name);
+      const glb = await writeGlb(mesh);
+      const { levels, nodes } = await readGlbNodes(glb);
+      expect(
+        diff(
+          nodes.map((n) => n.key),
+          mesh.nodes.map((n) => n.key),
+        ),
+      ).toEqual({ onlyLeft: [], onlyRight: [] });
+      expect(nodes.length).toBe(mesh.nodes.length); // no duplicates either
+      // The viewer draws every node but the hidden ones (the roof, D3); the GLB marks exactly those.
+      const viewer = replayPayload(mesh, { title: name, svg: compile(src, { world: WORLD }).svg }).nodes.map(
+        (n) => n.key,
+      );
+      const shown = nodes.filter((n) => n.extras.hidden !== true).map((n) => n.key);
+      expect(diff(viewer, shown)).toEqual({ onlyLeft: [], onlyRight: [] });
+      expect(levels).toEqual([...new Set(mesh.nodes.map((n) => `level:L${n.level}`))]);
+      const naming = checkNaming(nodes, levels, mesh);
+      expect(naming.failures).toEqual([]);
+    });
+  }
+
+  it("carries each node's facts in extras.archlang and a fixed generator, no time", async () => {
+    const { mesh } = meshOf("laneway-house.arch");
+    const glb = await writeGlb(mesh);
+    const json = JSON.parse(glbJson(glb)) as {
+      asset: { generator: string };
+      nodes: Array<{ name: string; extras?: { archlang?: Record<string, unknown> } }>;
+    };
+    expect(json.asset.generator).toBe(GLB_GENERATOR);
+    const door = json.nodes.find((n) => n.name.startsWith("door:"));
+    expect(door?.extras?.archlang).toMatchObject({ kind: "door", level: 1, stage: "openings", pose: "closed" });
+    expect(door?.extras?.archlang?.host).toBeTypeOf("string");
+    const roof = json.nodes.find((n) => n.name.startsWith("roof:"));
+    expect(roof?.extras?.archlang?.hidden).toBe(true);
+    expect(json.nodes.find((n) => n.name === "level:L1")?.extras?.archlang).toEqual({ kind: "level", level: 1 });
+  });
+
+  it("writes a demolished wall (B3a) as its own node under its key, in a translucent material of its own", async () => {
+    const { mesh } = meshOf("remodel.arch");
+    const json = JSON.parse(glbJson(await writeGlb(mesh))) as {
+      nodes: Array<{ name: string; mesh?: number; extras?: { archlang?: Record<string, unknown> } }>;
+      meshes: Array<{ primitives: Array<{ material: number }> }>;
+      materials: Array<{ name: string; alphaMode?: string }>;
+    };
+    const ghost = json.nodes.find((n) => n.name === "wall:x_kitchen:demolish");
+    expect(ghost?.extras?.archlang).toMatchObject({ kind: "wall", part: "demolish", status: "demolish" });
+    const mat = json.materials[json.meshes[ghost?.mesh ?? -1]?.primitives[0]?.material ?? -1];
+    expect(mat).toMatchObject({ name: "wall:demolish", alphaMode: "BLEND" });
+    const standing = json.nodes.find((n) => n.name === "wall:shell");
+    expect(json.materials[json.meshes[standing?.mesh ?? -1]?.primitives[0]?.material ?? -1]?.name).toBe("wall");
+  });
+
+  it("writes a T0 piece as ONE node with a primitive per material slot, in the order the viewer draws them", async () => {
+    const { src, mesh } = meshOf("laneway-house.arch");
+    const json = JSON.parse(glbJson(await writeGlb(mesh))) as {
+      nodes: Array<{ name: string; mesh?: number }>;
+      meshes: Array<{ primitives: Array<{ material: number }> }>;
+      materials: Array<{ name: string; alphaMode?: string; pbrMetallicRoughness?: { baseColorFactor?: number[] } }>;
+    };
+    const viewer = new Map(
+      replayPayload(mesh, { title: "l", svg: compile(src, { world: WORLD }).svg }).nodes.map((n) => [n.key, n]),
+    );
+    let slotted = 0;
+    for (const n of mesh.nodes) {
+      const node = json.nodes.filter((x) => x.name === glbNodeName(n));
+      expect(node.length, n.key).toBe(1);
+      const names = (json.meshes[node[0]?.mesh ?? -1]?.primitives ?? []).map((p) => json.materials[p.material]?.name);
+      const groups = slotGroups(n.shells);
+      expect(names, n.key).toEqual(groups.map((g) => (g.slot === "body" ? bodyMaterialName(n) : `fixture:${g.slot}`)));
+      // The viewer's meshes for the node: the same slots in the same order, or one mesh when unslotted.
+      const v = viewer.get(n.key);
+      if (n.shells.some((s) => s.slot)) {
+        slotted++;
+        expect(
+          v?.groups?.map((g) => g.slot),
+          n.key,
+        ).toEqual(groups.map((g) => g.slot));
+        expect(
+          v?.groups?.reduce((a, g) => a + g.count, 0),
+          n.key,
+        ).toBe(v?.indices.length);
+      } else if (v) expect(v.groups, n.key).toBeUndefined();
+    }
+    expect(slotted).toBe(12);
+    // Every slot material reads the one palette; glass is translucent.
+    for (const m of json.materials.filter((x) => x.name.startsWith("fixture:"))) {
+      const p = PALETTE[m.name.slice("fixture:".length) as keyof typeof PALETTE];
+      expect(m.pbrMetallicRoughness?.baseColorFactor, m.name).toEqual([...linearRgb(p.srgb), p.alpha]);
+      expect(m.alphaMode === "BLEND", m.name).toBe(p.alpha < 1);
+    }
+    expect(json.materials.some((m) => m.name === "fixture:glass" && m.alphaMode === "BLEND")).toBe(true);
+  });
+
+  it("writes the building's materials from the palette the viewer reads: a floor per finish, a window's frame and glass apart (V9)", async () => {
+    const { src, mesh } = meshOf("laneway-house.arch");
+    const json = JSON.parse(glbJson(await writeGlb(mesh))) as {
+      materials: Array<{
+        name: string;
+        alphaMode?: string;
+        pbrMetallicRoughness?: { baseColorFactor?: number[]; metallicFactor?: number; roughnessFactor?: number };
+      }>;
+    };
+    const building = json.materials.filter((m) => !m.name.startsWith("fixture:"));
+    expect(building.map((m) => m.name).sort()).toEqual(
+      ["door", "floor:tile", "floor:timber", "roof", "slab", "wall", "window:frame", "window:glass"].sort(),
+    );
+    for (const m of building) {
+      const p = m.name.startsWith("floor:")
+        ? FINISH_PALETTE[m.name.slice("floor:".length) as FloorFinish]
+        : KIND_PALETTE[m.name as KindMaterial];
+      expect(m.pbrMetallicRoughness?.baseColorFactor, m.name).toEqual([...linearRgb(p.srgb), p.alpha]);
+      expect(m.pbrMetallicRoughness?.roughnessFactor ?? 1, m.name).toBe(p.roughness);
+      expect(m.alphaMode === "BLEND", m.name).toBe(p.alpha < 1);
+    }
+    // The viewer draws each floor in the finish the GLB writes it in.
+    const viewer = replayPayload(mesh, { title: "l", svg: compile(src, { world: WORLD }).svg }).nodes;
+    for (const n of mesh.nodes.filter((x) => x.kind === "floor")) {
+      expect(bodyMaterialName(n), n.key).toBe(`floor:${viewer.find((v) => v.key === n.key)?.finish}`);
+    }
+  });
+
+  it("V-GLTF-02 fails a GLB that lacks a Mesh3D node", async () => {
+    const { mesh } = meshOf("laneway-house.arch");
+    const { levels, nodes } = await readGlbNodes(await writeGlb(mesh));
+    const r = checkNaming(nodes.slice(1), levels, mesh);
+    expect(r.ok).toBe(false);
+    expect(r.failures.join("\n")).toContain(`Mesh3D node "${nodes[0]?.key}" missing from the GLB`);
+  });
+
+  it("V-DET-01/02: three writes, one SHA-256, pinned for laneway-house", async () => {
+    const hashes = await Promise.all(
+      [0, 1, 2].map(async () => sha(await writeGlb(meshOf("laneway-house.arch").mesh, { generator: PIN_GENERATOR }))),
+    );
+    expect(new Set(hashes).size).toBe(1);
+    expect(hashes[0]).toBe(LANEWAY_GLB_SHA256);
+  });
+
+  it("the default asset.generator names the manifest's version, and an explicit one replaces it", async () => {
+    const { version } = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as {
+      version: string;
+    };
+    expect(GLB_GENERATOR).toBe(`archlang-3d ${version}`);
+    const { mesh } = meshOf("laneway-house.arch");
+    expect(JSON.parse(glbJson(await writeGlb(mesh))).asset.generator).toBe(GLB_GENERATOR);
+    expect(JSON.parse(glbJson(await writeGlb(mesh, { generator: "x" }))).asset.generator).toBe("x");
+  });
+
+  it("reads a node nested below an element node, so V-GLTF-02 sees it", async () => {
+    const { mesh } = meshOf("laneway-house.arch");
+    const io = new WebIO();
+    const doc = await io.readBinary(await writeGlb(mesh));
+    const group = doc.getRoot().listScenes()[0]?.listChildren()[0];
+    const first = group?.listChildren()[0];
+    if (!group || !first) throw new Error("no element node");
+    first.addChild(doc.createNode("stray:x"));
+    const { levels, nodes } = await readGlbNodes(await io.writeBinary(doc));
+    expect(nodes.map((n) => n.key)).toContain(`${group.getName().slice("level:".length)}/stray:x`);
+    expect(checkNaming(nodes, levels, mesh).failures.join("\n")).toContain(
+      'GLB node "L1/stray:x" is not a Mesh3D node',
+    );
+  });
+});
+
+describe("the reproducibility leak check (plan §8.5 L7)", () => {
+  const json = (asset: Record<string, unknown>, name = "laneway") =>
+    JSON.stringify({ asset: { version: "2.0", ...asset }, scenes: [{ name }], nodes: [{ name: "room:r" }] });
+
+  it("accepts a plan whose own name carries a date and time", () => {
+    expect(glbLeaks(json({ generator: GLB_GENERATOR }, "Survey 2026-10-28T09:30"))).toEqual([]);
+  });
+
+  it("flags a date or time the writer stamped in the asset fields", () => {
+    expect(glbLeaks(json({ generator: `${GLB_GENERATOR} 2026-10-28T09:30:00Z` }))).toHaveLength(1);
+    expect(glbLeaks(json({ generator: GLB_GENERATOR, copyright: "2026-10-28" }))).toHaveLength(1);
+  });
+
+  it("flags an absolute path anywhere", () => {
+    expect(glbLeaks(json({ generator: GLB_GENERATOR }, "C:\\Users\\me\\plan"))).toHaveLength(1);
+    expect(glbLeaks(json({ generator: GLB_GENERATOR, extras: { src: "/home/me/plan.arch" } }))).toHaveLength(1);
+  });
+
+  it("passes the GLBs this package writes", async () => {
+    expect(glbLeaks(glbJson(await writeGlb(meshOf("laneway-house.arch").mesh)))).toEqual([]);
+  });
+});

@@ -1,0 +1,16 @@
+# class: openings-ignore-walls
+# origin: audits/2026-10-18-first-contact.md C2 (first-contact-plans/4-cafe.arch d_entry_a/d_entry_b: two 850 mm
+#   leaves with a 68 mm pier on the 45 degree chamfer); README PS2.2
+# expect: W_OPENING_OVERLAP
+# status: done
+# fact: along the chamfer (run from 9000) d_entry_a spans s 1075-1925 and d_entry_b s 1993-2843: a 68 mm pier between
+#   two leaves
+plan "Two leaves faking a double door on a chamfer" {
+  units mm
+  grid 1
+  wall id=shell exterior thickness 200 { (0,0) (6000,0) (6000,3000) (3000,6000) (0,6000) close }
+  room id=r_cafe polygon (0,0) (6000,0) (6000,3000) (3000,6000) (0,6000) label "Cafe seating" uses dining
+  door id=d_entry_a on shell at 10500 width 850 hinge near start swing into r_cafe
+  door id=d_entry_b on shell at 11418 width 850 hinge near end swing into r_cafe
+  window on shell at 3000 width 1500
+}

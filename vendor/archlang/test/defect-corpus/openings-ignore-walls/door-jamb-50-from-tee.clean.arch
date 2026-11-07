@@ -1,0 +1,15 @@
+# class: openings-ignore-walls
+# twin-of: door-jamb-50-from-tee
+# origin: audits/archcanvas-public-examples.md CA5 with the door moved along the run
+# expect: none
+# fact: d_staff spans x 3350-4250: a 300 mm nib to partition p's face at 3050
+plan "Door jamb clear of a tee" {
+  units mm
+  grid 50
+  wall id=shell exterior thickness 200 { (0,0) (8000,0) (8000,5000) (0,5000) close }
+  wall id=p partition thickness 100 { (3000,0) (3000,5000) }
+  room id=a at (0,0) size 3000x5000 label "Store" uses storage
+  room id=b at (3000,0) size 5000x5000 label "Staff room"
+  door id=d_staff at (3800,5000) width 900 wall shell
+  door on p at 50% width 800
+}

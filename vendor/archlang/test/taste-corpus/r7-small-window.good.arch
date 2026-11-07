@@ -1,0 +1,13 @@
+# criterion: R7
+# twin-of: r7-small-window
+# origin: the same room with the window widened to 1200 mm
+# fact: net floor 12 m²; one 1200 mm window at the default heights glazes 1.44 m², G/A = 0.12,
+#   over the generic 8 % target (score 1)
+plan "R7 wide window" {
+  units mm
+  grid 100
+  room id=r_living at (0,0) size 3200x4200 label "Living Room" uses living
+  walls from rooms exterior 200 partition 100
+  door id=d_front on r_living.bottom at center width 900 swing into r_living
+  window id=w_n on r_living.top at center width 1200
+}

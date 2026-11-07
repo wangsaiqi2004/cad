@@ -1,0 +1,17 @@
+# class: daylight
+# twin-of: living-label-no-window
+# origin: audits/showcase-and-examples.md T1 with a window on the living room's north wall
+# expect: none
+# fact: "Living" has a 1500 mm window on the north wall (x 1250-2750)
+plan "Living with a window" {
+  units mm
+  grid 50
+  wall id=shell exterior thickness 200 { (0,0) (6000,0) (6000,4000) (0,4000) close }
+  wall id=w_mid partition thickness 100 { (4000,0) (4000,4000) }
+  room id=r_living at (0,0) size 4000x4000 label "Living"
+  room id=r_bed at (4000,0) size 2000x4000 label "Bed"
+  door id=d_entry at (2000,4000) width 900 wall shell
+  door id=d_bed at (4000,2000) width 800 wall w_mid
+  window at (6000,2000) width 1000 wall shell
+  window at (2000,0) width 1500 wall shell
+}

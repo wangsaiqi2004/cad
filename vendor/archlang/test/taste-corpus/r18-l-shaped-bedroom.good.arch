@@ -1,0 +1,15 @@
+# criterion: R18
+# twin-of: r18-l-shaped-bedroom
+# origin: the same hall, doors and floor area with the bedroom made a 3000 × 4000 rectangle
+#   (so `walls from rooms` can draw its walls)
+# fact: the bedroom fills its enclosing rectangle: rectangularity 1, R18 = 1
+plan "R18 rectangular bedroom" {
+  units mm
+  grid 100
+  room id=r_hall at (0,0) size 2000x4000 label "Hall" uses hall
+  room id=r_bed at (2000,0) size 3000x4000 label "Bedroom" uses bedroom
+  walls from rooms exterior 200 partition 100
+  door id=d_front on r_hall.left at center width 900 swing into r_hall
+  door id=d_bed between r_hall and r_bed at 700 from start width 900 swing into r_bed
+  window id=w_bed on r_bed.top at center width 1500
+}

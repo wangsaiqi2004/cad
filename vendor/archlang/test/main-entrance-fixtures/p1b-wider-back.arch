@@ -1,0 +1,15 @@
+plan "Ten millimetres" {
+  units mm
+  grid 100
+  wall id=shell exterior thickness 200 { (0,0) (10000,0) (10000,6000) (0,6000) close }
+  wall id=p1 partition thickness 100 { (3000,0) (3000,6000) }
+  wall id=p2 partition thickness 100 { (7000,0) (7000,6000) }
+  room id=r_hall at (0,0) size 3000x6000 label "Hall" uses hall
+  room id=r_live at (3000,0) size 4000x6000 label "Living" uses living
+  room id=r_util at (7000,0) size 3000x6000 label "Utility" uses utility
+  door id=d_hl on p1 at 3000 width 900
+  door id=d_lu on p2 at 3000 width 700
+  door id=d_front at (1500,6000) width 900 wall shell
+  door id=d_back at (8500,0) width 1000 wall shell
+  window id=w1 at (5000,0) width 1500 wall shell
+}

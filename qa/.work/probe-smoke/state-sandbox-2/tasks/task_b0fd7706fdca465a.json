@@ -1,0 +1,43 @@
+{
+  "taskId": "task_b0fd7706fdca465a",
+  "projectId": "qa-prj",
+  "versionId": "v002",
+  "state": "AWAITING_CALIBRATION",
+  "stateEnteredAt": "2026-11-07T07:05:27.403Z",
+  "subProgress": {
+    "done": 0,
+    "total": 0,
+    "unit": "待确认项"
+  },
+  "events": [
+    {
+      "at": "2026-11-07T07:05:27.378Z",
+      "type": "state_transition",
+      "from": "DRAFT",
+      "to": "INGESTING",
+      "reason": "QA",
+      "actor": "system"
+    },
+    {
+      "at": "2026-11-07T07:05:27.391Z",
+      "type": "state_transition",
+      "from": "INGESTING",
+      "to": "EXTRACTING",
+      "reason": "QA",
+      "actor": "system"
+    },
+    {
+      "at": "2026-11-07T07:05:27.403Z",
+      "type": "state_transition",
+      "from": "EXTRACTING",
+      "to": "AWAITING_CALIBRATION",
+      "reason": "QA 待确认",
+      "actor": "system"
+    }
+  ],
+  "errorCode": null,
+  "idempotencyKey": null,
+  "chargeSubmittedCount": 0,
+  "redoOf": null,
+  "createdAt": "2026-11-07T07:05:27.371Z"
+}

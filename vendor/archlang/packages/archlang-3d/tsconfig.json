@@ -1,0 +1,24 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "types": ["node"],
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "allowImportingTsExtensions": true,
+    "noEmit": true
+    // The core resolves through the workspace link, as a published consumer's would: its
+    // `exports` give the types (`dist/index.d.ts`), so `npm run build` at the root first, as for
+    // every workspace under `typecheck:all`.
+  },
+  "include": ["src", "test", "e2e", "scripts", "vitest.e2e.config.ts"]
+}

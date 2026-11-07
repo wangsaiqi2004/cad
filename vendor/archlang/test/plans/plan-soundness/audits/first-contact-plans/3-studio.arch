@@ -1,0 +1,53 @@
+plan "Studio Flat 30 m2" {
+  units mm
+  grid 50
+  paper A3 landscape
+  north up
+  dims auto all
+  height 2600
+
+  title { project "Studio flat" drawn_by "AI first-contact" date "2026-10-18" number "S-101" revision "A" }
+
+  # 6000 x 5000 to wall centrelines = 30.0 m2 gross.
+  room id=r_alc   at (0,0)       size 3600x2200 label "Sleeping alcove"      uses bedroom
+  room id=r_bath  at (3600,0)    size 2400x2200 label "Bathroom"            uses bath
+  room id=r_entry at (0,2200)    size 1600x2800 label "Entrance"            uses entry
+  room id=r_main  at (1600,2200) size 4400x2800 label "Living / Kitchenette" uses living kitchen dining
+
+  wall id=w_n exterior thickness 250 { (0,0) (6000,0) }
+  wall id=w_e exterior thickness 250 { (6000,0) (6000,5000) }
+  wall id=w_s exterior thickness 250 { (0,5000) (6000,5000) }
+  wall id=w_w exterior thickness 250 { (0,0) (0,5000) }
+
+  wall id=w_h  partition thickness 100 { (0,2200) (6000,2200) }
+  wall id=w_v1 partition thickness 100 { (3600,0) (3600,2200) }
+  wall id=w_v2 partition thickness 100 { (1600,2200) (1600,5000) }
+
+  door id=d_front on w_s at 800 width 900 swing into r_entry
+  opening id=o_entry on w_v2 at 1400 width 1000
+  opening id=o_alc on w_h at 2600 width 1600
+  door id=d_bath sliding on w_h at 4300 width 800
+
+  window on w_n at 1800 width 1400
+  window on w_n at 4300 width 700
+  window on w_s at 2400 width 1200
+  window on w_s at 4500 width 1000
+
+  # entrance
+  furniture shoe_cabinet against wall w_w offset 3600 in r_entry
+  # alcove
+  furniture double_bed against wall w_w offset 1100 size 1400x2000 in r_alc
+  furniture wardrobe against wall w_n offset 2900 size 1200x600 in r_alc
+  # bathroom
+  furniture shower against wall w_n offset 5400 in r_bath
+  furniture wc against wall w_v1 offset 700 in r_bath
+  furniture basin against wall w_v1 offset 1500 in r_bath
+  # living / kitchenette
+  furniture fridge against wall w_s offset 5500 in r_main
+  furniture kitchen_sink against wall w_s offset 4500 in r_main
+  furniture stove against wall w_s offset 3500 in r_main
+  furniture sofa against wall w_e offset 2950 size 1400x850 in r_main
+  furniture table at (2300,3450) size 900x900 label "Table"
+  furniture chair at (2525,2950) size 450x450
+  furniture chair at (2525,4400) size 450x450
+}

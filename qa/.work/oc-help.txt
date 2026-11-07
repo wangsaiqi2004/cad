@@ -1,0 +1,26 @@
+opencalque <command>
+
+  new <file> [name] [--force]  Create an empty document (--force replaces an existing file)
+  validate <file>              Check that a file is a valid document; lists what opening it would repair
+  describe <file>              Print a JSON summary: pages, layers, components, object counts
+  check <file> [--page <id>]   List what is wrong with the drawing as JSON (rooms that do not close,
+                               walls drawn twice, doors outside a wall); exits 1 if anything is
+  quantities <file> [--page <id>]
+                               Print what a page holds as JSON: rooms and their areas, walls, doors, objects
+  apply <file> <ops.json>      Apply a JSON array of operations and save the file; warns of what they left wrong
+  import <file> <drawing.dxf>...
+                               Add each DXF as a page of the drawing, which is created when it does
+                               not exist. A DXF laid out as a sheet comes in as its paper.
+  svg <file> [--page <id>] [--out <file.svg>]
+                               Render a page (default: the first) to SVG
+  png <file> [--page <id>] [--size <pixels>] [--out <file.png>]
+                               Draw a page as a picture, 2000 pixels on its longer side unless told otherwise
+  pdf <file> [--out <file.pdf>] Export every paper as a page of a PDF, at its real size and scale
+  dxf <file> [--page <id>] [--out <file.dxf>]
+                               Export a page to DXF for other CAD programs
+  schema [--out <dir>]         Print or write the JSON Schemas of documents, operations and extensions written as data
+  guide [--type <type>]        Print how drawings are stored and edited, written for an AI agent, or
+                               the JSON Schema of one type of node
+  mcp [<file>] [--live]        Serve the drawing tools to an AI agent over MCP (stdin and stdout): a file,
+                               one the agent opens, or with --live the drawing open in the desktop app
+  --version                    Print the version

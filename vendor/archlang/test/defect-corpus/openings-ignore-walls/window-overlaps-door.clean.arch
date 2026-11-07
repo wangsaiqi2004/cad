@@ -1,0 +1,13 @@
+# class: openings-ignore-walls
+# twin-of: window-overlaps-door
+# origin: repro/door-beside-tee-window-overlap.arch with the window moved west
+# expect: none
+# fact: the window spans x 2400-3600 and the door x 4150-5050: a 550 mm pier between them
+plan "Window beside a door" {
+  units mm
+  grid 50
+  wall id=shell exterior thickness 200 { (0,0) (8000,0) (8000,5000) (0,5000) close }
+  room id=a at (0,0) size 8000x5000 label "Studio"
+  door id=d_front on shell at 4600 width 900
+  window id=win on shell at 3000 width 1200
+}

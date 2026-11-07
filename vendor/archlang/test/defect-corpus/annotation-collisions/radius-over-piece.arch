@@ -1,0 +1,23 @@
+# class: annotation-collisions
+# origin: audits/showcase-and-examples.md W3 (west-wing: the `R7300` radius call-out runs through the Oval Office
+#   furniture); reduced to one table on the leader
+# expect: W_ANNOTATION_OVERLAP
+# status: done
+# fact: `dims auto` letters the R3000 call-out at (3000,1500), halfway from the centre to the arc's midpoint; the
+#   table spans x 2400-3600, y 1100-1900 under it
+plan "Radius call-out over a table" {
+  units mm
+  grid 50
+  paper A4 landscape
+  scale 1:50
+  dims auto overall
+  wall id=drum exterior thickness 200 {
+    (6000,3000)
+    arc (0,3000) radius 3000
+    arc (6000,3000) radius 3000
+  }
+  room id=r_pav circle at (3000,3000) radius 3000 label "Pavilion" at (3000,4300) uses living
+  door on drum at 75% width 900
+  window on drum at 25% width 1200
+  furniture table at (2400,1100) size 1200x800
+}

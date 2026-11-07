@@ -1,0 +1,224 @@
+name: Deploy (Cloudflare)
+
+# Both public sites are static assets served by a Worker, in the Cloudflare
+# account that also holds the archlang.uk zone. The docs Worker has NO script
+# (ADR 0019): with no code to invoke, every request is a static-asset request,
+# free and unmetered. The playground Worker has one script, and it runs FIRST
+# only for the paths its `assets.run_worker_first` lists (`/s/*`, `/api/*`:
+# short links, ADR 0034); every other path is still a static-asset request.
+# wrangler bundles that script itself, against the core `npm run build` wrote.
+#
+# We deploy from CI rather than from Cloudflare's Git integration because the
+# build is a monorepo build: `npm run docs:build` / `npm run playground:build`
+# build the CORE first and then the site (docs-site/sync-docs.mjs hard-exits if
+# dist/ is missing), and because the smoke check below belongs welded to the
+# deploy that produced it.
+#
+# Two repository secrets are required:
+#   CLOUDFLARE_API_TOKEN   — Workers Scripts:Edit + Workers Routes:Edit + Workers
+#                            KV Storage:Edit on the account (the playground binds
+#                            the `archlang-share` namespace), DNS:Edit + Zone:Read
+#                            on the archlang.uk zone.
+#                            Create at https://dash.cloudflare.com/profile/api-tokens
+#   CLOUDFLARE_ACCOUNT_ID  — the account the Workers live in (not a secret value,
+#                            kept as one so the workflow reads the same way).
+# Then push to main (or run this workflow manually) to deploy.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: cloudflare-deploy-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    name: Deploy ${{ matrix.name }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: docs
+            dir: docs-site
+            build: docs:build
+            url: https://archlang.uk
+          - name: playground
+            dir: playground
+            build: playground:build
+            url: https://playground.archlang.uk
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+    steps:
+      - name: Check Cloudflare credentials are set
+        run: |
+          if [ -z "$CLOUDFLARE_API_TOKEN" ] || [ -z "$CLOUDFLARE_ACCOUNT_ID" ]; then
+            echo "::error::CLOUDFLARE_API_TOKEN / CLOUDFLARE_ACCOUNT_ID are not set. Add them in Settings → Secrets and variables → Actions, then re-run this workflow."
+            exit 1
+          fi
+
+      # fetch-depth: 0 is load-bearing, not caution: docs-site/.vitepress/config.ts
+      # sets `lastUpdated: true`, which reads each page's git commit time at BUILD
+      # time. A depth-1 clone has no history, so every "Last updated" stamp would
+      # silently collapse to the deploy commit.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+          check-latest: true
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      # Builds the core, then the site. Run from the repo ROOT — both scripts are
+      # `npm run build && npm -w <workspace> run build`.
+      - name: Build
+        run: npm run ${{ matrix.build }}
+
+      - name: Install Wrangler
+        # pinned for reproducibility in a token-bearing job; bump deliberately, to a
+        # version at least 14 days old that npm does not mark deprecated
+        run: npm i -g wrangler@4.151.3
+
+      # Uploads the asset directory named by ${{ matrix.dir }}/wrangler.jsonc and
+      # attaches/keeps its custom domain. Idempotent: an unchanged asset set
+      # uploads nothing.
+      - name: Deploy to Cloudflare
+        working-directory: ${{ matrix.dir }}
+        run: wrangler deploy
+
+      - name: Smoke check (machine routes + assets; retries ~30s for propagation)
+        # A 200 on `/` proved almost nothing — the site's real contract is the machine
+        # routes (/llms-full.txt, the raw /<page>.md copies, the schemas, the GBNF grammar,
+        # the example SVGs) and, on the playground, the hashed JS bundle the shell loads.
+        # scripts/smoke.mjs checks those; it is zero-dep Node and derives the docs route
+        # list from docs-site/sync-docs.mjs, so a new page is covered automatically.
+        run: node scripts/smoke.mjs --site ${{ matrix.name }} --base ${{ matrix.url }}
+
+      - name: Ping IndexNow (never fails the deploy)
+        # One POST telling Bing, Yandex, Seznam and every other IndexNow participant
+        # that this site's sitemap URLs changed. It runs AFTER the smoke check on
+        # purpose: there is no point announcing a deploy we have not yet proven is
+        # serving. scripts/indexnow.mjs always exits 0 — a key file that has not
+        # propagated, a missing sitemap or a 429 prints a `::warning::` and nothing
+        # more, because the site is already live and correct by the time we get here.
+        #
+        # INDEXNOW_KEY is a repository VARIABLE, not a secret: the protocol requires
+        # the same key to be served publicly at https://<host>/<key>.txt (committed
+        # in each site's public/), so masking it would only make the log unreadable.
+        env:
+          INDEXNOW_KEY: ${{ vars.INDEXNOW_KEY }}
+        run: node scripts/indexnow.mjs --site ${{ matrix.name }} --base ${{ matrix.url }}
+
+  # ---------------------------------------------------------------------------
+  # The THIRD Worker, and the only one that is all script: the hosted MCP server
+  # (packages/mcp-worker, docs/adr/0026-hosted-mcp-worker.md). It is a separate job,
+  # not a row of the matrix above, so the two site Workers keep their job exactly as
+  # it was — no conditional steps, no IndexNow for an API.
+  #
+  # It deploys only when something it bundles changed: its own package, the MCP tool
+  # set, the core it compiles with, or the resources it serves. A manual run always
+  # deploys. It goes to workers.dev only — no route, no custom domain (the owner
+  # attaches mcp.archlang.uk by hand) — and the smoke check runs against the URL
+  # `wrangler deploy` prints.
+  # ---------------------------------------------------------------------------
+  deploy-mcp:
+    name: Deploy mcp (scripted Worker)
+    runs-on: ubuntu-latest
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+    steps:
+      - name: Check Cloudflare credentials are set
+        run: |
+          if [ -z "$CLOUDFLARE_API_TOKEN" ] || [ -z "$CLOUDFLARE_ACCOUNT_ID" ]; then
+            echo "::error::CLOUDFLARE_API_TOKEN / CLOUDFLARE_ACCOUNT_ID are not set. Add them in Settings → Secrets and variables → Actions, then re-run this workflow."
+            exit 1
+          fi
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Did anything the hosted MCP server bundles change?
+        id: changed
+        env:
+          EVENT: ${{ github.event_name }}
+          BEFORE: ${{ github.event.before }}
+          AFTER: ${{ github.sha }}
+        run: |
+          if [ "$EVENT" = "workflow_dispatch" ]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"; echo "manual run: deploying"; exit 0
+          fi
+          if [ -z "$BEFORE" ] || ! git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then
+            echo "run=true" >> "$GITHUB_OUTPUT"; echo "no comparable previous commit: deploying"; exit 0
+          fi
+          if git diff --name-only "$BEFORE" "$AFTER" \
+            | grep -E '^(packages/mcp-worker/|packages/mcp/|src/|spec\.llm\.md$|llms-full\.txt$|schemas/|grammars/|package\.json$|package-lock\.json$|tsup\.config\.ts$)'; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=false" >> "$GITHUB_OUTPUT"; echo "nothing the hosted MCP server bundles changed: skipping"
+          fi
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        if: steps.changed.outputs.run == 'true'
+        with:
+          node-version: 22
+          check-latest: true
+          cache: npm
+
+      - name: Install dependencies
+        if: steps.changed.outputs.run == 'true'
+        run: npm ci
+
+      # The core first (the Worker bundles this checkout's dist/), then the one-module bundle.
+      - name: Build
+        if: steps.changed.outputs.run == 'true'
+        run: npm run mcp-worker:build
+
+      - name: Install Wrangler
+        if: steps.changed.outputs.run == 'true'
+        # pinned for reproducibility in a token-bearing job; the same pin as the sites
+        run: npm i -g wrangler@4.151.3
+
+      - name: Deploy to Cloudflare (workers.dev)
+        id: deploy
+        if: steps.changed.outputs.run == 'true'
+        working-directory: packages/mcp-worker
+        run: |
+          # Without pipefail a failed deploy would hide behind tee's exit status. wrangler writes its
+          # errors to STDERR, so 2>&1: the log the failure step reads must hold the error itself.
+          set -o pipefail
+          wrangler deploy 2>&1 | tee deploy.log
+          url=$(grep -oE 'https://archlang-mcp\.[a-z0-9-]+\.workers\.dev' deploy.log | head -n 1)
+          if [ -z "$url" ]; then echo "::error::no workers.dev URL in the wrangler deploy output"; exit 1; fi
+          echo "url=$url" >> "$GITHUB_OUTPUT"
+
+      - name: Smoke check (initialize, tools/list, one /svg/ URL = compile())
+        if: steps.changed.outputs.run == 'true'
+        run: node scripts/smoke.mjs --site mcp --base ${{ steps.deploy.outputs.url }}
+
+      - name: Explain a deploy refused for its CPU limit (owner step)
+        # `limits.cpu_ms` in packages/mcp-worker/wrangler.jsonc needs Workers Paid (the Standard
+        # usage model). On a Free account wrangler refuses it; that is an account setting to change,
+        # not a code fix.
+        if: failure() && steps.deploy.outcome == 'failure'
+        working-directory: packages/mcp-worker
+        run: |
+          # Narrow on purpose: plain "limits" also matches any Cloudflare error that links the
+          # platform-limits page (script size, subrequests), which upgrading would not fix.
+          if grep -qiE 'cpu_ms|usage model|Standard' deploy.log 2>/dev/null; then
+            echo "::error::wrangler's error mentions the CPU limit or the usage model; the likely cause is that limits.cpu_ms needs Workers Paid. Owner step: upgrade the Cloudflare account to Workers Paid, then re-run this workflow (ADR 0026, 'Owner steps')."
+          else
+            echo "deploy failed for a reason other than limits.cpu_ms; see the Deploy step's log."
+          fi

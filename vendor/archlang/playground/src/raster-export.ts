@@ -1,0 +1,92 @@
+/**
+ * Client-side rasterization + download helpers shared by the preview (copy PNG)
+ * and the multi-format download (PNG/PDF). The core's PNG/PDF backends are
+ * Node-only, so the playground rasterizes the SVG through a <canvas> instead.
+ */
+import { levelFileName } from "./levels.js";
+
+/**
+ * Trigger a browser download of `blob` as `floorplan.<ext>` — or, when a storey of a
+ * multi-storey plan is on screen, `floorplan.L<n>.<ext>`, which is the name
+ * `arch compile -o floorplan.<ext>` gives that same page. `level` is `null` for every
+ * single-storey plan, so the existing name is unchanged.
+ */
+export function saveBlob(blob: Blob, ext: string, level: number | null = null): void {
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = levelFileName(`floorplan.${ext}`, level);
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
+/** Longest raster edge (px). Bounds output so a large plan can't exceed the
+ *  browser's max canvas area (which silently makes `toBlob` return null). */
+export const MAX_RASTER_EDGE = 4000;
+
+/** The raster geometry {@link svgToCanvas} derives from an SVG's `viewBox`. */
+export interface RasterSize {
+  /** viewBox width (falls back to 800 when there is no parsable viewBox). */
+  vbW: number;
+  /** viewBox height (falls back to 600). */
+  vbH: number;
+  /** Device-pixels per user unit: `min(2, MAX_RASTER_EDGE / longest edge)`. */
+  scale: number;
+  /** Canvas width in px (≥ 1). */
+  width: number;
+  /** Canvas height in px (≥ 1). */
+  height: number;
+}
+
+/**
+ * Pure part of {@link svgToCanvas}: parse the `viewBox` and derive the canvas size.
+ *
+ * Two rules, both deliberate: the longest edge is clamped to
+ * {@link MAX_RASTER_EDGE} (a bigger canvas silently makes `toBlob` return null),
+ * and the scale is capped at 2× so a tiny plan is never blown up into a blurry
+ * megapixel raster. A degenerate/absent viewBox falls back to 800×600 or, for a
+ * literal `0 0 0 0`, floors at a 1×1 canvas rather than producing NaN.
+ */
+export function rasterSize(svg: string): RasterSize {
+  const m = svg.match(/viewBox="([\d.eE+-]+) ([\d.eE+-]+) ([\d.eE+-]+) ([\d.eE+-]+)"/);
+  const vbW = m ? parseFloat(m[3]) : 800;
+  const vbH = m ? parseFloat(m[4]) : 600;
+  // Fit the longest edge to MAX_RASTER_EDGE (never upscale past 2×).
+  const scale = Math.min(2, MAX_RASTER_EDGE / Math.max(vbW, vbH));
+  return { vbW, vbH, scale, width: Math.max(1, Math.round(vbW * scale)), height: Math.max(1, Math.round(vbH * scale)) };
+}
+
+/**
+ * The sheet a plan with a `paper` statement declares, in mm, read from the root `<svg>`'s
+ * `width`/`height`. `null` for a plan with no paper: it has no physical size.
+ */
+export function paperSizeMm(svg: string): { width: number; height: number } | null {
+  const root = svg.match(/<svg\b[^>]*>/)?.[0] ?? "";
+  const w = root.match(/\swidth="([\d.]+)mm"/);
+  const h = root.match(/\sheight="([\d.]+)mm"/);
+  return w && h ? { width: parseFloat(w[1]), height: parseFloat(h[1]) } : null;
+}
+
+/** Rasterize the current SVG to a canvas, scaled to fit within MAX_RASTER_EDGE. */
+export function svgToCanvas(svg: string): Promise<HTMLCanvasElement> {
+  const { vbW, vbH, width: W, height: H } = rasterSize(svg);
+  // Give the standalone SVG an intrinsic size so <img> rasterizes predictably.
+  const sized = svg.includes(" width=") ? svg : svg.replace("<svg ", `<svg width="${vbW}" height="${vbH}" `);
+  const url = URL.createObjectURL(new Blob([sized], { type: "image/svg+xml" }));
+  return new Promise<HTMLCanvasElement>((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => {
+      const canvas = document.createElement("canvas");
+      canvas.width = W;
+      canvas.height = H;
+      const ctx = canvas.getContext("2d")!;
+      ctx.drawImage(img, 0, 0, W, H);
+      URL.revokeObjectURL(url);
+      resolve(canvas);
+    };
+    img.onerror = (e) => {
+      URL.revokeObjectURL(url);
+      reject(e);
+    };
+    img.src = url;
+  });
+}

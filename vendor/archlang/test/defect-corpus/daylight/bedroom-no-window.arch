@@ -1,0 +1,16 @@
+# class: daylight
+# origin: audits/showcase-and-examples.md bag-end ("Spare Bedroom has no window", book-accurate there and caught)
+# expect: W_BEDROOM_NO_WINDOW
+# status: done
+# fact: r_spare (uses bedroom) has no window on any edge; the plan's one window is the hall's
+plan "Bedroom without a window" {
+  units mm
+  grid 50
+  wall id=shell exterior thickness 200 { (0,0) (8000,0) (8000,4000) (0,4000) close }
+  wall id=w_mid partition thickness 100 { (4000,0) (4000,4000) }
+  room id=r_hall at (0,0) size 4000x4000 label "Entrance Hall" uses hall
+  room id=r_spare at (4000,0) size 4000x4000 label "Spare Bedroom" uses bedroom
+  door id=d_front at (2000,4000) width 1000 wall shell
+  door id=d_spare at (4000,2000) width 800 wall w_mid
+  window at (2000,0) width 1200 wall shell
+}

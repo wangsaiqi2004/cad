@@ -1,0 +1,18 @@
+# class: clearances
+# origin: audits/2026-10-25-first-contact-rerun-row5.md RK4 (first-contact-plans/2026-10-25-rerun/6-clinic.arch
+#   `sofa_l … size 900x2400`, no rotate); RS4 (2026-10-25-rerun/3-studio.arch, 900x1300)
+# expect: W_FOOTPRINT_TRANSPOSED
+# status: done
+# fact: the sofa_l is `at (2000,800) size 900x2400` with no rotate; its symbol is drawn back-on-top in that frame, 900
+#   along its back and 2400 deep, where the catalogue's sofa_l is 2600 along x 1600 deep: a thin L one seat deep,
+#   facing south past the tv_unit on the west wall
+plan "L-sofa written as a transposed footprint" {
+  units mm
+  grid 50
+  wall id=shell exterior thickness 200 { (0,0) (5000,0) (5000,4000) (0,4000) close }
+  room id=r_liv at (0,0) size 5000x4000 label "Lounge" uses living
+  door id=d_entry at (4000,4000) width 900 wall shell
+  window at (2500,0) width 1500 wall shell
+  furniture tv_unit against wall shell segment 3 offset 2000 in r_liv
+  furniture sofa_l at (2000,800) size 900x2400 label "L-sofa"
+}

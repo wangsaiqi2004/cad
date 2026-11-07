@@ -1,0 +1,15 @@
+# class: openings-ignore-walls
+# origin: evidence.md section 1 row 6; repro/family-apartment.arch win_bed3 over d_entry (reduced to the kitchen)
+# expect: W_OPENING_OVERLAP
+# status: done
+# fact: on the south wall the window spans x 1000-2200 and the entry door x 1550-2450: 650 mm of overlap
+plan "Window over the entry door" {
+  units mm
+  grid 50
+  wall id=shell exterior thickness 200 { (0,0) (3000,0) (3000,4000) (0,4000) close }
+  room id=r_kitchen at (0,0) size 3000x4000 label "Kitchen" uses kitchen
+  door id=d_entry at (2000,4000) width 900 wall shell
+  window id=win_bed3 at (1600,4000) width 1200 wall shell
+  furniture kitchen_sink at (100,100) size 800x600
+  furniture stove at (1000,100) size 600x600
+}

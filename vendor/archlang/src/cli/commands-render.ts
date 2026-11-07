@@ -1,0 +1,936 @@
+/**
+ * The file-producing commands — `compile`, `watch`, `preview`, `batch`, `md`. They
+ * share the render/serialize core in {@link ./serialize.js}. Split out of the former
+ * monolithic `src/cli.ts` (mechanical; behavior unchanged).
+ */
+
+import { statSync } from "node:fs";
+import { resolve as resolvePath, dirname, basename } from "node:path";
+import { cpus } from "node:os";
+import {
+  describe,
+  diagnosticToJson,
+  ERROR_CATALOG,
+  extractArchBlocks,
+  PNG_PREVIEW_WIDTH,
+  isOptionalDepError,
+  renderPngFromSvg,
+  rewriteMarkdown,
+} from "../index.js";
+import type { Diagnostic, PlanJsonDropped } from "../index.js";
+import {
+  type Args,
+  type CommandResult,
+  type Format,
+  EXIT,
+  FORMAT_LIST,
+  RESIDENT,
+  baseDirOf,
+  defaultOut,
+  emitDiagnosticsHuman,
+  emitJson,
+  endsInSeparator,
+  hasErrors,
+  ioError,
+  storeyTarget,
+  makeNodeWorld,
+  parseFormat,
+  readInput,
+  writeOutput,
+  refuseJsonDrawingFlags,
+  resolveView,
+  separatorRefusal,
+  sourceFromJson,
+  stdoutJsonConflict,
+  stdoutMultiPage,
+  unknownLevel,
+  usageError,
+  usageErrorFor,
+  formatOfOutput,
+} from "./io.js";
+import {
+  type PageSelect,
+  type PerFile,
+  aggregateExit,
+  compileToFile,
+  perFileJson,
+  renderArtifact,
+  runPool,
+  runWithInstall,
+} from "./serialize.js";
+import { buildReviewSheet } from "./review.js";
+
+/** Byte length of a rendered artifact (string or binary). */
+const byteLen = (b: string | Uint8Array): number => (typeof b === "string" ? Buffer.byteLength(b) : b.length);
+
+/** Which page(s) a render command should produce, from `--level`. */
+const pageSelect = (args: Args, whenAbsent: PageSelect): PageSelect =>
+  args.level !== undefined ? { level: args.level } : whenAbsent;
+
+/**
+ * `compile --json` with no `-o` writes NOTHING.
+ *
+ * `--json` says "give me the structured result on stdout" and no `-o` names no output
+ * file, so there is nothing in the invocation that asks for bytes on disk — yet for
+ * every release up to this one `compile` still fell back to `defaultOut()` and dropped
+ * `<stem>.svg` (and one `<stem>.L<n>.svg` per storey) beside the source. That is exactly
+ * the shape of a scripted "just check it compiles" loop, and it littered this repo's own
+ * `examples/` with stray per-level SVGs that had to be deleted by hand before
+ * `gen:example-svgs` output could be reviewed.
+ *
+ * The rule is deliberately uniform across every branch of `compile` — clean plan,
+ * broken plan with `--error-svg`, single storey and multi-storey alike — because a
+ * split rule ("no file, unless the plan is broken and --error-svg is on") would be
+ * more surprising than the behaviour it replaced. Ask for a file and you get one:
+ * `-o <file>` writes, `-o -` streams (and is a usage error with `--json`, unchanged).
+ *
+ * The JSON says so positively rather than by omission: `written: false` sits exactly
+ * where `output`/`outputs` would have, `bytes` still reports the size of the render,
+ * and every other key is unchanged. The bytes are NOT smuggled into the payload in
+ * place of the file: this envelope reports FACTS about a render and has never carried
+ * content, and an unbounded content key that appears only when no `-o` was given would
+ * be a worse surprise than a flag that needs `-o`. That is a decision, and it is pinned
+ * in `test/cli.test.ts` — including for `--error-svg`, the one flag whose whole purpose
+ * is to produce an image, which is therefore inert in exactly this combination.
+ *
+ * `preview`, `batch` and `md` keep their behaviour byte-for-byte. `watch` inherits the
+ * rule, because `cmdWatch` re-enters `cmdCompile` on every save — so `arch watch p.arch
+ * --json` now re-reports the plan on each save instead of re-writing `p.svg`, which is
+ * the same rule and not a second one.
+ */
+const jsonNamesNoFile = (args: Args): boolean => args.json === true && args.o === undefined;
+
+// ---------------------------------------------------------------------------
+// compile
+// ---------------------------------------------------------------------------
+
+export async function cmdCompile(args: Args): Promise<number> {
+  const input = args._[0];
+  if (!input) return usageError("missing input file (use a path or `-` for stdin)");
+
+  const format = parseFormat({ ...args, format: args.format ?? formatOfOutput(args.o) });
+  if (!format) return usageError(`unknown format "${args.format}" (use ${FORMAT_LIST})`);
+  const jsonRefusal = refuseJsonDrawingFlags(args, format, "compile");
+  if (jsonRefusal !== undefined) return jsonRefusal;
+  // Checked before any read: two writers for one stdout is a usage error, not a silent
+  // redirect to `out.svg` (see `stdoutJsonConflict`).
+  if (args.json && args.o === "-") return stdoutJsonConflict("compile");
+  // `-o dir/` names a directory; a multi-storey compile would otherwise derive `dir/.L1.svg`-style
+  // names from it, so it is refused here, before anything is read or written.
+  if (args.o !== undefined && args.o !== "-" && endsInSeparator(args.o))
+    return ioError(separatorRefusal(args.o), args.json, { format });
+
+  let source: string;
+  try {
+    source = readInput(input);
+  } catch {
+    return ioError(`cannot read ${input}`, args.json, { format });
+  }
+
+  // `--from-json`: the input is Plan JSON (RPLAN shape), not `.arch`. Convert it to
+  // canonical `.arch` here, then fall through to the normal pipeline so every flag
+  // (-f/-o/--overlay/--accessible/--error-svg/--cols/--charset) composes unchanged.
+  if (args.fromJson) {
+    const conv = sourceFromJson(source);
+    if ("error" in conv) {
+      const projSrc = conv.generated ?? source;
+      if (args.json) {
+        emitJson({ ok: false, format, diagnostics: conv.error.map((d) => diagnosticToJson(projSrc, d)) });
+      } else {
+        emitDiagnosticsHuman(projSrc, conv.error, args.quiet);
+        if (!args.quiet) process.stderr.write("✗ plan JSON is invalid\n");
+      }
+      return EXIT.USER;
+    }
+    source = conv.source;
+  }
+
+  // `--view iso|axon`: the illustrative axonometric. It is a WHOLE-BUILDING
+  // drawing, so it collapses the per-storey fan-out to one artifact — `compile()` returns
+  // no `pages` for it, and `-o <file>` therefore writes exactly the file it names rather
+  // than one `<stem>.L<n>` per level. Validated here so a bad value or `-f txt` is an
+  // exit-3 usage error before anything is read.
+  const rv = resolveView(args, format, "compile");
+  if ("code" in rv) return rv.code;
+
+  // A multi-storey plan (`level` blocks) renders one artifact per storey unless `--level`
+  // narrows it to one; a single-storey plan is unaffected by either.
+  const r = await renderArtifact(source, format, args, baseDirOf(input), pageSelect(args, "all"), rv.view);
+  if (r.badLevel) return unknownLevel("compile", args.level!, r.levels);
+
+  if (r.error) {
+    // A serialize / missing-optional-dependency failure (compile succeeded). In
+    // --json carry the catalog code + fix so the agent knows exactly what to do.
+    if (args.json) {
+      const o: Record<string, unknown> = { ok: false, format, error: r.error };
+      if (r.errorCode) {
+        o.code = r.errorCode;
+        const fix = ERROR_CATALOG[r.errorCode]?.fix;
+        if (fix) o.fix = fix;
+      }
+      emitJson(o);
+      return EXIT.INTERNAL;
+    }
+    return ioError(r.error, false, { format });
+  }
+
+  const errored = hasErrors(r.diagnostics);
+  // What the artifact left out (`-f json`, PS4.11 and #366): one stderr line each, printed only
+  // once the export has succeeded, and `dropped` in the `--json` envelope. Never a diagnostic: it
+  // moves no exit code.
+  const noted = (code: number): number => {
+    if (code === EXIT.OK && !args.quiet) for (const n of r.notes ?? []) process.stderr.write(`${n}\n`);
+    return code;
+  };
+
+  // ---- multi-storey: one sheet per level -----------------------------------------
+  // `-o -` cannot mean "several drawings on one stream", so it is a usage error (exit 3)
+  // unless `--level` picked a single storey — the same doctrine as `-o -` + `--json`.
+  if (r.pages) {
+    if (args.o === "-") return stdoutMultiPage("compile", r.levels);
+    return noted(await writePages(r.pages, r.diagnostics, source, input, format, args, r.dropped));
+  }
+
+  if (r.bytes === undefined) {
+    const diagnostics = r.diagnostics;
+    if (args.json) {
+      emitJson({ ok: false, format, diagnostics: diagnostics.map((d) => diagnosticToJson(source, d)) });
+    } else {
+      emitDiagnosticsHuman(source, diagnostics, args.quiet);
+      const n = diagnostics.filter((d) => d.severity === "error").length;
+      if (!args.quiet) process.stderr.write(`✗ compilation failed (${n} error${n === 1 ? "" : "s"})\n`);
+    }
+    return EXIT.USER;
+  }
+
+  const bytes = r.bytes;
+  const diagnostics = r.diagnostics;
+
+  // `--json` with no `-o` asked for no file — see {@link jsonNamesNoFile}.
+  const noWrite = jsonNamesNoFile(args);
+  // A plan past the multi-storey branch above with no `--level` draws one drawing, of no storey.
+  if (args.level === undefined && args.o?.includes("{level}"))
+    return usageErrorFor(
+      "compile",
+      "`{level}` in -o names a storey's file, and this compile writes one drawing of no storey (no `level` blocks, or --view): name the file",
+    );
+  const out = args.o ?? defaultOut(input, format);
+  // `--level 2 -o plan-{level}.svg`: the one storey still fills in the word; the plain target stays plain.
+  const target = args.level !== undefined && out.includes("{level}") ? storeyTarget(out, args.level) : out;
+
+  // `--error-svg` produced an error-card image for a *broken* plan: write it (so an
+  // agent/embed has visual feedback) but keep the user-source exit code and report
+  // the diagnostics — a broken plan never counts as a successful compile. With
+  // `--json` and no `-o` the card is still *rendered* (so `bytes` is real) and still
+  // not written, because no one named a place to put it.
+  if (errored) {
+    if (noWrite) {
+      // nothing on disk: the invocation named no output file
+    } else if (target === "-") {
+      process.stdout.write(bytes);
+    } else {
+      try {
+        writeOutput(target, bytes);
+      } catch (e) {
+        return ioError((e as Error).message, args.json, { format });
+      }
+    }
+    if (args.json) {
+      const o: Record<string, unknown> = {
+        ok: false,
+        format,
+        diagnostics: diagnostics.map((d) => diagnosticToJson(source, d)),
+      };
+      if (noWrite) {
+        o.written = false;
+        o.bytes = byteLen(bytes);
+      } else if (target !== "-") {
+        o.output = resolvePath(target);
+        o.bytes = byteLen(bytes);
+      }
+      emitJson(o);
+    } else {
+      emitDiagnosticsHuman(source, diagnostics, args.quiet);
+      const n = diagnostics.filter((d) => d.severity === "error").length;
+      if (!args.quiet && target !== "-")
+        process.stderr.write(`✗ compilation failed (${n} error${n === 1 ? "" : "s"}); wrote error card → ${target}\n`);
+    }
+    return EXIT.USER;
+  }
+
+  if (!noWrite) {
+    if (target === "-") {
+      process.stdout.write(bytes);
+      return noted(EXIT.OK);
+    }
+    try {
+      writeOutput(target, bytes);
+    } catch (e) {
+      return ioError((e as Error).message, args.json, { format });
+    }
+  }
+
+  const warnings = diagnostics.filter((d) => d.severity === "warning");
+  if (args.json) {
+    const s = describe(source, { world: makeNodeWorld(baseDirOf(input)) });
+    const { ok: _ok, diagnostics: _d, ...summary } = s;
+    emitJson({
+      ok: true,
+      format,
+      // `written: false` takes `output`'s slot when the invocation named no file.
+      ...(noWrite ? { written: false } : { output: resolvePath(target) }),
+      bytes: byteLen(bytes),
+      diagnostics: warnings.map((d) => diagnosticToJson(source, d)),
+      ...(r.dropped ? { dropped: r.dropped } : {}),
+      summary,
+    });
+  } else {
+    emitDiagnosticsHuman(source, warnings, args.quiet);
+    const len = typeof bytes === "string" ? Buffer.byteLength(bytes) : bytes.length;
+    if (!args.quiet) process.stdout.write(`✓ ${input} → ${target} (${len} bytes, ${format.toUpperCase()})\n`);
+  }
+  return noted(EXIT.OK);
+}
+
+/**
+ * Write one file per storey of a multi-storey plan: `<stem>.L<level>.<ext>`, derived from
+ * the `-o` target (or the default output) so a level's sheet lands exactly where a
+ * single-file compile would have put the drawing.
+ *
+ * The `--json` envelope reports `outputs[]` (every path, in level order) plus a `pages[]`
+ * row per storey — there is no single `output`, and inventing one would be a lie. The
+ * `summary` stays the whole-plan `describe()`, whose `levels[]` mirrors these pages.
+ *
+ * With `--json` and no `-o` nothing is written at all ({@link jsonNamesNoFile}): the
+ * whole set is rendered and reported (`pages[]` keeps its `level`/`name`/`bytes`), but
+ * `outputs[]` and each row's `output` are absent because no such file exists — the
+ * envelope says `written: false` instead.
+ */
+function writePages(
+  pages: NonNullable<Awaited<ReturnType<typeof renderArtifact>>["pages"]>,
+  diagnostics: Diagnostic[],
+  source: string,
+  input: string,
+  format: Format,
+  args: Args,
+  dropped?: PlanJsonDropped[],
+): number {
+  const noWrite = jsonNamesNoFile(args);
+  const base = args.o ?? defaultOut(input, format);
+  const written: Array<Record<string, unknown>> = [];
+  for (const p of pages) {
+    const target = storeyTarget(base, p.level);
+    if (!noWrite) {
+      try {
+        writeOutput(target, p.bytes);
+      } catch (e) {
+        return ioError((e as Error).message, args.json, { format });
+      }
+    }
+    written.push({
+      level: p.level,
+      ...(p.name !== undefined ? { name: p.name } : {}),
+      ...(noWrite ? {} : { output: resolvePath(target) }),
+      bytes: byteLen(p.bytes),
+    });
+  }
+
+  // Warnings are per storey (each carries its `level`), so they are reported for the whole
+  // set exactly once — a page is not a separate compile.
+  const warnings = diagnostics.filter((d) => d.severity === "warning");
+  if (args.json) {
+    const s = describe(source, { world: makeNodeWorld(baseDirOf(input)) });
+    const { ok: _ok, diagnostics: _d, ...summary } = s;
+    emitJson({
+      ok: true,
+      format,
+      // `written: false` takes `outputs[]`'s slot when the invocation named no file.
+      ...(noWrite ? { written: false } : { outputs: written.map((w) => w.output) }),
+      pages: written,
+      diagnostics: warnings.map((d) => diagnosticToJson(source, d)),
+      ...(dropped ? { dropped } : {}),
+      summary,
+    });
+  } else {
+    emitDiagnosticsHuman(source, warnings, args.quiet);
+    if (!args.quiet) {
+      for (const w of written) {
+        process.stdout.write(
+          `✓ ${input} → ${w.output as string} (level ${w.level as number}, ${w.bytes as number} bytes, ${format.toUpperCase()})\n`,
+        );
+      }
+    }
+  }
+  return EXIT.OK;
+}
+
+/**
+ * `watch` — the one RESIDENT command: it installs a handle and then owns the process
+ * until a signal ends it. Everything else in this CLI is one-shot.
+ *
+ * It returns {@link RESIDENT} rather than `EXIT.OK` because the dispatcher cannot tell
+ * those apart from a number: `process.exit(await cmdWatch(args))` on an `EXIT.OK` would
+ * kill the watcher the instant it was installed.
+ *
+ * Two behaviours here are deliberate, not incidental:
+ *
+ * - **A failing first compile does not stop the watch.** `cmdCompile`'s exit code is
+ *   discarded on purpose: fixing the file and re-saving is the entire point of `watch`,
+ *   so a syntax error must leave you watching, not at a shell prompt. The diagnostics
+ *   are already on stderr by the time it returns.
+ * - **A failing RE-compile does not stop it either.** The listener's promise is caught
+ *   here, because an unhandled rejection is a hard process exit in Node ≥ 15 — one
+ *   unwritable output (an editor holding the file, a `-o` on a full disk) would
+ *   otherwise take down a watcher that is supposed to survive exactly that and let you
+ *   save again.
+ *
+ * Termination is Node's default signal handling, unmodified: SIGINT (the advertised
+ * Ctrl+C) and SIGTERM both end the process promptly, and no handler is installed that
+ * could swallow either.
+ */
+export async function cmdWatch(args: Args): Promise<CommandResult> {
+  const input = args._[0];
+  // Still a usage error, and still exits 3 — `-` cannot be re-read on every save, and
+  // becoming resident over a path that does not exist would watch nothing forever.
+  if (!input || input === "-") return usageError("watch needs a file path");
+  await cmdCompile(args);
+  // ARM THE WATCHER BEFORE ANNOUNCING IT. A save landing between the banner and the
+  // watcher's baseline `stat` is folded into that baseline and never produces a change
+  // event — silently, and only for the first save. The banner is what a human (and this
+  // project's own end-to-end test) treats as "ready", so it must not be printed until the
+  // baseline exists: edit fast enough after a premature banner and your first save is
+  // ignored.
+  //
+  // `watchPath` takes that baseline synchronously, inside the call. Node's `fs.watchFile`
+  // did NOT, although an earlier fix here assumed it did: it queues its first `stat` on
+  // the libuv threadpool and returns, so the banner below could still be printed before
+  // the baseline was taken — see `watchPath`.
+  //
+  // Reproduced deterministically by widening the window: a 1.5 s delay inserted here made
+  // `test/cli-commands.test.ts`'s watch case fail every time, and so did keeping the libuv
+  // threadpool busy for 1.5 s across a `watchFile` call. `test/watch-arming.test.ts`
+  // pins the ordering and the synchronous baseline, so the window cannot be reopened.
+  watchPath(resolvePath(input), 300, () => {
+    // Nothing reads a re-compile's exit code — the process's own code is decided by the
+    // signal that ends it — so the failure is reported and the watch continues.
+    void cmdCompile(args).catch((e: unknown) => {
+      process.stderr.write(`✗ recompile failed: ${e instanceof Error ? e.message : String(e)}\n`);
+    });
+  });
+  process.stderr.write(`watching ${input} … (Ctrl+C to stop)\n`);
+  return RESIDENT;
+}
+
+/** The two things a watch needs from its environment — injected so a test can drive the interleaving. */
+export interface WatchIO {
+  /** A fingerprint of the file's current state, or `undefined` when it cannot be stat'ed. */
+  stat: (path: string) => string | undefined;
+  /** Run `tick` every `ms` until the returned function is called. */
+  every: (ms: number, tick: () => void) => () => void;
+}
+
+const nodeWatchIO: WatchIO = {
+  stat: (path) => {
+    try {
+      // The fields of libuv's own comparison that a save can move, at nanosecond
+      // precision: a same-size save in the same millisecond still moves `mtimeNs` or
+      // `ctimeNs`, and an editor's write-and-rename save moves `ino`.
+      const s = statSync(path, { bigint: true });
+      return `${s.dev}:${s.ino}:${s.mode}:${s.size}:${s.mtimeNs}:${s.ctimeNs}`;
+    } catch {
+      return undefined;
+    }
+  },
+  every: (ms, tick) => {
+    const t = setInterval(tick, ms);
+    return () => clearInterval(t);
+  },
+};
+
+/**
+ * Call `onChange` whenever `path` changes, polling every `intervalMs`; returns a stop function.
+ *
+ * The BASELINE IS TAKEN SYNCHRONOUSLY, before this returns, so "the watcher is armed" is
+ * true the moment the call is. That is the whole reason this exists instead of
+ * `fs.watchFile`: libuv's `uv_fs_poll_start` queues its first `stat` on the threadpool and
+ * returns, and that first result becomes the baseline whenever it lands. A save made after
+ * `watchFile` returned but before that `stat` ran was folded into the baseline and never
+ * reported — on Node 22, a save in the same tick as the call was missed 47 times in 50 —
+ * and under CPU contention the `stat` could land after a caller had already seen the banner
+ * and saved.
+ *
+ * A disappearing or reappearing file is a change too (the recompile then reports it), as it
+ * was under `watchFile`.
+ */
+export function watchPath(
+  path: string,
+  intervalMs: number,
+  onChange: () => void,
+  io: WatchIO = nodeWatchIO,
+): () => void {
+  let last = io.stat(path);
+  return io.every(intervalMs, () => {
+    const now = io.stat(path);
+    if (now === last) return;
+    last = now;
+    onChange();
+  });
+}
+
+// ---------------------------------------------------------------------------
+// preview / batch / md
+// ---------------------------------------------------------------------------
+
+/**
+ * `preview` — render a PNG an agent can *look at*. PNG-first, default `scale 2`
+ * for legibility. Zero-install where the optional `@resvg/resvg-js` binary is
+ * present (a normal `npm i`/`npx` installs it); otherwise the failure carries the
+ * `E_PNG_DEPENDENCY` code + fix, and `--install` fetches it and retries.
+ */
+/**
+ * `preview --ascii` — the text preview. Compiles to the `txt` backend and prints
+ * the plan to stdout (human) or as an `ascii` field (`--json`), following the same
+ * result shape as the PNG preview. Zero dependency: an agent gets a legible plan
+ * with no raster binary at all.
+ */
+async function cmdPreviewAscii(args: Args, input: string): Promise<number> {
+  const format: Format = "txt";
+  // `--ascii` IS the txt backend, so `--view` is refused here for the same reason
+  // `-f txt` is: a projection has no plan for the ASCII room pass to read.
+  const rv = resolveView(args, format, "preview");
+  if ("code" in rv) return rv.code;
+  let source: string;
+  try {
+    source = readInput(input);
+  } catch {
+    return ioError(`cannot read ${input}`, args.json, { format });
+  }
+  const r = await renderArtifact(source, format, args, baseDirOf(input), pageSelect(args, "first"));
+  if (r.badLevel) return unknownLevel("preview", args.level!, r.levels);
+  if (r.bytes === undefined) {
+    if (args.json) emitJson({ ok: false, format, diagnostics: r.diagnostics.map((d) => diagnosticToJson(source, d)) });
+    else {
+      emitDiagnosticsHuman(source, r.diagnostics, args.quiet);
+      if (!args.quiet) process.stderr.write("✗ compilation failed\n");
+    }
+    return EXIT.USER;
+  }
+  const ascii = typeof r.bytes === "string" ? r.bytes : Buffer.from(r.bytes).toString("utf8");
+  const warnings = r.diagnostics.filter((d) => d.severity === "warning");
+  if (args.json) {
+    emitJson({ ok: true, format, ascii, diagnostics: warnings.map((d) => diagnosticToJson(source, d)) });
+  } else {
+    process.stdout.write(ascii);
+  }
+  return EXIT.OK;
+}
+
+export async function cmdPreview(args: Args, preread?: string): Promise<number> {
+  const input = args._[0];
+  if (!input) return usageError("preview needs an input file (use a path or `-` for stdin)");
+
+  if (args.review) {
+    // The review sheet draws its own overlay and is a raster of the PLAN, so each of these
+    // has nothing to mean beside it: refused rather than silently ignored.
+    const clash = args.ascii
+      ? "--ascii"
+      : args.view !== undefined
+        ? "--view"
+        : args.overlay !== undefined
+          ? "--overlay"
+          : undefined;
+    if (clash)
+      return usageErrorFor(
+        "preview",
+        `--review cannot be combined with ${clash} — the review sheet is a PNG of the plan with its own access-graph overlay`,
+      );
+    return cmdPreviewReview(args, input);
+  }
+  // `--ascii`: a zero-install text preview an agent can read straight from stdout,
+  // no raster dependency. Reuses the same `renderAscii` backend as `-f txt`.
+  if (args.ascii) return cmdPreviewAscii(args, input);
+
+  const format: Format = "png";
+  if (args.json && args.o === "-") return stdoutJsonConflict("preview");
+  const rv = resolveView(args, format, "preview");
+  if ("code" in rv) return rv.code;
+  // Target a sensible on-screen size by default: the native render is high-res
+  // (thousands of px), so render the page at PNG_PREVIEW_WIDTH px wide unless the caller set
+  // an explicit width/scale. That keeps the PNG legible *and* small enough for an
+  // agent's vision to ingest without heavy downscaling.
+  if (args.width === undefined && (args.scale === undefined || !(args.scale > 0))) args.width = PNG_PREVIEW_WIDTH;
+  if (args.scale === undefined || !(args.scale > 0)) args.scale = 1;
+
+  let source: string;
+  try {
+    // `--review` hands over the source it already read: stdin cannot be read twice.
+    source = preread ?? readInput(input);
+  } catch {
+    return ioError(`cannot read ${input}`, args.json, { format });
+  }
+
+  // Multi-storey: preview the storey `--level` names, else the lowest (page 1). With
+  // `--view` there is one page — the whole building — so `--level` has nothing to narrow.
+  const r = await renderArtifact(source, format, args, baseDirOf(input), pageSelect(args, "first"), rv.view);
+  if (r.badLevel) return unknownLevel("preview", args.level!, r.levels);
+
+  if (r.error) {
+    if (args.json) {
+      const o: Record<string, unknown> = { ok: false, format, error: r.error };
+      if (r.errorCode) {
+        o.code = r.errorCode;
+        const fix = ERROR_CATALOG[r.errorCode]?.fix;
+        if (fix) o.fix = fix;
+      }
+      emitJson(o);
+      return EXIT.INTERNAL;
+    }
+    return ioError(r.error, false, { format });
+  }
+
+  if (r.bytes === undefined) {
+    if (args.json) emitJson({ ok: false, format, diagnostics: r.diagnostics.map((d) => diagnosticToJson(source, d)) });
+    else {
+      emitDiagnosticsHuman(source, r.diagnostics, args.quiet);
+      if (!args.quiet) process.stderr.write("✗ compilation failed\n");
+    }
+    return EXIT.USER;
+  }
+
+  const errored = hasErrors(r.diagnostics);
+
+  const target = args.o ?? defaultOut(input, format);
+
+  // `--error-svg`: rasterized error-card PNG for a broken plan — write it, but keep
+  // the user-source exit code and report the diagnostics.
+  if (errored) {
+    if (target === "-") {
+      process.stdout.write(r.bytes);
+    } else {
+      try {
+        writeOutput(target, r.bytes);
+      } catch (e) {
+        return ioError((e as Error).message, args.json, { format });
+      }
+    }
+    if (args.json) {
+      const o: Record<string, unknown> = {
+        ok: false,
+        format,
+        diagnostics: r.diagnostics.map((d) => diagnosticToJson(source, d)),
+      };
+      if (target !== "-") {
+        o.output = resolvePath(target);
+        o.bytes = typeof r.bytes === "string" ? Buffer.byteLength(r.bytes) : r.bytes.length;
+      }
+      emitJson(o);
+    } else {
+      emitDiagnosticsHuman(source, r.diagnostics, args.quiet);
+      if (!args.quiet && target !== "-") process.stderr.write(`✗ compilation failed; wrote error card → ${target}\n`);
+    }
+    return EXIT.USER;
+  }
+
+  if (target === "-") {
+    process.stdout.write(r.bytes);
+    return EXIT.OK;
+  }
+  try {
+    writeOutput(target, r.bytes);
+  } catch (e) {
+    return ioError((e as Error).message, args.json, { format });
+  }
+
+  const bytes = typeof r.bytes === "string" ? Buffer.byteLength(r.bytes) : r.bytes.length;
+  const warnings = r.diagnostics.filter((d) => d.severity === "warning");
+  if (args.json) {
+    emitJson({
+      ok: true,
+      format,
+      output: resolvePath(target),
+      bytes,
+      width: args.width ?? null,
+      scale: args.scale,
+      diagnostics: warnings.map((d) => diagnosticToJson(source, d)),
+    });
+  } else {
+    emitDiagnosticsHuman(source, warnings, args.quiet);
+    if (!args.quiet)
+      process.stdout.write(
+        `✓ ${input} → ${target} (${bytes} bytes, PNG${args.width ? ` ${args.width}px` : ""}@${args.scale}x)\n`,
+      );
+  }
+  return EXIT.OK;
+}
+
+/**
+ * `preview --review` (plan-soundness PS5.4): the review sheet ({@link buildReviewSheet}) as a
+ * PNG — the plan with its access graph, every warned element ringed and numbered, the legend
+ * and the close-up strip. It consumes `compile()` and `lint()` and feeds neither; the plain
+ * `preview` path above is untouched. A broken plan takes `preview`'s own failure path (with
+ * `--error-svg`, its error card). Default output `<name>.review.png`, beside the plain preview.
+ */
+async function cmdPreviewReview(args: Args, input: string): Promise<number> {
+  const format: Format = "png";
+  if (args.json && args.o === "-") return stdoutJsonConflict("preview");
+  let source: string;
+  try {
+    source = readInput(input);
+  } catch {
+    return ioError(`cannot read ${input}`, args.json, { format });
+  }
+  const world = makeNodeWorld(baseDirOf(input));
+  const width = args.width !== undefined && args.width > 0 ? args.width : undefined;
+  const sheet = buildReviewSheet(source, {
+    world,
+    ...(args.level !== undefined ? { level: args.level } : {}),
+    ...(width !== undefined ? { width } : {}),
+  });
+  const target = args.o ?? defaultOut(input, format).replace(/\.png$/, ".review.png");
+  if ("kind" in sheet) {
+    if (sheet.kind === "badLevel") return unknownLevel("preview", args.level!, sheet.levels);
+    // A broken plan: exactly what `preview` does with it (diagnostics, exit 2, the error card).
+    return cmdPreview({ ...args, review: false, o: target }, source);
+  }
+  const scale = args.scale !== undefined && args.scale > 0 ? args.scale : 1;
+  const warnings: Diagnostic[] = [];
+  let bytes: Uint8Array;
+  try {
+    bytes = await runWithInstall(
+      () =>
+        renderPngFromSvg(sheet.svg, {
+          scale,
+          onDiagnostic: (d) => {
+            if (!warnings.some((w) => w.code === d.code && w.message === d.message)) warnings.push(d);
+          },
+        }),
+      "@resvg/resvg-js",
+      args,
+    );
+  } catch (e) {
+    const message = (e as Error).message;
+    if (isOptionalDepError(e)) {
+      if (args.json) {
+        const fix = ERROR_CATALOG.E_PNG_DEPENDENCY?.fix;
+        emitJson({ ok: false, format, error: message, code: "E_PNG_DEPENDENCY", ...(fix ? { fix } : {}) });
+        return EXIT.INTERNAL;
+      }
+    }
+    return ioError(message, args.json, { format });
+  }
+  if (target === "-") {
+    process.stdout.write(bytes);
+    return EXIT.OK;
+  }
+  try {
+    writeOutput(target, bytes);
+  } catch (e) {
+    return ioError((e as Error).message, args.json, { format });
+  }
+  const ringed = sheet.marks.filter((m) => m.ringed.length > 0).length;
+  // What plain `preview` reports: compile()'s warnings (every storey), then the render's own.
+  const reported = [...sheet.diagnostics, ...warnings].filter((d) => d.severity === "warning");
+  if (args.json) {
+    emitJson({
+      ok: true,
+      format,
+      review: true,
+      output: resolvePath(target),
+      bytes: bytes.length,
+      width: width ?? null,
+      scale,
+      ...(sheet.level !== undefined ? { level: sheet.level } : {}),
+      rings: ringed,
+      marks: sheet.marks,
+      crops: sheet.crops,
+      cropsOmitted: sheet.cropsOmitted,
+      diagnostics: reported.map((d) => diagnosticToJson(source, d)),
+    });
+  } else {
+    emitDiagnosticsHuman(source, reported, args.quiet);
+    if (!args.quiet)
+      process.stdout.write(
+        `✓ ${input} → ${target} (review sheet: ${sheet.marks.length} flagged, ${ringed} ringed, ${sheet.crops.length} close-up${sheet.crops.length === 1 ? "" : "s"}; ${bytes.length} bytes)\n`,
+      );
+  }
+  return EXIT.OK;
+}
+
+/**
+ * `batch` — render many `.arch` files in one call, concurrently. Stable array
+ * JSON shape (`{ ok, results: [...] }`) so an agent can render design variants and
+ * read every outcome at once. `-o <dir>` directs outputs into a directory; `-j`
+ * caps concurrency (default: CPU count).
+ */
+export async function cmdBatch(args: Args): Promise<number> {
+  const inputs = args._;
+  if (inputs.length === 0) return usageError("batch needs at least one input file");
+  const format = parseFormat(args);
+  if (!format) return usageError(`unknown format "${args.format}" (use ${FORMAT_LIST})`);
+  const jsonRefusal = refuseJsonDrawingFlags(args, format, "batch");
+  if (jsonRefusal !== undefined) return jsonRefusal;
+  // `batch -o` is an output DIRECTORY and `batch` writes one file per input, so there is
+  // no single stream `-` could mean — with or without `--json`. It used to be dropped on
+  // the floor (outputs landing next to each input, unannounced); say so instead.
+  if (args.o === "-")
+    return usageErrorFor(
+      "batch",
+      "`-o -` is not a batch target: -o takes an output DIRECTORY and batch writes one file per input — give a directory, or omit -o to write alongside each input",
+    );
+
+  const outDir = args.o;
+  const targetFor = (input: string): string =>
+    outDir ? resolvePath(outDir, basename(input).replace(/\.arch$/i, "") + "." + format) : defaultOut(input, format);
+
+  // Two inputs that name one output file (`a/plan.arch` and `b/plan.arch` under one `-o`,
+  // or one input given twice) used to be written in turn, the last silently replacing the
+  // rest. Refuse before anything is written. Paths are compared without case, because on
+  // a case-insensitive filesystem (Windows, macOS) `Plan.svg` and `plan.svg` are one file,
+  // and the answer must not depend on where the batch runs.
+  const claimed = new Map<string, string>();
+  for (const input of inputs) {
+    const target = resolvePath(targetFor(input));
+    const key = target.toLowerCase();
+    const first = claimed.get(key);
+    if (first !== undefined)
+      return usageErrorFor(
+        "batch",
+        `${first} and ${input} would both write ${target}, and the second would replace the first — rename one of them, or render them in separate batch runs with different -o directories`,
+      );
+    claimed.set(key, input);
+  }
+
+  const jobs = args.jobs && args.jobs > 0 ? args.jobs : Math.min(cpus().length, inputs.length);
+  const results = await runPool(
+    inputs.map((input) => () => compileToFile(input, format, args, targetFor(input))),
+    jobs,
+  );
+
+  if (args.json) {
+    emitJson({ ok: results.every((r) => r.ok), results: results.map(perFileJson) });
+  } else if (!args.quiet) {
+    for (const r of results) {
+      if (r.ok) process.stdout.write(`✓ ${r.input} → ${r.output} (${r.bytes} bytes, ${format.toUpperCase()})\n`);
+      else process.stderr.write(`✗ ${r.input}: ${r.error ?? "compilation failed"}\n`);
+    }
+  }
+  // What `-f json` left out, as `compile` says it: one stderr line each, never a diagnostic.
+  if (!args.quiet) for (const r of results) if (r.ok) for (const n of r.notes ?? []) process.stderr.write(`${n}\n`);
+  return aggregateExit(results);
+}
+
+/** Alt text for an embedded block's image link. */
+function blockAlt(index: number): string {
+  return `Floor plan ${index + 1}`;
+}
+
+/**
+ * `md` — render every ` ```arch ` block in a Markdown file to an image and rewrite
+ * each block to an image link (mermaid-cli's markdown mode). Images are written
+ * next to the output `.md` as `<name>-<n>.<ext>`. A block that fails to render is
+ * left untouched in the output.
+ */
+export async function cmdMd(args: Args): Promise<number> {
+  const input = args._[0];
+  if (!input) return usageError("md needs a Markdown file");
+  // Route through the one shared `-f` parser (so an unknown id gets the same
+  // full-format-list error every other command gives), then narrow to the subset
+  // `md` can actually embed as an image link.
+  const format = parseFormat(args);
+  if (!format) return usageError(`unknown format "${args.format}" (use ${FORMAT_LIST})`);
+  if (format !== "svg" && format !== "png") return usageError(`md supports -f svg or png (got "${format}")`);
+  if (args.json && args.o === "-") return stdoutJsonConflict("md");
+
+  let md: string;
+  try {
+    md = readInput(input);
+  } catch {
+    return ioError(`cannot read ${input}`, args.json);
+  }
+
+  // Output target: default `<name>.out.md` (`-o -` streams it, and cannot be combined
+  // with `--json` — rejected above).
+  const target = args.o ?? (input === "-" ? "out.md" : resolvePath(input).replace(/\.md$/i, "") + ".out.md");
+  // Resolving drops a trailing separator, so `-o dir/` is refused before any image is written.
+  if (target !== "-" && endsInSeparator(target)) return ioError(separatorRefusal(target), args.json);
+  const outAbs = target === "-" ? resolvePath("out.md") : resolvePath(target);
+  const outDir = dirname(outAbs);
+  const outBase = basename(outAbs).replace(/\.[^.]+$/, "");
+  const baseDir = baseDirOf(input);
+
+  const blocks = extractArchBlocks(md);
+  const replacements: Array<string | undefined> = [];
+  const images: PerFile[] = [];
+
+  for (const b of blocks) {
+    const imgName = `${outBase}-${b.index + 1}.${format}`;
+    const r = await renderArtifact(b.source, format, args, baseDir);
+    if (r.error || r.bytes === undefined) {
+      images.push({
+        input: `block ${b.index + 1}`,
+        ok: false,
+        format,
+        error: r.error,
+        errorCode: r.errorCode,
+        diagnostics: r.diagnostics,
+        source: b.source,
+      });
+      replacements[b.index] = undefined; // leave the failing block in place
+      continue;
+    }
+    try {
+      writeOutput(resolvePath(outDir, imgName), r.bytes);
+    } catch (e) {
+      images.push({
+        input: `block ${b.index + 1}`,
+        ok: false,
+        format,
+        error: (e as Error).message,
+        diagnostics: r.diagnostics,
+        source: b.source,
+      });
+      replacements[b.index] = undefined;
+      continue;
+    }
+    const bytes = typeof r.bytes === "string" ? Buffer.byteLength(r.bytes) : r.bytes.length;
+    // With `--error-svg`, a broken block still produced bytes (an error card): the
+    // image is written and the block rewritten to it, but `ok` reflects that the
+    // block errored, so the aggregate exit code stays a user-source error.
+    images.push({
+      input: `block ${b.index + 1}`,
+      ok: !hasErrors(r.diagnostics),
+      format,
+      output: resolvePath(outDir, imgName),
+      bytes,
+      diagnostics: r.diagnostics,
+      source: b.source,
+    });
+    replacements[b.index] = `![${blockAlt(b.index)}](${imgName})`;
+  }
+
+  const rewritten = rewriteMarkdown(md, blocks, replacements);
+  if (target === "-") {
+    process.stdout.write(rewritten);
+  } else {
+    try {
+      writeOutput(outAbs, rewritten);
+    } catch (e) {
+      return ioError((e as Error).message, args.json);
+    }
+  }
+
+  if (args.json) {
+    emitJson({
+      ok: images.every((i) => i.ok),
+      output: target === "-" ? null : outAbs,
+      blocks: blocks.length,
+      images: images.map(perFileJson),
+    });
+  } else if (!args.quiet) {
+    const rendered = images.filter((i) => i.ok).length;
+    process.stdout.write(
+      `✓ ${input} → ${target} (${blocks.length} block${blocks.length === 1 ? "" : "s"}, ${rendered} rendered)\n`,
+    );
+  }
+  return aggregateExit(images);
+}

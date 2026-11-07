@@ -1,0 +1,23 @@
+{
+  "name": "local-interior-design-agent",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "面向装修公司的 Windows 本地装修设计 Agent — P0 最小真实链路",
+  "license": "UNLICENSED",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "setup": "node scripts/setup.mjs",
+    "verify": "node scripts/acceptance.mjs",
+    "test": "node scripts/acceptance.mjs",
+    "pipeline": "node scripts/run-pipeline.mjs",
+    "desktop": "node scripts/launch-desktop.mjs",
+    "smoke:desktop": "node scripts/smoke-desktop.mjs"
+  },
+  "devDependencies": {
+    "electron": "44.7.0",
+    "tsx": "4.23.15"
+  }
+}

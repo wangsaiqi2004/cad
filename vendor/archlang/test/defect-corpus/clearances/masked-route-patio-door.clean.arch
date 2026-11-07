@@ -1,0 +1,23 @@
+# class: clearances
+# twin-of: masked-route-patio-door
+# origin: audits/2026-10-18-first-contact.md T2 with the sofa moved 900 mm east
+# expect: none
+# fact: the sofa spans x 3300-4200, 1150 mm clear of o_hl; with d_patio made a window, describe measures Living and
+#   Dining from d_front at 840 mm and lint is silent
+plan "Sofa across the hall opening, masked by the patio door" {
+  units mm
+  grid 50
+  wall id=shell exterior thickness 250 { (0,0) (5500,0) (5500,8000) (0,8000) close }
+  wall id=w_h partition thickness 100 { (0,4000) (5500,4000) }
+  wall id=w_v partition thickness 100 { (2100,4000) (2100,8000) }
+  room id=r_din at (0,0) size 5500x4000 label "Dining" uses dining
+  room id=r_hall at (0,4000) size 2100x4000 label "Hall" uses hall
+  room id=r_liv at (2100,4000) size 3400x4000 label "Living" uses living
+  door id=d_front at (1000,8000) width 900 wall shell swing into r_hall
+  opening id=o_hl at (2100,6000) width 1000 wall w_v
+  opening id=o_ld at (3800,4000) width 1800 wall w_h
+  door id=d_patio sliding at (4400,0) width 1600 wall shell
+  window at (1200,0) width 1200 wall shell
+  window at (3800,8000) width 2000 wall shell
+  furniture sofa at (3300,5000) size 900x2000 label "Sofa" rotate 270
+}

@@ -1,0 +1,13 @@
+# class: clearances
+# origin: audits/showcase-and-examples.md MR2 (miraflores d_main, a 2400 mm single hinged leaf); GW4, CA3
+# expect: W_LEAF_TOO_WIDE
+# status: done
+# fact: d_main is one hinged leaf 2400 mm wide (`maxHingedLeafMm` is 1219 mm, the IBC 48 in leaf)
+plan "One 2400 mm leaf" {
+  units mm
+  grid 50
+  wall id=shell exterior thickness 200 { (0,0) (8000,0) (8000,6000) (0,6000) close }
+  room id=r_hall at (0,0) size 8000x6000 label "Entrance Hall" uses entry
+  door id=d_main at (4000,6000) width 2400 wall shell swing into r_hall
+  window at (4000,0) width 2000 wall shell
+}

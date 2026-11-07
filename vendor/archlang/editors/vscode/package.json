@@ -1,0 +1,79 @@
+{
+  "name": "archlang",
+  "private": true,
+  "version": "0.45.0",
+  "displayName": "ArchLang",
+  "description": "Syntax highlighting plus full language support — live diagnostics, hover, completion, go-to-definition, rename, and signature help — for ArchLang (.arch) floor-plan source.",
+  "license": "MIT",
+  "icon": "images/icon.png",
+  "galleryBanner": {
+    "color": "#0f1115",
+    "theme": "dark"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ChanMeng666/archlang.git",
+    "directory": "editors/vscode"
+  },
+  "publisher": "ChanMeng",
+  "engines": {
+    "vscode": "^1.75.0"
+  },
+  "categories": [
+    "Programming Languages",
+    "Linters"
+  ],
+  "main": "./dist/extension.js",
+  "activationEvents": [
+    "onLanguage:arch"
+  ],
+  "contributes": {
+    "languages": [
+      {
+        "id": "arch",
+        "aliases": [
+          "ArchLang"
+        ],
+        "extensions": [
+          ".arch"
+        ],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "markdown": {
+      "markdownItPlugins": true,
+      "previewStyles": [
+        "./markdown-preview.css"
+      ]
+    },
+    "grammars": [
+      {
+        "language": "arch",
+        "scopeName": "source.arch",
+        "path": "./archlang.tmLanguage.json"
+      }
+    ]
+  },
+  "scripts": {
+    "copy-assets": "node copy-assets.mjs",
+    "typecheck": "tsc -p . --noEmit && tsc -p tsconfig.test.json",
+    "build": "node copy-assets.mjs && node esbuild.mjs",
+    "watch": "node esbuild.mjs --watch",
+    "package": "npm run build && vsce package --no-dependencies",
+    "vscode:prepublish": "npm run build"
+  },
+  "devDependencies": {
+    "@chanmeng666/archlang": "^1.57.0",
+    "@types/markdown-it": "^14.1.2",
+    "@types/node": "^22.20.0",
+    "@types/vscode": "^1.75.0",
+    "@vscode/vsce": "^3.2.1",
+    "esbuild": "^0.28.2",
+    "markdown-it": "^14.2.0",
+    "typescript": "^5.7.2",
+    "vscode-languageclient": "^9.0.1",
+    "vscode-languageserver": "^9.0.1",
+    "vscode-languageserver-protocol": "^3.17.5",
+    "vscode-languageserver-textdocument": "^1.0.16"
+  }
+}

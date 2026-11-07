@@ -1,0 +1,26 @@
+# class: circulation-privacy
+# origin: audits/2026-10-18-first-contact.md K1 (first-contact-plans/6-clinic.arch d_fire: the author's "swing-out fire
+#   door" on w_s, drawn west to east, so wall-relative `out` is the left of travel and the leaf opens into the
+#   corridor, against the escape direction)
+# expect: W_EXIT_SWINGS_INWARD
+# status: todo
+# fact: w_s runs (0,4000) -> (6000,4000); d_fire `swing out` sweeps the left of travel, north, so its 1000 mm leaf
+#   sweeps y 2900-3900 inside "Rear corridor" (spec.llm.md's own K1 example; Plan JSON `swing` out); the
+#   corridor's other exit d_main is a sliding door, so d_fire is the only hinged exit and it opens against the escape
+#   direction. The "Staff room" label makes `dwellingReading` read the plan as non-residential, the scope of
+#   PS2.16's rule. Lint is silent today: no rule reads an exit's swing
+plan "Fire exit opening inward" {
+  units mm
+  grid 50
+  wall id=w_n exterior thickness 200 { (0,0) (6000,0) }
+  wall id=w_e exterior thickness 200 { (6000,0) (6000,4000) }
+  wall id=w_s exterior thickness 200 { (0,4000) (6000,4000) }
+  wall id=w_w exterior thickness 200 { (0,4000) (0,0) }
+  wall id=w_p partition thickness 100 { (0,2000) (6000,2000) }
+  room id=r_staff at (0,0) size 6000x2000 label "Staff room" uses office
+  room id=r_corr at (0,2000) size 6000x2000 label "Rear corridor" uses circulation
+  door id=d_staff on w_p at 1500 width 900 swing into r_staff
+  door id=d_main sliding on w_w at 1000 width 1200
+  door id=d_fire on w_s at 4500 width 1000 swing out
+  window on w_n at 3000 width 1500
+}

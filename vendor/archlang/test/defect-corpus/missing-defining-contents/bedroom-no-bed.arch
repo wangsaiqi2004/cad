@@ -1,0 +1,18 @@
+# class: missing-defining-contents
+# origin: evidence.md section 1 row 9; repro/family-apartment.arch Bedroom 3 (a wardrobe and no bed; reduced)
+# expect: W_ROOM_MISSING_DEFINING
+# status: done
+# fact: r_bed (uses bedroom) is furnished with a wardrobe and holds no bed
+plan "Bedroom without a bed" {
+  units mm
+  grid 50
+  wall id=shell exterior thickness 200 { (0,0) (8000,0) (8000,4000) (0,4000) close }
+  wall id=w_mid partition thickness 100 { (4000,0) (4000,4000) }
+  room id=r_living at (0,0) size 4000x4000 label "Living Room" uses living
+  room id=r_bed at (4000,0) size 4000x4000 label "Bedroom 3" uses bedroom
+  door id=d_entry at (2000,4000) width 900 wall shell
+  door id=d_bed at (4000,2000) width 800 wall w_mid swing into r_bed
+  window at (2000,0) width 1500 wall shell
+  window at (8000,2000) width 1200 wall shell
+  furniture wardrobe against wall shell segment 0 offset 6000 in r_bed
+}

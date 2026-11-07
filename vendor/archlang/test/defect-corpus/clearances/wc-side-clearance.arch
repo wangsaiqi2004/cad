@@ -1,0 +1,18 @@
+# class: clearances
+# origin: audits/showcase-and-examples.md M2, E2, X8, X15 (WC centreline 200 mm from a side wall, 20 instances); CA2
+# expect: W_WC_SIDE_CLEARANCE
+# status: done
+# fact: the wc's centreline is y=2200 and the south wall's inner face is y=2400: 200 mm to the side wall
+plan "WC in the corner" {
+  units mm
+  grid 50
+  wall id=shell exterior thickness 200 { (0,0) (6000,0) (6000,2500) (0,2500) close }
+  wall id=w_mid partition thickness 100 { (2000,0) (2000,2500) }
+  room id=r_bath at (0,0) size 2000x2500 label "Bathroom" uses bath
+  room id=r_living at (2000,0) size 4000x2500 label "Living Room" uses living
+  door id=d_entry at (4000,2500) width 900 wall shell
+  door id=d_bath at (2000,1250) width 700 wall w_mid swing into r_bath
+  window at (4000,0) width 1500 wall shell
+  furniture wc against wall shell segment 3 offset 300 in r_bath
+  furniture basin against wall shell segment 3 offset 1200 in r_bath
+}

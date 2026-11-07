@@ -1,0 +1,17 @@
+# class: circulation-privacy
+# twin-of: entry-into-bedroom
+# origin: README PS2.7 with the front door moved into the living room
+# expect: none
+# fact: the one exterior door opens into the living room; the bedroom is depth 2
+plan "Front door into the living room" {
+  units mm
+  grid 50
+  wall id=shell exterior thickness 200 { (0,0) (8000,0) (8000,4000) (0,4000) close }
+  wall id=w_mid partition thickness 100 { (4000,0) (4000,4000) }
+  room id=r_bed at (0,0) size 4000x4000 label "Bedroom" uses bedroom
+  room id=r_living at (4000,0) size 4000x4000 label "Living Room" uses living
+  door id=d_entry at (6000,4000) width 900 wall shell
+  door id=d_mid at (4000,2000) width 800 wall w_mid
+  window at (2000,0) width 1200 wall shell
+  window at (6000,0) width 1500 wall shell
+}

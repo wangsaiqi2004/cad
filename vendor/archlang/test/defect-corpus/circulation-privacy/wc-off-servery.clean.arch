@@ -1,0 +1,26 @@
+# class: circulation-privacy
+# twin-of: wc-off-servery
+# origin: audits/2026-10-18-first-contact.md C5's second finding with d_wc moved onto the lobby
+# expect: none
+# fact: d_wc joins the WC to the lobby (uses circulation); the plan still reads as non-residential, so the dwelling
+#   arms of the rule decline and the lint coverage report names them (`non-dwelling`)
+plan "Staff WC opening straight onto the servery" {
+  units mm
+  grid 50
+  wall id=shell exterior thickness 200 { (0,0) (8000,0) (8000,4500) (0,4500) close }
+  wall id=w_v partition thickness 100 { (4000,0) (4000,4500) }
+  wall id=w_h partition thickness 100 { (4000,2200) (8000,2200) }
+  wall id=w_v2 partition thickness 100 { (6000,2200) (6000,4500) }
+  room id=r_seat at (0,0) size 4000x4500 label "Cafe seating" uses dining
+  room id=r_serv at (4000,0) size 4000x2200 label "Counter / servery" uses kitchen
+  room id=r_lobby at (4000,2200) size 2000x2300 label "Lobby" uses circulation
+  room id=r_wc at (6000,2200) size 2000x2300 label "Staff WC" uses wc
+  door id=d_entry at (2000,4500) width 1000 wall shell
+  door id=d_serv at (4000,1100) width 900 wall w_v swing into r_serv
+  door id=d_lobby at (4000,3400) width 900 wall w_v swing into r_lobby
+  door id=d_wc at (6000,3350) width 800 wall w_v2 swing into r_wc
+  window at (2000,0) width 2000 wall shell
+  window at (6000,0) width 1500 wall shell
+  furniture wc against wall shell segment 1 offset 3700 in r_wc
+  furniture basin against wall shell segment 2 offset 1600 in r_wc
+}

@@ -1,0 +1,23 @@
+# class: circulation-privacy
+# origin: audits/2026-10-18-first-contact.md C5 (first-contact-plans/4-cafe.arch d_awc: the accessible WC opens
+#   straight onto the seating, `uses dining`); README PS2.6. Re-cast as a dwelling under PS2.18: GB 50096-2011 5.4.3
+#   is a dwelling rule and the café now reads as non-residential (the café form is wc-off-servery)
+# expect: W_WET_ROOM_DOOR
+# status: done
+# fact: the WC's only door, d_wc, joins it to "Dining" (uses dining)
+plan "WC opening straight onto the dining room" {
+  units mm
+  grid 50
+  wall id=shell exterior thickness 200 { (0,0) (6500,0) (6500,4500) (0,4500) close }
+  wall id=w_v partition thickness 100 { (4000,0) (4000,4500) }
+  wall id=w_h partition thickness 100 { (4000,2200) (6500,2200) }
+  room id=r_seat at (0,0) size 4000x4500 label "Dining" uses dining
+  room id=r_wc at (4000,0) size 2500x2200 label "WC" uses wc
+  room id=r_lobby at (4000,2200) size 2500x2300 label "Hall" uses circulation
+  door id=d_entry at (2000,4500) width 1000 wall shell
+  door id=d_lobby at (4000,3400) width 900 wall w_v swing into r_lobby
+  door id=d_wc at (4000,1100) width 900 wall w_v swing into r_wc
+  window at (2000,0) width 2000 wall shell
+  furniture wc against wall shell segment 1 offset 1100 in r_wc
+  furniture basin against wall shell segment 0 offset 5200 in r_wc
+}

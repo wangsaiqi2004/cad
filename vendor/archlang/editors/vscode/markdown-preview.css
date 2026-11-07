@@ -1,0 +1,19 @@
+/* A plan is drawn for a white sheet, so the drawing sits on one in every theme; the
+   error block follows the editor theme through VS Code's own variables. */
+.archlang-preview {
+  margin: 1em 0;
+  overflow-x: auto;
+}
+.archlang-preview svg {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  background: #ffffff;
+  border: 1px solid var(--vscode-editorWidget-border, #d0d7de);
+  border-radius: 4px;
+  padding: 8px;
+  box-sizing: border-box;
+}
+.archlang-preview-error .archlang-diagnostics {
+  color: var(--vscode-editorError-foreground, #cf222e);
+}

@@ -1,0 +1,13 @@
+# class: daylight
+# twin-of: living-bay-no-window
+# origin: audits/showcase-and-examples.md X2 with a window on the east wall
+# expect: none
+# fact: r_living has a 1500 mm window on its east wall (y 2250-3750); describe attributes it to r_living
+plan "Living with an east window" {
+  units mm
+  grid 50
+  wall id=shell exterior thickness 200 { (0,0) (4800,0) (4800,6000) (4000,6000) arc (1400,6000) radius 2000 cw (0,6000) close }
+  room id=r_living at (0,0) size 4800x6000 label "Living" uses living
+  door id=d_garden at (700,6000) width 900 wall shell swing out
+  window id=win_east at (4800,3000) width 1500 wall shell
+}

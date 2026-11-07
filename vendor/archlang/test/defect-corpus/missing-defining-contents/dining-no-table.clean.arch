@@ -1,0 +1,15 @@
+# class: missing-defining-contents
+# twin-of: dining-no-table
+# origin: audits/archcanvas-public-examples.md FH5 with a dining table added
+# expect: none
+# fact: r_living holds a sofa and a dining_table
+plan "Living / dining with a table" {
+  units mm
+  grid 50
+  wall id=shell exterior thickness 200 { (0,0) (6000,0) (6000,4000) (0,4000) close }
+  room id=r_living at (0,0) size 6000x4000 label "Living / Dining" uses living dining
+  door id=d_entry at (1000,4000) width 900 wall shell
+  window at (3000,0) width 1800 wall shell
+  furniture sofa against wall shell segment 0 offset 1500 size 2000x900 in r_living
+  furniture dining_table at (3800,1800) size 1400x900 in r_living
+}

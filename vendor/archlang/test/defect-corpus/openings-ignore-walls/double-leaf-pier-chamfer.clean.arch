@@ -1,0 +1,14 @@
+# class: openings-ignore-walls
+# twin-of: double-leaf-pier-chamfer
+# origin: audits/2026-10-18-first-contact.md C2 with d_entry_b 82 mm further along
+# expect: none
+# fact: d_entry_b spans s 2075-2925: a 150 mm pier
+plan "Two leaves faking a double door on a chamfer" {
+  units mm
+  grid 1
+  wall id=shell exterior thickness 200 { (0,0) (6000,0) (6000,3000) (3000,6000) (0,6000) close }
+  room id=r_cafe polygon (0,0) (6000,0) (6000,3000) (3000,6000) (0,6000) label "Cafe seating" uses dining
+  door id=d_entry_a on shell at 10500 width 850 hinge near start swing into r_cafe
+  door id=d_entry_b on shell at 11500 width 850 hinge near end swing into r_cafe
+  window on shell at 3000 width 1500
+}

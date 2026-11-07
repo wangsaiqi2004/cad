@@ -1,0 +1,1 @@
+{"ok":true,"available":true,"backend":"n/a: getSelectedStorageBackend is not a function","electron":"44.7.0","node":"24.21.0","platform":"win32","roundtripOK":true,"cipherBytes":57,"cipherHeadHex":"7631300d2bb4650c5e5b5b63","cipherBase64Head":"djEwDSu0ZQxeW1tj6xbfdGKA","plaintextLeakedInBase64":false,"plaintextLeakedInLatin1":false}

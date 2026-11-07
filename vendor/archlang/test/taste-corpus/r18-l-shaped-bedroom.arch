@@ -1,0 +1,17 @@
+# criterion: R18
+# origin: design 2026-10-24-ps5-taste-design.md §3 R18 acceptance (an L at 0.75 of its hull
+#   rectangle)
+# fact: the L-shaped bedroom's floor is 12 m² and its minimum enclosing rectangle 4000 × 4000
+#   (16 m²): rectangularity 0.75, R18 = 0 on the ramp 0.75 → 0.9
+plan "R18 L-shaped bedroom" {
+  units mm
+  grid 100
+  room id=r_hall at (0,0) size 2000x4000 label "Hall" uses hall
+  room id=r_bed polygon (2000,0) (6000,0) (6000,2000) (4000,2000) (4000,4000) (2000,4000) label "Bedroom" uses bedroom
+  # `walls from rooms` derives rectangles only, so the L's shell is drawn by hand.
+  wall id=shell exterior thickness 200 { (0,0) (6000,0) (6000,2000) (4000,2000) (4000,4000) (0,4000) close }
+  wall id=part partition thickness 100 { (2000,0) (2000,4000) }
+  door id=d_front on shell at 18000 width 900 swing into r_hall
+  door id=d_bed on part at 700 width 900 swing into r_bed
+  window id=w_bed on shell at 4000 width 1500
+}

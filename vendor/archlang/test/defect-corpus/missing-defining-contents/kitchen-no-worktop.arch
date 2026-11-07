@@ -1,0 +1,20 @@
+# class: missing-defining-contents
+# origin: audits/archcanvas-public-examples.md CB2 (sink, hob and fridge butted together with no worktop)
+# expect: W_ROOM_MISSING_DEFINING
+# status: done
+# fact: r_kitchen (uses kitchen) holds a kitchen_sink and a stove (x 100-1500) and a fridge (x 2100-2700) and no counter
+plan "Kitchen without a worktop" {
+  units mm
+  grid 50
+  wall id=shell exterior thickness 200 { (0,0) (6000,0) (6000,4000) (0,4000) close }
+  wall id=w_mid partition thickness 100 { (3000,0) (3000,4000) }
+  room id=r_kitchen at (0,0) size 3000x4000 label "Kitchen" uses kitchen
+  room id=r_living at (3000,0) size 3000x4000 label "Living Room" uses living
+  door id=d_entry at (1500,4000) width 900 wall shell
+  door id=d_mid at (3000,2000) width 800 wall w_mid
+  window at (0,2000) width 1200 wall shell
+  window at (4500,0) width 1500 wall shell
+  furniture kitchen_sink against wall shell segment 0 offset 500 in r_kitchen
+  furniture stove against wall shell segment 0 offset 1200 in r_kitchen
+  furniture fridge against wall shell segment 0 offset 2400 in r_kitchen
+}

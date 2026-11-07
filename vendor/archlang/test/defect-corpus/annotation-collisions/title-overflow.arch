@@ -1,0 +1,20 @@
+# class: annotation-collisions
+# origin: audits/showcase-and-examples.md D1, E1, V1, W1, X29 (title-block project value overprints its caption and runs out of the frame)
+# expect: W_TITLE_OVERFLOW
+# status: done
+# fact: the title block is 1700 wide (x 12050-13750); the 69-character project value is right-aligned at 13665 in
+#   95-unit text, about 3300 wide at 0.5 em per character, so it starts near x 10400: over the PROJECT caption
+#   (x 12135) and about 1650 outside the frame (seen in `arch preview`)
+plan "Title overflow" {
+  units mm
+  grid 50
+  paper A3 landscape
+  wall id=shell exterior thickness 200 { (0,0) (8000,0) (8000,5000) (0,5000) close }
+  room id=r at (0,0) size 8000x5000 label "Studio" uses living
+  door at (4000,5000) width 900 wall shell
+  window at (4000,0) width 1500 wall shell
+  title {
+    project "742 Evergreen Terrace, Springfield - Ground Floor General Arrangement"
+    drawn_by "ArchLang"
+  }
+}

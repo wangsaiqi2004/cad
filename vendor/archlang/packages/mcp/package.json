@@ -1,0 +1,55 @@
+{
+  "name": "@chanmeng666/archlang-mcp",
+  "version": "0.2.40",
+  "mcpName": "io.github.ChanMeng666/archlang-mcp",
+  "description": "Floor plans as code. Your AI writes ArchLang; the compiler draws a precise, dimensioned plan and tells it what's wrong.",
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "archlang",
+    "floor-plan",
+    "architecture",
+    "svg",
+    "dsl",
+    "llm",
+    "ai-agents"
+  ],
+  "license": "MIT",
+  "author": "Chan Meng <chanmeng.dev@gmail.com>",
+  "homepage": "https://archlang.uk/mcp",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ChanMeng666/archlang.git",
+    "directory": "packages/mcp"
+  },
+  "bugs": {
+    "url": "https://github.com/ChanMeng666/archlang/issues"
+  },
+  "type": "module",
+  "bin": {
+    "archlang-mcp": "dist/server.js"
+  },
+  "files": [
+    "dist",
+    "server.json",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "build": "tsup && node scripts/copy-resources.mjs",
+    "typecheck": "tsc --noEmit",
+    "prepack": "npm run build"
+  },
+  "dependencies": {
+    "@chanmeng666/archlang": "^1.57.0",
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "zod": "^4.6.6"
+  },
+  "devDependencies": {
+    "tsup": "^8.3.5",
+    "typescript": "^5.7.2"
+  }
+}

@@ -1,0 +1,18 @@
+{
+  "taskId": "task_58ef705e04b94ccd",
+  "projectId": "qa-prj",
+  "versionId": "v002",
+  "state": "DRAFT",
+  "stateEnteredAt": "2026-11-07T07:04:30.986Z",
+  "subProgress": {
+    "done": 0,
+    "total": 0,
+    "unit": "项"
+  },
+  "events": [],
+  "errorCode": null,
+  "idempotencyKey": null,
+  "chargeSubmittedCount": 0,
+  "redoOf": "task_5440f05ab0bc491c",
+  "createdAt": "2026-11-07T07:04:30.986Z"
+}

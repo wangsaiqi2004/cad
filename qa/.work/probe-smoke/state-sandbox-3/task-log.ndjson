@@ -1,0 +1,3 @@
+{"at":"2026-11-07T07:04:30.981Z","taskId":"task_4e9050cdb27440fe","projectId":"qa-prj","versionId":"v003","state":"DRAFT","stateLabel":"草稿，尚未提交","subProgress":{"done":0,"total":0,"unit":"项"},"type":"task_created","detail":{"versionId":"v003","redoOf":null}}
+{"at":"2026-11-07T07:04:55.867Z","taskId":"task_0c40034f742248d6","projectId":"qa-prj","versionId":"v003","state":"DRAFT","stateLabel":"草稿，尚未提交","subProgress":{"done":0,"total":0,"unit":"项"},"type":"task_created","detail":{"versionId":"v003","redoOf":null}}
+{"at":"2026-11-07T07:05:27.419Z","taskId":"task_623532ee83104249","projectId":"qa-prj","versionId":"v003","state":"DRAFT","stateLabel":"草稿，尚未提交","subProgress":{"done":0,"total":0,"unit":"项"},"type":"task_created","detail":{"versionId":"v003","redoOf":null}}

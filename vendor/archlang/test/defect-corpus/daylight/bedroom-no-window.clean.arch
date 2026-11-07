@@ -1,0 +1,17 @@
+# class: daylight
+# twin-of: bedroom-no-window
+# origin: bag-end Spare Bedroom with a window on its east wall
+# expect: none
+# fact: r_spare has a 1200 mm window on the east wall (y 1400-2600)
+plan "Bedroom with a window" {
+  units mm
+  grid 50
+  wall id=shell exterior thickness 200 { (0,0) (8000,0) (8000,4000) (0,4000) close }
+  wall id=w_mid partition thickness 100 { (4000,0) (4000,4000) }
+  room id=r_hall at (0,0) size 4000x4000 label "Entrance Hall" uses hall
+  room id=r_spare at (4000,0) size 4000x4000 label "Spare Bedroom" uses bedroom
+  door id=d_front at (2000,4000) width 1000 wall shell
+  door id=d_spare at (4000,2000) width 800 wall w_mid
+  window at (2000,0) width 1200 wall shell
+  window at (8000,2000) width 1200 wall shell
+}

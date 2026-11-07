@@ -1,0 +1,53 @@
+{
+  "idem_f55087930f0268b3cff20afafa9d8ca8": {
+    "key": "idem_f55087930f0268b3cff20afafa9d8ca8",
+    "taskId": "qa_task_timeout_01",
+    "stepId": "image_generation",
+    "modelName": "qa-mock-image",
+    "inputHash": "49b5121373a9a923faa257e42a9dea4c6d53ab4d59d55ff73419e11ec5008a26",
+    "requestId": "qa_req_1",
+    "capability": "imageGeneration",
+    "chargeRisk": "possible",
+    "state": "finished",
+    "outcome": "unknown",
+    "submittedAt": "2026-11-07T07:13:49.769Z",
+    "resultAt": "2026-11-07T07:13:49.775Z",
+    "retryOf": null,
+    "httpStatus": null,
+    "errorCode": "E_TIMEOUT_UNKNOWN",
+    "detail": "请求超时，结果未知"
+  },
+  "idem_eb4a4c6b0cdcc3dc88df9cc863a88ced": {
+    "key": "idem_eb4a4c6b0cdcc3dc88df9cc863a88ced",
+    "taskId": "qa_task_failed_02",
+    "stepId": "image_generation",
+    "modelName": "qa-mock-image",
+    "inputHash": "49b5121373a9a923faa257e42a9dea4c6d53ab4d59d55ff73419e11ec5008a26",
+    "requestId": "qa_req_3",
+    "capability": "imageGeneration",
+    "chargeRisk": "possible",
+    "state": "finished",
+    "outcome": "failed",
+    "submittedAt": "2026-11-07T07:13:49.783Z",
+    "resultAt": "2026-11-07T07:13:49.791Z",
+    "retryOf": null,
+    "httpStatus": null,
+    "errorCode": "E_INVALID_KEY",
+    "detail": "401"
+  },
+  "idem_retry_r65d0c0c5f2000efe": {
+    "key": "idem_retry_r65d0c0c5f2000efe",
+    "taskId": "qa_task_failed_02",
+    "stepId": "image_generation",
+    "modelName": "qa-mock-image",
+    "inputHash": "49b5121373a9a923faa257e42a9dea4c6d53ab4d59d55ff73419e11ec5008a26",
+    "requestId": "req_qb8c550f3c05e8f95",
+    "capability": "imageGeneration",
+    "chargeRisk": "possible",
+    "state": "submitted",
+    "outcome": "pending",
+    "submittedAt": "2026-11-07T07:13:49.800Z",
+    "resultAt": null,
+    "retryOf": "idem_eb4a4c6b0cdcc3dc88df9cc863a88ced"
+  }
+}

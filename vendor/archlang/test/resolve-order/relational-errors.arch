@@ -1,0 +1,18 @@
+# Resolve-order corpus (ADR 0028 §1): relational placement diagnostics (`E_LAYOUT_REF`,
+# `E_LAYOUT_CYCLE`, `E_LAYOUT_UNPLACED`, a relational room's label outside its floor)
+# mixed with wall and room resolve-time diagnostics. Relational diagnostics follow every
+# element diagnostic, in the declaration order of the offending room.
+plan "Relational errors" {
+  units mm
+  grid 50
+
+  wall exterior thickness 0 { (0,0) (9000,0) }
+  room id=hall at (0,0) size 3000x3000 label "Hall"
+  room id=ghost right-of nobody size 3000x3000 label "Ghost"
+  room id=p right-of q size 2000x2000 label "P"
+  room id=q right-of p size 2000x2000 label "Q"
+  room id=lean below ghost size 3000x2000 label "Lean"
+  room id=off right-of hall align top gap 0 size 3000x3000 label "Off" at (0,9000)
+  wall id=w_bad partition thickness 100 material velvet { (3000,0) (3000,3000) }
+  room id=neg below hall size (0 - 100) x 2000 label "Negative"
+}

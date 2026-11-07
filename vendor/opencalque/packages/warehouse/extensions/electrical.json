@@ -1,0 +1,131 @@
+{
+  "format": "opencalque-extension",
+  "formatVersion": 1,
+  "id": "opencalque.electrical",
+  "name": "Electrical symbols",
+  "version": "1.1.1",
+  "author": "OpenCalque",
+  "description": "Sockets, switches and light points for electrical layouts.",
+  "translations": {
+    "fr": {
+      "Electrical symbols": "Symboles électriques",
+      "Sockets, switches and light points for electrical layouts.": "Prises, interrupteurs et points lumineux pour les plans électriques.",
+      "Socket": "Prise",
+      "Switch": "Interrupteur",
+      "Ceiling light": "Plafonnier",
+      "Wall light": "Applique",
+      "Count": "Nombre",
+      "Two-way": "Va-et-vient",
+      "Size": "Taille",
+      "Place the flat side against the wall.": "Placez le côté plat contre le mur."
+    },
+    "es": {
+      "Electrical symbols": "Símbolos eléctricos",
+      "Sockets, switches and light points for electrical layouts.": "Enchufes, interruptores y puntos de luz para planos eléctricos.",
+      "Socket": "Enchufe",
+      "Switch": "Interruptor",
+      "Ceiling light": "Luz de techo",
+      "Wall light": "Aplique",
+      "Count": "Cantidad",
+      "Two-way": "Conmutado",
+      "Size": "Tamaño",
+      "Place the flat side against the wall.": "Coloque el lado plano contra el muro."
+    },
+    "de": {
+      "Electrical symbols": "Elektrosymbole",
+      "Sockets, switches and light points for electrical layouts.": "Steckdosen, Schalter und Leuchten für Elektropläne.",
+      "Socket": "Steckdose",
+      "Switch": "Schalter",
+      "Ceiling light": "Deckenleuchte",
+      "Wall light": "Wandleuchte",
+      "Count": "Anzahl",
+      "Two-way": "Wechselschalter",
+      "Size": "Größe",
+      "Place the flat side against the wall.": "Die flache Seite an die Wand setzen."
+    },
+    "zh": {
+      "Electrical symbols": "电气符号",
+      "Sockets, switches and light points for electrical layouts.": "用于电气布置的插座、开关和灯位。",
+      "Socket": "插座",
+      "Switch": "开关",
+      "Ceiling light": "吸顶灯",
+      "Wall light": "壁灯",
+      "Count": "数量",
+      "Two-way": "双控",
+      "Size": "大小",
+      "Place the flat side against the wall.": "将平直的一边靠墙放置。"
+    },
+    "ja": {
+      "Electrical symbols": "電気記号",
+      "Sockets, switches and light points for electrical layouts.": "電気設備図のためのコンセント、スイッチ、照明。",
+      "Socket": "コンセント",
+      "Switch": "スイッチ",
+      "Ceiling light": "シーリングライト",
+      "Wall light": "ブラケット",
+      "Count": "数",
+      "Two-way": "3 路",
+      "Size": "サイズ",
+      "Place the flat side against the wall.": "平らな側を壁に付けて置いてください。"
+    },
+    "ko": {
+      "Electrical symbols": "전기 기호",
+      "Sockets, switches and light points for electrical layouts.": "전기 설비도에 쓰는 콘센트, 스위치, 조명 기호.",
+      "Socket": "콘센트",
+      "Switch": "스위치",
+      "Ceiling light": "천장등",
+      "Wall light": "벽등",
+      "Count": "개수",
+      "Two-way": "3로",
+      "Size": "크기",
+      "Place the flat side against the wall.": "평평한 쪽을 벽에 붙여 놓으세요."
+    }
+  },
+  "objects": [
+    {
+      "kind": "elec.socket",
+      "category": "electrical",
+      "label": "Socket",
+      "description": "Place the flat side against the wall.",
+      "params": [{ "key": "count", "label": "Count", "type": "number", "default": 1 }],
+      "draw": [
+        { "repeat": { "count": "max(1, count)" }, "arc": { "cx": "i * 240", "cy": 0, "r": 100, "from": 0, "to": 180 } },
+        { "repeat": { "count": "max(1, count)" }, "path": [["i * 240 - 100", 0], ["i * 240 + 100", 0]] },
+        { "repeat": { "count": "max(1, count)" }, "path": [["i * 240", 100], ["i * 240", 190]] }
+      ]
+    },
+    {
+      "kind": "elec.switch",
+      "category": "electrical",
+      "label": "Switch",
+      "params": [{ "key": "twoWay", "label": "Two-way", "type": "boolean", "default": false }],
+      "draw": [
+        { "ellipse": { "cx": 0, "cy": 0, "rx": 60, "ry": 60 } },
+        { "path": [[42, -42], [180, -180], [230, -130]] },
+        { "when": "twoWay", "path": [[-42, 42], [-180, 180], [-230, 130]] }
+      ]
+    },
+    {
+      "kind": "elec.light",
+      "category": "electrical",
+      "label": "Ceiling light",
+      "params": [{ "key": "size", "label": "Size", "type": "number", "default": 240, "unit": "length" }],
+      "draw": [
+        { "ellipse": { "cx": 0, "cy": 0, "rx": "size / 2", "ry": "size / 2" } },
+        { "path": [["-size * 0.354", "-size * 0.354"], ["size * 0.354", "size * 0.354"]] },
+        { "path": [["-size * 0.354", "size * 0.354"], ["size * 0.354", "-size * 0.354"]] }
+      ]
+    },
+    {
+      "kind": "elec.walllight",
+      "category": "electrical",
+      "label": "Wall light",
+      "description": "Place the flat side against the wall.",
+      "params": [{ "key": "size", "label": "Size", "type": "number", "default": 240, "unit": "length" }],
+      "draw": [
+        { "arc": { "cx": 0, "cy": 0, "r": "size / 2", "from": 0, "to": 180 } },
+        { "path": [["-size / 2", 0], ["size / 2", 0]] },
+        { "path": [[0, 0], [0, "size / 2"]] }
+      ]
+    }
+  ]
+}

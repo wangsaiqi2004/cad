@@ -1,0 +1,54 @@
+plan "Small Clinic" {
+  units mm
+  grid 100
+  paper A3 landscape
+  north up
+  dims auto all
+
+  strip right at (0,0) gap 0 height 4000 {
+    room id=c1 size 3000 label "Consulting 1" uses office
+    room id=c2 size 3000 label "Consulting 2" uses office
+    room id=c3 size 3000 label "Consulting 3" uses office
+    room id=staff size 3000 label "Staff Room" uses utility
+  }
+  room id=corr below c1 size 12000x2000 label "Corridor" uses circulation
+  strip right at (0,6000) gap 0 height 4000 {
+    room id=wait size 6000 label "Waiting / Reception" uses entry
+    room id=wc size 3000 label "Accessible WC" uses wc
+    room id=store size 3000 label "Store" uses storage
+  }
+
+  walls from rooms exterior 200 partition 100 { open between corr and wait width 1500 }
+
+  door on wait.bottom at 1500 from start width 1200 swing outward
+  door on staff.right at center width 900 swing outward
+  door between corr and c1 at 1500 from start width 900 swing into c1
+  door between corr and c2 at 1500 from start width 900 swing into c2
+  door between corr and c3 at 1500 from start width 900 swing into c3
+  door between corr and staff at 1500 from start width 900 swing into staff
+  door between corr and wc at 1500 from start width 900 swing into wc
+  door between corr and store at 1500 from start width 900 swing into store
+
+  window on c1.top width 1200
+  window on c2.top width 1200
+  window on c3.top width 1200
+  window on staff.top width 1200
+  window on wait.bottom at 4500 from start width 1500
+  window on wait.left width 1500
+
+  furniture reception_desk in wait anchor top-right inset 500 size 2000x700
+  furniture sofa_l in wait anchor bottom-right inset 500 size 2000x900
+  furniture desk in c1 anchor top flush size 1400x700
+  furniture desk in c2 anchor top flush size 1400x700
+  furniture desk in c3 anchor top flush size 1400x700
+  furniture bed in c1 anchor bottom-right flush size 700x1900
+  furniture bed in c2 anchor bottom-right flush size 700x1900
+  furniture bed in c3 anchor bottom-right flush size 700x1900
+  furniture wc in wc anchor bottom flush size 400x700 rotate 180
+  furniture basin in wc anchor bottom-right flush size 500x400 rotate 180
+  furniture counter in staff anchor top-right flush size 1500x600
+  furniture kitchen_sink in staff anchor top-left flush size 1200x600
+  furniture locker in store anchor bottom flush size 2000x600 rotate 180
+
+  title { project "Small Clinic" drawn_by "ArchLang" date "2026-10-23" number "A-101" revision "A" }
+}

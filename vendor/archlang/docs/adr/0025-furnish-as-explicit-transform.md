@@ -1,0 +1,240 @@
+# 25. Furnishing a room is an explicit source transform
+
+- **Status:** Accepted
+- **Date:** 2026-10
+- **Supersedes in part:** [ADR 0005](0005-no-invisible-architect.md), the words "auto-furnish"
+  in its list of what the core may not do. Everything else in ADR 0005 still binds.
+- **Relates to:** [ADR 0006](0006-solver-as-explicit-transform.md) (an arranger exists only as
+  an explicit command that returns new source and a change log),
+  [ADR 0024](0024-finish-as-explicit-transform.md) (`finish` and its stages)
+- **Scope:** the `furnish` stage of `finish()` / `arch finish`. No language syntax, no change to
+  `compile()`, `describe()` or `lint()`, no new fixture category and no new symbol.
+
+## Context
+
+ADR 0005 lists "auto-furnish" among the things ArchLang never does. The reason it gave still
+holds for `compile()`: a compiler that puts a bed in a room the source left empty draws
+something the source does not say.
+
+A plan with empty rooms is still an incomplete drawing. Plans written by models from the public
+spec routinely leave habitable rooms with no furniture at all. The models know the `furniture`
+statement. What is missing is a step that fills the rooms they skipped.
+
+ADR 0006 already says where such a step may live: an explicit, opt-in command whose output is
+new `.arch` source and a change log, never inside `compile()`. ADR 0024 built that command for
+the sheet and left room for a second stage.
+
+## Decision
+
+**1. Furnishing is allowed as an explicit transform, and only there.** `finish` gains a
+`furnish` stage. `compile()` still renders exactly what is written: it never adds, moves or
+sizes a piece. That clause of ADR 0005 is unchanged for the compiler; it no longer forbids the
+transform.
+
+**2. The stage fills only empty rooms.** A room that holds any furniture or fixture is not
+touched. No authored piece is moved, resized or deleted. A plan whose rooms are all furnished
+comes back byte-identical.
+
+**3. The room's use is the public one.** It comes from `roomUses()` (`src/analyze.ts`): the
+authored `uses`, else the label vocabulary. The stage does not read the intent channel's
+concepts or anything under `eval/`. A room with several uses gets the union of their pieces,
+use by use: the uses with a wall run first, so the run gets a whole wall before a free-standing
+piece claims it, then the use with the larger required footprint. A room whose use is unknown,
+or is circulation, storage, a garage or `utility`, is left alone and is not reported.
+
+> *Amended 2026-10-31 (issue #370).* "Is not reported" no longer holds: such a room is still left
+> alone, and when nothing stands on its floor it is named in `unresolved`, the last of the furnish
+> stage's notes, with the use that has no row, or, when neither `uses` nor the label or id names a
+> use, with the words of `FURNISH_TABLE`. The skill and `llms-full.txt` promised every room left
+> empty, and on a plan with a label the vocabulary does not hold (`"Schlafzimmer"`, `"Küche"`,
+> `"Flur"`) the silence read as nothing to do with every room empty. So the rule is one sentence: a
+> room the run leaves empty has a note. Such a note carries `scope: "outside-table"` and no `codes`.
+> It asks nothing of the author unless the room should hold furniture, so `changed: false` with
+> only such notes means finished; a consumer reads the field to tell them apart, never `reason`. A
+> room of any use whose only pieces are declared `in` it but stand elsewhere is a defect, not scope,
+> and gets the `W_FIXTURE_WRONG_ROOM` note a room with a row gets. Nothing the stage writes moved.
+> These notes are out of the digest in `test/finish-digest.ts`, and the `Named` law below holds them.
+
+**4. What goes in a room is a small public table.** `FURNISH_TABLE` (`src/furnish.ts`) is keyed
+by use and holds only words `src/fixtures-catalog.ts` already has. The wet-room and kitchen
+rows are admitted through the catalogue's own zones. Each piece is required or optional. The
+catalogue is not changed: a services fixture uses its catalogued footprint, and a free-standing
+piece gets an explicit `size` from the stage's table. `docs/furniture.md` prints the table and
+a test holds the two together.
+
+The table describes the rooms of a dwelling. `utility` has no row: the tag does not say
+laundry, and a plant room carries it too. A room larger than 100 m² is not a dwelling room
+whatever its tag says; it is reported in `unresolved` and left as it is.
+
+**5. Placement uses the language's relative forms.** A services fixture is written
+`against wall <id> offset <mm> side <left|right> in <room>`. A free-standing piece is written
+`in <room> anchor <point> flush [inset <mm>] size WxH rotate <deg>`. The stage never writes
+`at (x,y)`. When the wall behind a fixture has no id a statement can name, the fixture is
+written in the anchored form instead.
+
+A use's wall run is one unbroken row. The stove stands next to the sink and the fridge next to
+the stove, on the same wall, and the sink is placed only where the stove can follow. Only
+`against wall … offset` can say "next to it", so a kitchen whose walls have no id is not given
+a run. When a use's required pieces cannot be placed together, that use is left out whole and
+reported; its pieces are never scattered round the other uses.
+
+**6. The candidate order is fixed and the work is bounded.** Walls are tried in the order: no
+door, then no window, then longest, then top, right, bottom, left. On a wall the corners come
+before the middle; a sofa and a desk try the middle of every wall before any corner. A position
+under a window comes after every position that is not, and a piece in a corner counts the
+windows of both walls it touches. A larger footprint is tried before a smaller one. A candidate
+is dropped before any compile when it leaves the room's clear floor, crosses a door's approach
+or swing, or overlaps a piece already proposed or the floor kept clear in front of one. The
+door clearances are the largest any lint profile asks for. There is no randomness, and no search
+loop but the wet-room set search of the 2026-10-26 amendment below, whose depth-first search backs
+up when a piece has no position and runs no compile check. One run makes at most `1 + 17 × rooms`
+compile checks (13 before that amendment).
+
+> *Amended 2026-10-26 (PS2.45).* A wet room (every use `bath` or `wc`) that the piece-by-piece
+> run would leave empty is tried as whole sets before it is reported: one layout per position the
+> candidates above give the pan, completed by a depth-first search in the same order (basin, then
+> bath or shower) that backs up when a piece has no position and compiles nothing, each piece also offered where it abuts a placed piece, its front strip or a door's
+> approach; a set is dropped before any compile when a pan's side is nearer than the strictest
+> ruleset's `wcSideClearanceMm` to a wall or another piece (`W_WC_SIDE_CLEARANCE`'s own measure).
+> At most 4 layouts are compiled (`MAX_SET_CHECKS_PER_ROOM`, `src/furnish.ts`), so a room costs
+> at most 13 + 4 checks. Only a room left empty reaches this, so a room furnished before keeps
+> its pieces byte for byte.
+
+**7. Never worse, room by room.** A room's pieces are kept only when the plan with them
+compiles and raises no diagnostic code (compile and lint, counted) and no furniture conflict
+that it did not have before that room. Lint is counted under the default ruleset and under
+every named profile in `LINT_PROFILES`, so the law holds whichever profile the reader lints
+with. If the first proposal is refused, the pieces are placed one at a time, each on its next
+candidate. If a required piece cannot be placed, its use is left out; when no use is left, the
+room is left empty. Both are reported in `unresolved` with the blocking code. An optional
+piece that cannot be placed is left out.
+
+> *Amended 2026-10-24 (PR #245).* Drafting-layer codes (ADR 0032's `layer: "drafting"`: today
+> `W_ANNOTATION_OVERLAP`, `W_TITLE_OVERFLOW`, `W_DIM_INSIDE`, `W_DIM_OVERLAP`,
+> `W_OPENING_NOT_DIMENSIONED` and `W_DIM_TEXT_MISMATCH`, read from `LINT_CODE_LAYERS`) are excluded from this comparison
+> (`NOT_GATED_DRAFTING`, `src/furnish.ts`). A drafting-layer code reports the annotation, not the
+> plan, and the law protects the plan's soundness; counted, `W_ANNOTATION_OVERLAP` refused a
+> kitchen's fridge because the room's name would sit on it. The stage's placement is unchanged,
+> and the overprints it always drew are now named. Measured on the eval goldens, the
+> drafting-layer codes of `finish`'s output: `W_ANNOTATION_OVERLAP` `bungalow` 0 → 2,
+> `two-bath-flat` 0 → 2, `sized-bedrooms`, `three-bed-2bath`, `two-bed-hall` and `l-shaped-flat`
+> +1 each; no other drafting-layer code gained. Card PS2.40 makes the stage prefer a candidate
+> that raises no overlap.
+
+> *Amended 2026-10-25 (PR #248).* "Under every named profile in `LINT_PROFILES`" now reads:
+> under the default ruleset and the UNIVERSAL advisory profiles (`accessibility-advisory`:
+> physical access, the same in any culture). The residential-advisory profiles (`cn-`, `uk-`,
+> `us-residential-advisory`; `ADVISORY_CODE_PROFILES`, `src/lint/ruleset.ts`) are outside this
+> comparison and out of the stage's door clearances: each reads one jurisdiction's room sizes and
+> reads a bedroom as a double from its bed, they disagree with each other by design
+> (plan-soundness D3), so no single furnished output satisfies all three and none may govern the
+> default output. Measured on the eval goldens, the profile-only warnings the stage now leaves:
+> with areas read as drawn (the PR's first head, as its review measured it) 14 in 9 plans, `uk`
+> 12, `cn` 2, `us` 0; with net areas (as merged) 28 in 14 plans, `uk` 22, `cn` 6, `us` 0. Every
+> one is a `W_ROOM_TOO_SMALL` or `W_ROOM_TOO_NARROW` on a bedroom the furnished 1500 mm `bed`
+> makes a double; the shipped examples gain one (`sheet-notes`, `uk`, net areas). Card PS5.6:
+> `furnish --profile <name>` holds the law under that profile.
+
+**8. This version furnishes rectangular rooms of single-storey plans.** A polygon or circular
+room, and every empty room of a plan with `level` blocks, is reported in `unresolved` and left
+as it is. A polygon room is not approximated by its bounding box or by a rectangle inscribed in
+it: a derived position comes from the shape. A room with no `id=` of its own, or one inside a
+placed component instance, is reported too, because no statement in the plan body can name it.
+
+> *Amended 2026-11-02 (`archlang-lab/plans/preview-and-remodel/research/2026-11-02-l-rooms-extreme-runs-and-finish.md`):*
+> a polygon whose every edge is horizontal or vertical is furnished, through the same two forms, so
+> only on what they can say: its outermost runs and the corners that are vertices of the ring. No
+> rectangle is inscribed in it and no `at (x,y)` is written. A circle or a slanted polygon stays as
+> this decision says.
+
+A room placed relationally (`right-of`, `below`, …) has no fixed `at` to anchor in:
+`in <room> anchor` is `E_PLACE_REF` there. `against wall` does work, so such a room is
+furnished when every required piece of its uses is a wall fixture (a kitchen, a bathroom, a
+WC), with the wall fixtures only. A relational room that needs an anchored piece (a bed, a
+sofa, a table, a desk) is reported with that reason and left empty. This is decided before any
+compile check.
+
+> *Amended 2026-11-02 (issue #364, part 2).* A plan with `level` blocks is furnished storey by
+> storey, each storey as a single-storey plan would be; the "every empty room of a plan with `level`
+> blocks" limit above is gone. What a storey adds:
+>
+> - **The insertion.** Each storey's statements go inside its own `level` block (decision 9, one
+>   run per storey). `in <room>` and `against wall <id>` there mean that storey's room and wall, so
+>   an id repeated on another level needs nothing. A change and a room's note carry `level`.
+> - **The building.** A storey is read as `lint()` reads it (`lintStoreys`), so a stop of a shaft
+>   owes the head of the flight arriving from below, and `W_FURNITURE_ON_STAIR` is read the same way.
+> - **The floor.** A piece also keeps off the flights of the storeys either side, which pass through
+>   this floor whether or not a stop is drawn here; this storey's `void`s, each a hole in this
+>   storey's plate, while one on the storey above is headroom here; and this storey's lifts and
+>   escalators. No rule reports a piece on these, so the never-worse gate cannot refuse one: the
+>   candidate is dropped before any compile. A single-storey plan reads none of them, so what it
+>   gets did not move, and a piece may still be written on a `void` there.
+> - **The judgement.** Decision 7's multiset is counted on each storey as well as over the plan
+>   (`FurnishCodes.storeys`), under each ruleset: no storey may gain a code, whatever another storey
+>   lost. The sheet stage reads the same measure.
+>
+> "No statement in the plan body can name it" above was wrong: `furniture … in u1.bed` written where
+> `u1` is placed compiles, in the `in … anchor` form too. A room of a placed component stays
+> unfurnished by the stage's choice, on a single storey and on a level alike, and its note says what
+> the author can write.
+
+**9. The edits are one insertion.** The statements go after the last `furniture` statement of
+the plan body, or after its last room, wall, door, window or opening. They are never written
+inside a `for`, an `if`, a `zone`, a `level` or a component body. They go through the `Data`
+piece table, so every authored byte and comment survives.
+
+> *Amended 2026-11-02.* On a plan with `level` blocks the rule reads per storey: the block is that
+> storey's `level` block, and a run of statements is written in each storey that gained any.
+
+**10. A full run furnishes first.** `finish` with no `--only` runs `furnish`, then `sheet`,
+because the legend lists the furniture. Each stage is then run once more on the result; a
+result a stage would edit again is not returned, and the source comes back untouched.
+`--only furnish` and `--only sheet` run one stage.
+
+**11. Laws, each pinned by test** (`test/finish-furnish.test.ts`, `test/finish.test.ts`,
+`test/fuzz.test.ts`):
+
+| Law | Statement |
+|---|---|
+| Fixpoint | a second run changes nothing |
+| Never worse | no compile error, no new diagnostic code under the default ruleset or a universal lint profile, on any storey, no new furniture conflict (drafting-layer codes and the residential-advisory profiles excepted, see the 2026-10-24 and 2026-10-25 amendments to §7) |
+| Run | a use's wall fixtures sit on one wall, each touching the next |
+| Fill only | a furnished room is untouched; an all-furnished plan is a byte no-op |
+| Named | a room the run leaves empty has a note in `unresolved`, whatever left it empty (2026-10-31) |
+| Pure insertion | the result is the source with one run of statements inserted, one per storey on a plan with `level` blocks |
+| Relative | every statement written is `against wall` or `in <room> anchor`, never `at (x,y)` |
+| Bounded | the compile checks of a run do not exceed `1 + 17 × rooms` |
+| Untouched | a source that does not compile is returned byte-identical |
+| Order | a full run writes the furniture before the sheet |
+| No core path moved | SVG, `describe()` and `lint()` of every example are the pinned ones |
+
+## Why this does not reopen ADR 0005
+
+ADR 0005 protects two things: the determinism of `compile()`, and the honesty of what a drawing
+claims. Neither is given up.
+
+`compile()` is not changed. A source nobody runs `finish` on renders as it did, so no
+byte-identity baseline moves. The choice the stage makes is written into the source as ordinary
+statements. The author reads the diff, and from then on the plan states its own furniture.
+
+The stage does not claim a good layout. It claims a complete drawing that is no worse by the
+compiler's own checks than the one it was given. Where it cannot keep that claim for a room, it
+leaves the room empty and says why.
+
+## Consequences
+
+- An agent gets a furnished, sheeted drawing from one command, after lint is clean.
+- The pieces are conventional, not designed. An author who wants a different arrangement edits
+  the statements or furnishes the room first; a furnished room is never revisited.
+- A circle or a slanted polygon gets no furniture from this stage, and neither does a room of a placed
+  component. Both are reported. (Until 2026-11-02 a multi-storey plan got none either.)
+- A relational room gets wall fixtures only, and none when its use needs an anchored piece.
+- The table is public data. Adding a use or a piece is an edit to `FURNISH_TABLE` and to the
+  table in `docs/furniture.md`, which a test compares.
+
+## Provenance
+
+A fit-out pass over generated plans exists in ArchCanvas, a closed product by the same owner.
+This is an independent implementation under the MIT licence, written against ArchLang's own
+catalogue and placement forms. No code was copied. It does not replace authored furniture, has
+no inscribed-rectangle path for polygon rooms, and has no absolute-coordinate fallback.

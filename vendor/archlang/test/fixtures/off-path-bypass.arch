@@ -1,0 +1,22 @@
+# A corridor (entry at the west), a dead-end room off its north wall through d_d, a far room at
+# the east end through d_r, and a cabinet standing across the corridor under d_d. The far room's
+# walk can step into d_d's doorway band to pass the cabinet, so widening d_d widens the far
+# room's walk although d_d is on no door-graph path to it. W_PATH_TOO_NARROW must not name d_r
+# alone for the far room (test/lint-fix-texts.test.ts, "off-path bypass").
+plan "Off path bypass" {
+  units mm
+  wall id=w_n exterior thickness 200 { (0,0) (12000,0) }
+  wall id=w_s exterior thickness 200 { (0,2000) (12000,2000) }
+  wall id=w_w exterior thickness 200 { (0,0) (0,2000) }
+  wall id=w_e exterior thickness 200 { (12000,0) (12000,2000) }
+  wall id=w_d exterior thickness 200 { (4000,0) (4000,-3000) (8000,-3000) (8000,0) }
+  wall id=w_dmid partition thickness 100 { (4000,0) (8000,0) }
+  wall id=w_r partition thickness 100 { (9000,0) (9000,2000) }
+  room id=r_c at (0,0) size 9000x2000 label "Corridor" uses hall entry
+  room id=r_d at (4000,-3000) size 4000x3000 label "Dead end" uses bedroom
+  room id=r_r at (9000,0) size 3000x2000 label "Far room" uses bedroom
+  door id=d_front on w_w at 1000 width 1100
+  door id=d_d on w_dmid at 2000 width 760
+  door id=d_r on w_r at 1000 width 700
+  furniture cabinet at (5950,300) size 100x1700
+}

@@ -1,0 +1,40 @@
+node_modules/
+dist/
+*.log
+.DS_Store
+coverage/
+playground/dist/
+playground/node_modules/
+# Playwright E2E artifacts (traces, screenshots, HTML report) — per-run, never committed.
+playground/test-results/
+playground/playwright-report/
+playground/blob-report/
+docs-site/test-results/
+docs-site/playwright-report/
+docs-site/blob-report/
+engine-digests-report.md
+*.tsbuildinfo
+*.vsix
+dist-mcpb/
+dist-openai/
+# Live eval output is ephemeral (moves with the model/day) — the committed
+# scorecard is eval/results.md; the live headline lives in eval/live-baseline.json.
+eval/results.live.md
+# L2 loop-vs-resampling output is ephemeral too (per-run, model/day-dependent).
+eval/results.l2.md
+eval/results.l2.json
+# Generated dataset artifacts (HF-only; the generator + seed are the committed source).
+dataset/out/
+# local env & agent-session artifacts
+.env
+.env.*
+
+# Wrangler's local state/cache, written beside each site's wrangler.jsonc by
+# `wrangler deploy` / `wrangler dev`. The workspace .gitignore files that used to
+# ignore Vercel's `.vercel` equivalent were removed in the Cloudflare migration;
+# this is the replacement, kept at the root so it covers both sites.
+.wrangler/
+.claude/settings.local.json
+.superpowers/
+.agents/
+.codex/

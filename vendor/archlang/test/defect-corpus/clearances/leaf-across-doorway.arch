@@ -1,0 +1,19 @@
+# class: clearances
+# origin: audits/2026-10-18-first-contact.md A1 (first-contact-plans/1-apartment.arch d_front's open leaf across the
+#   d_bed2 doorway); K4 (first-contact-plans/6-clinic.arch d_corr's leaf across d_staff)
+# expect: W_LEAF_ACROSS_DOORWAY
+# status: done
+# fact: d_front is hinged at (3250,0) and its open leaf lies along x 3250, y 0-900; d_bed spans y 250-1050 on w_mid,
+#   whose hall face is x 3050: the parked leaf stands 200 mm in front of 650 of the doorway's 800 mm
+plan "Front door leaf across a bedroom door" {
+  units mm
+  grid 50
+  wall id=shell exterior thickness 200 { (0,0) (6000,0) (6000,5000) (0,5000) close }
+  wall id=w_mid partition thickness 100 { (3000,0) (3000,5000) }
+  room id=r_bed at (0,0) size 3000x5000 label "Bedroom 2" uses bedroom
+  room id=r_hall at (3000,0) size 3000x5000 label "Hall" uses hall
+  door id=d_front at (3700,0) width 900 wall shell hinge near start swing into r_hall
+  door id=d_bed at (3000,650) width 800 wall w_mid swing into r_bed
+  window at (1500,5000) width 1200 wall shell
+  window at (4500,5000) width 1200 wall shell
+}

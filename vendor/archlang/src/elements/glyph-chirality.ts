@@ -1,0 +1,221 @@
+/**
+ * The handedness of a drawn fixture symbol, and what a mirrored `place` does to it.
+ *
+ * ## The defect this closes
+ *
+ * `place … mirror x` reflects a resolved element's **position** — its footprint, its
+ * quarter-turn, the handed rules `frame.ts` flips explicitly. It does not touch the SYMBOL
+ * drawn inside that footprint, so without this a mirrored wing draws a LEFT-handed `sofa_l`
+ * in a right-handed room: every number right, the drawing wrong, and nothing to fail.
+ *
+ * ## Where the flip belongs, and why it is one reflection and not "rotation plus a mirror"
+ *
+ * A frame's linear part with `det < 0` is a signed permutation, so it factors **exactly**
+ * as `M = R(m) · Fx`, where `Fx` negates x and `R` is a quarter-turn. Composed with the
+ * symbol's own local turn `R(l)`:
+ *
+ * ```
+ *   M · R(l)  =  R(m) · Fx · R(l)  =  R(m − l) · Fx
+ * ```
+ *
+ * because `Fx · R(l) = R(−l) · Fx`. And `m − l` is precisely what {@link
+ * import("../frame.js").transformDeg} already computes (it pushes the symbol's back vector
+ * through the matrix). So the world drawing is *the glyph reflected about its own vertical
+ * centre line, then quarter-turned by the rotation the element already carries* — the
+ * renderer needs one extra step in the frame it already draws in, and no knowledge of which
+ * axis the author wrote. `mirror x`, `mirror y`, and either composed with a `rotate` all
+ * reduce to the same `Fx` here; only the derived quarter-turn differs, and that is not this
+ * module's business.
+ *
+ * ## Handedness is DERIVED, never declared
+ *
+ * A per-family `chiral` flag was considered and rejected for the reason a `sofa_l_r`
+ * *category* was rejected: it puts the fix in a table that every future handed symbol has
+ * to be remembered in. It is also not expressible there. Five of the shipped families
+ * (`counter`, `fridge`, `upper_cabinet`, `bicycle`, `motorcycle`) are handed at some
+ * footprints and symmetric at others, because their detail is tiled and the tile COUNT
+ * comes from the aspect ratio, or is drawn along the footprint's own long axis — a single
+ * flag is simply the wrong shape for that fact (`test/handedness-grid-baseline.ts`).
+ *
+ * So {@link mirrorGlyph} asks the drawing instead: reflect the marks, and keep the
+ * reflection only if it is a different drawing. A symbol with a vertical mirror axis
+ * therefore renders **byte-identical** whether its instance was reflected or not, at every
+ * footprint, with nothing to maintain. Which shipped families are handed at their catalogued
+ * footprints is enumerated by `test/glyph-chirality.test.ts`, as a record of the survey rather
+ * than as the mechanism — a redraw can move a family in or out of that list.
+ *
+ * "A different drawing" is measured at the finest precision any backend serializes — the
+ * 0.0001 mm of {@link fmt4}, the DXF formatter — read through {@link keyNum}, which first
+ * nudges every value down by {@link TIE_NUDGE} (1e-7 mm). The nudge is not a tolerance on
+ * the drawing; it moves the ROUNDING BOUNDARY off the decimal ties. Compounded fractions — a
+ * fraction of an inset of a fraction of the footprint — carry five or more decimals and can
+ * land exactly on `x.xxxx5` (a sink's drain at 630.13125,
+ * a drawer front at 1474.00375), and there a mark and its mirror partner — computed along
+ * different paths, a few ulps apart — rounded to opposite sides, so a symmetric symbol read as
+ * handed at some footprints and positions and flipped `describe --facts symmetry`. Shifted by
+ * 1e-7 (far above an ulp of any modelled coordinate, far below any real handed detail), both
+ * round the same way; a value would have to sit within an ulp of `x.xxxx5 + 1e-7` to straddle
+ * the new boundary, which no fraction-of-the-footprint arithmetic produces. Float noise from
+ * the glyph layer's own `cos`/`sin` sits seven orders below the quantum, which is why an EXACT
+ * comparison would call 63 of the 83 families handed and be useless.
+ *
+ * Pure and deterministic: no clock, no randomness, no trig.
+ */
+
+import type { Point } from "../ast.js";
+import { fmt4 } from "../num-format.js";
+import type { PathEdge, PathLoop, SceneNode, ScenePrim } from "../scene.js";
+import { mapSceneNode } from "./glyph-lib.js";
+
+/**
+ * Reflect one scene node about the vertical line `x = axis`.
+ *
+ * The traversal is `glyph-lib.ts`'s `mapSceneNode` — shared with `furniture.ts`'s
+ * `rotateNode` — whose switch is **exhaustive with no `default`** on purpose, the guard
+ * `pdf.ts`'s `drawNode` also carries. A new `ScenePrim` variant fails the typecheck there
+ * rather than being silently passed through unreflected.
+ *
+ * A reflection REVERSES orientation, so every `sweep` flag flips: an arc drawn clockwise
+ * from `start` to `end` is drawn counter-clockwise once mirrored. `r` is a length and is
+ * invariant. Point ORDER within a polygon is left alone (as `rotateNode` leaves it), which
+ * flips the winding — nothing downstream reads a furniture polygon's winding, and
+ * {@link marksEqual} compares up to it. A glyph draws no text — the shared drawing
+ * contract in the `glyphs-*` suites pins that — so a text anchor moves and the string
+ * stays upright and unreversed, for totality.
+ */
+export function mirrorNode(n: SceneNode, axis: number): SceneNode {
+  const mp = (p: Point): Point => ({ x: axis + (axis - p.x), y: p.y });
+  return mapSceneNode(n, mp, true);
+}
+
+/**
+ * The glyph `nodes` as a mirrored instance should draw them: reflected about the vertical
+ * line `x = axis`, **unless** the reflection leaves the drawing unchanged, in which case the
+ * original array is returned so a symmetric symbol keeps its exact bytes.
+ *
+ * `axis` is the footprint's centre x in the symbol's own pre-rotation frame, so the
+ * reflection maps the footprint onto itself and the piece cannot escape its own extent.
+ */
+export function mirrorGlyph(nodes: SceneNode[], axis: number): SceneNode[] {
+  const flipped = nodes.map((n) => mirrorNode(n, axis));
+  return marksEqual(nodes, flipped) ? nodes : flipped;
+}
+
+/**
+ * Do these two node lists draw the same marks? — the predicate behind "this symbol has a
+ * vertical mirror axis".
+ *
+ * Compared as an unordered MULTISET of canonical marks, because a reflection is allowed to
+ * change how a symmetric drawing is spelled without changing what it draws: a rectangle's
+ * point sequence rotates and reverses, an arc's endpoints swap, and two mirror-image halves
+ * trade places in the node list. Each of those is a re-spelling, not a different picture, so
+ * the canonical form below quotients by exactly them and by nothing else — a mark's paint,
+ * pen weight, line type and layer all still have to match.
+ */
+export function marksEqual(a: readonly SceneNode[], b: readonly SceneNode[]): boolean {
+  if (a.length !== b.length) return false;
+  const ka = a.map(nodeKey).sort();
+  const kb = b.map(nodeKey).sort();
+  return ka.every((k, i) => k === kb[i]);
+}
+
+/** A node's canonical spelling: everything a backend can see, quotiented by re-spellings. */
+function nodeKey(n: SceneNode): string {
+  const paint = n.paint;
+  const p = [
+    paint.fill ?? "",
+    paint.stroke ?? "",
+    paint.width ?? "",
+    paint.dash ? paint.dash.join("/") : "",
+    paint.linecap ?? "",
+    paint.linejoin ?? "",
+    paint.miterLimit ?? "",
+    paint.fillRule ?? "",
+  ].join(":");
+  return `${n.layer}|${n.layerName ?? ""}|${p}|${n.lineWeight ?? ""}|${n.lineType ?? ""}|${primKey(n.prim)}`;
+}
+
+/** How far every keyed number is moved off the `x.xxxx5` rounding ties first — see the header. */
+const TIE_NUDGE = 1e-7;
+
+/** A number as the handedness key reads it: {@link fmt4} after the {@link TIE_NUDGE}. */
+const keyNum = (v: number): string => fmt4(v - TIE_NUDGE);
+
+const pt = (p: Point): string => `${keyNum(p.x)},${keyNum(p.y)}`;
+
+/** The lexicographically smallest spelling of a closed ring — over every start point and
+ *  both directions of travel, which is what makes it invariant under a reflection. */
+function ringKey(pts: readonly Point[]): string {
+  const s = pts.map(pt);
+  let best: string | undefined;
+  for (const seq of [s, [...s].reverse()]) {
+    for (let i = 0; i < seq.length; i++) {
+      const k = [...seq.slice(i), ...seq.slice(0, i)].join(" ");
+      if (best === undefined || k < best) best = k;
+    }
+  }
+  return best ?? "";
+}
+
+function primKey(prim: ScenePrim): string {
+  switch (prim.t) {
+    case "polygon":
+      return `poly ${ringKey(prim.pts)}`;
+    // A segment has no direction on the page, so its endpoints are compared unordered.
+    case "line":
+      return `line ${[pt(prim.a), pt(prim.b)].sort().join(" ")}`;
+    case "circle":
+      return `circle ${pt(prim.center)} ${keyNum(prim.r)}`;
+    // The same curve traced the other way round: normalise to `sweep 0` by swapping the
+    // endpoints, which is exactly what a reflection does to an arc.
+    case "arc": {
+      const ends = prim.sweep === 0 ? [prim.start, prim.end] : [prim.end, prim.start];
+      return `arc ${pt(prim.center)} ${keyNum(prim.r)} ${ends.map(pt).join(" ")}`;
+    }
+    case "text":
+      return `text ${pt(prim.at)} ${keyNum(prim.size)} ${prim.anchor} ${prim.rotate ?? 0} ${prim.value}`;
+    case "region":
+      return `region ${prim.loops.map(ringKey).sort().join(" | ")}`;
+    // A path is a set of closed loops, and a reflection re-spells each one exactly as it does a
+    // polygon's ring: the loop starts at the mirrored point and runs the other way round, which
+    // also flips every arc's sweep. So each loop is keyed like {@link ringKey} — its smallest
+    // spelling over every start edge and both directions of travel — and the loops as a set.
+    // Fixture glyphs draw their curves this way (`GlyphCtx.path`), so this is load-bearing: a
+    // literal comparison would call every symmetric curved symbol handed and mirror its bytes.
+    case "path":
+      return `path ${prim.loops.map(loopKey).sort().join(" | ")}`;
+    case "hatch":
+      return `hatch ${prim.material} ${keyNum(prim.scale)} ${keyNum(prim.angle)} ${prim.region.map(ringKey).sort().join(" | ")}`;
+  }
+}
+
+/**
+ * The smallest spelling of one closed `path` loop: one token per edge — the vertex it leaves,
+ * then `l` for a straight edge or the arc's centre, radius and sweep — minimised over every
+ * start edge and both directions. Travelling an edge backwards leaves from its other end and
+ * flips its sweep, which is what a reflection does to it. The loop's closing edge is present
+ * by the `path` contract, so the vertex list is `start` followed by each edge's `to`.
+ *
+ * Minimising over both directions QUOTIENTS WINDING, and that is only safe for a path whose
+ * loops are separate outlines. A multi-loop path with a HOLE (filled nonzero, the hole wound
+ * the other way) would need a winding-aware key — reversing one loop there changes what is
+ * filled. No glyph emits one today; give a glyph a holed path and this key has to change first.
+ */
+function loopKey(lp: PathLoop): string {
+  const n = lp.edges.length;
+  const verts = [lp.start, ...lp.edges.map((e) => e.to)];
+  const tail = (e: PathEdge, flip: boolean): string =>
+    e.t === "line" ? "l" : `a${pt(e.center)}r${keyNum(e.r)}s${flip ? 1 - e.sweep : e.sweep}`;
+  const fwd: string[] = [];
+  const rev: string[] = [];
+  for (let i = 0; i < n; i++) fwd.push(`${pt(verts[i]!)}${tail(lp.edges[i]!, false)}`);
+  for (let i = n - 1; i >= 0; i--) rev.push(`${pt(verts[i + 1]!)}${tail(lp.edges[i]!, true)}`);
+  let best: string | undefined;
+  for (const seq of [fwd, rev]) {
+    for (let i = 0; i < seq.length; i++) {
+      const k = [...seq.slice(i), ...seq.slice(0, i)].join(" ");
+      if (best === undefined || k < best) best = k;
+    }
+  }
+  return best ?? pt(lp.start);
+}

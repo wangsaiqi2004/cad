@@ -1,0 +1,23 @@
+# class: openings-ignore-walls
+# twin-of: door-fills-gap
+# origin: audits/showcase-and-examples.md X10 with bath_w moved 300 mm south and the door re-centred
+# expect: none
+# fact: d_bed2 spans y 3800-4700; nibs are 150 mm to the bed_w face (3650) and 150 mm to the bath_w face (4850)
+plan "Door between two tees, with nibs" {
+  units mm
+  grid 50
+  wall id=shell exterior thickness 200 { (0,0) (8000,0) (8000,7000) (0,7000) close }
+  wall id=hall_w partition thickness 100 { (2200,0) (2200,7000) }
+  wall id=bath_w partition thickness 100 { (0,4900) (2200,4900) }
+  wall id=bed_w partition thickness 100 { (2200,3600) (8000,3600) }
+  room id=landing at (0,0) size 2200x4900 label "Landing" uses circulation
+  room id=bath at (0,4900) size 2200x2100 label "Bath" uses bath
+  room id=bed1 at (2200,0) size 5800x3600 label "Bedroom 1" uses bedroom
+  room id=bed2 at (2200,3600) size 5800x3400 label "Bedroom 2" uses bedroom
+  door id=d_front on shell at 27000 width 900
+  door id=d_bed1 on hall_w at 1800 width 900 swing into bed1
+  door id=d_bed2 on hall_w at 4250 width 900 swing into bed2
+  door id=d_bath on bath_w at 1100 width 800 swing into bath
+  window on shell at 5000 width 1500
+  window on shell at 13300 width 1200
+}

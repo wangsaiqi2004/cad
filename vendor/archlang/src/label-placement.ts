@@ -1,0 +1,740 @@
+/**
+ * Obstacle-aware relocation of room labels — a **post-pass over the lowered Scene**.
+ *
+ * A room's label used to be placed at a purely geometric anchor (`roomLabelAnchor`:
+ * the rectangle's centre, the circle's centre, the polygon's centroid or its pole of
+ * inaccessibility) with **no knowledge of what else is drawn there**. That anchor is the
+ * right answer for an empty room and the wrong one the moment a bed, a door swing, a
+ * wall or a dimension number stands on it.
+ *
+ * ### Why this is a post-pass and not an element rule
+ *
+ * `RenderCtx` (`src/registry.ts`) hands an element its theme, sizes, bounds, `fmt` and
+ * `openingsVoided` — and nothing about its siblings. That is deliberate: it is the
+ * plugin contract for all eleven elements, and widening it so `room.render` could see
+ * the rest of the drawing would make every element author reason about draw order.
+ *
+ * So the decision is made here instead, in `toScene`, **after** the walls are lowered and
+ * **after** `dims auto` has been rendered. That ordering is the whole point: a dimension
+ * number is not an element, it is text synthesized during lowering, and only a pass that
+ * runs after it exists can keep a room label off it.
+ *
+ * ### Conservative by construction
+ *
+ * A label is relocated **only when its text box actually collides** — more than
+ * {@link COLLIDE_MIN} of its own area buried in an obstacle or an already-placed label.
+ * A plan whose labels are clear is not searched at all and its bytes are unchanged,
+ * which is the property every drawing shipped before this pass relies on. And it never moves
+ * further off its own floor than its anchor stands, read at the width drawn (`inkWidth`): a
+ * name wider than its room may slide along the room, off a piece, and cannot walk out through a
+ * wall, which a flat {@link W_OUTSIDE} let the search trade for less overlap (#367). A room's label
+ * this pass cannot clear goes to `fitLabels` (`src/label-fit.ts`), which runs next and may shrink
+ * it; what is left over something after that is `W_ANNOTATION_OVERLAP`'s to report. That rule
+ * reads rooms only, so an `outdoor` surface's label is not reported.
+ *
+ * ### Determinism
+ *
+ * Candidates are visited in one fixed order — the incumbent anchor **first**, then a 7×7
+ * lattice of bounding-box fractions — and only a **strictly** better score displaces the
+ * incumbent. Same rule as {@link import("./geometry/polygon.js").polygonLabelPoint}: no
+ * float comparison picks a winner among equals, so a tie always keeps the label where it
+ * was. Pure arithmetic, one pass, no iteration to a tolerance.
+ *
+ * Prior art: planscript-rust's `best_area_label_candidate` / `label_score`
+ * (`src/exporters.rs`, MIT) — the candidate lattice, the distance-from-centre preference
+ * and the three-tier penalty ladder are its shape. Two deliberate departures: its
+ * `min_by` keeps the first minimum among *sorted-by-score* equals where ours keeps the
+ * incumbent outright, and its overlap penalties are raw pixel areas where ours are
+ * **fractions of the label's own area** — ArchLang draws in millimetres over plans
+ * spanning 7 m to 60 m, so a raw-area weight would mean something different on every
+ * drawing. Its `estimate_text_width` is not borrowed: widths here go through the one
+ * shared {@link textWidth}, the same estimate `W_DIM_OVERLAP` and the `dims auto` number
+ * stagger measure with, so all three agree about what collides.
+ */
+
+import type { Point } from "./ast.js";
+import { segmentRectangle, segmentsOfWall } from "./geometry.js";
+import { arcTessellate } from "./geometry/arc.js";
+import type { BBox } from "./geometry/rect.js";
+import { overlap1d } from "./geometry/rect.js";
+import { GridIndex } from "./geometry/grid-index.js";
+import { pointInPolygon, polygonBounds, rectAreaOutside, rectInsidePolygon } from "./geometry/polygon.js";
+import { ROOF_LAYER } from "./elements/roof.js";
+import { OUTDOOR_LAYERS } from "./elements/outdoor.js";
+import type { ResolvedPlan } from "./ir.js";
+import type { RenderSizes, SceneNode, ScenePrim } from "./scene.js";
+import { textWidth } from "./text-metrics.js";
+import { balancedLines, fewestLines, inkExtent, LABEL_LINE_PITCH, textExtent } from "./text-layout.js";
+
+/**
+ * One labelled area and the node range it contributed to the Scene. `toScene` records it
+ * while it lowers the elements — the exact, order-independent alternative to matching
+ * text nodes back to their owner by coordinate (two areas can share an anchor).
+ *
+ * **It carries geometry, not an element.** An `outdoor` surface as well as a room
+ * has a name and an area drawn the same way and wants the same treatment, and the pass
+ * has no business knowing which of the two it is looking at: a label sits inside a ring,
+ * at an anchor, and is sometimes the author's decision. Three fields, both element kinds,
+ * no `switch`.
+ */
+export interface LabelGroup {
+  /** The ring the label must stay wholly inside — a floor, or a piece of ground. */
+  ring: Point[];
+  /** Where the text was drawn, which is also candidate zero and wins every tie. */
+  anchor: Point;
+  /** An authored `label "…" at (x,y)` — the author's decision, never overruled. */
+  fixed: boolean;
+  /** The name may wrap onto several lines ({@link wrapLabels}) — a room's, not a surface's. */
+  wrap?: true;
+  /** Index of the element's first node in the Scene's node list. */
+  from: number;
+  /** Index one past its last. */
+  to: number;
+}
+
+/**
+ * Clearance added around every obstacle, as a fraction of the room-label size. At the
+ * default `roomFont` this is ≈0.45% of the drawing's reference dimension — the same
+ * relative breathing room planscript-rust's 2–3 px gives on an 800 px canvas.
+ */
+export const CLEARANCE = 0.15;
+
+/**
+ * How much of a label's own area must be buried before the label is moved at all: 2% of
+ * its own box. This is the **trigger**, and it is the only thing standing between a
+ * shipped drawing and churn — a plan whose labels clear this bar is never searched and
+ * keeps its exact bytes.
+ *
+ * Why 2%: {@link textWidth} is a deliberately generous estimate (over-estimating costs a
+ * millimetre of clearance, under-estimating costs overprinted ink), so the outer few
+ * percent of a label's box is the estimate's own slack, not glyphs. Below 2% there is
+ * very likely no ink overlap at all, and moving the name would be a bigger change to the
+ * drawing than the thing it claims to fix. Above it there is real overprint: every
+ * relocation this threshold admits across the shipped examples is a room name sitting on
+ * a furniture rectangle or inside a door's swing.
+ *
+ * The threshold decides only **whether** to move. Where to move is then the ordinary
+ * continuous score, in which fully clear beats nearly clear — otherwise a label could
+ * settle a hair off the bed it was told to get off.
+ */
+export const COLLIDE_MIN = 0.02;
+
+/** Bounding-box fractions the candidate lattice samples, in visit order. */
+export const FRACTIONS = [0.5, 0.35, 0.65, 0.2, 0.8, 0.1, 0.9] as const;
+
+/** Score weight: the text box does not fit wholly on its own floor. */
+const W_OUTSIDE = 100;
+/** Score weight per unit of area-fraction buried in drawn geometry. */
+const W_OBSTACLE = 250;
+/** Score weight per unit of area-fraction buried in an already-placed room label. */
+const W_PLACED = 10_000;
+/** How far a candidate may be preferred away from the anchor (planscript's `·4`). */
+export const W_DISTANCE = 4;
+
+/** Bounding box of a point set (empty → null). */
+function bboxOfPoints(pts: readonly Point[]): BBox | null {
+  if (pts.length === 0) return null;
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  for (const p of pts) {
+    if (p.x < minX) minX = p.x;
+    if (p.y < minY) minY = p.y;
+    if (p.x > maxX) maxX = p.x;
+    if (p.y > maxY) maxY = p.y;
+  }
+  return { x: minX, y: minY, w: maxX - minX, h: maxY - minY };
+}
+
+/** The rect grown by `d` on every side. */
+function inflate(b: BBox, d: number): BBox {
+  return { x: b.x - d, y: b.y - d, w: b.w + 2 * d, h: b.h + 2 * d };
+}
+
+/** The smallest rect containing both. */
+function unionBBox(a: BBox, b: BBox): BBox {
+  const x = Math.min(a.x, b.x);
+  const y = Math.min(a.y, b.y);
+  return { x, y, w: Math.max(a.x + a.w, b.x + b.w) - x, h: Math.max(a.y + a.h, b.y + b.h) - y };
+}
+
+/** The rect taken about its centre from the width estimate to `w`, the width drawn. */
+function inkOf(b: BBox, w: number): BBox {
+  return { x: b.x + (b.w - w) / 2, y: b.y, w, h: b.h };
+}
+
+/** The rect translated by (dx, dy). */
+function shiftBBox(b: BBox, dx: number, dy: number): BBox {
+  return { x: b.x + dx, y: b.y + dy, w: b.w, h: b.h };
+}
+
+/** Overlapping area of two axis-aligned rects (mm²; 0 when disjoint). */
+export function overlapArea(a: BBox, b: BBox): number {
+  return overlap1d(a.x, a.x + a.w, b.x, b.x + b.w) * overlap1d(a.y, a.y + a.h, b.y, b.y + b.h);
+}
+
+/**
+ * Axis-aligned extent of one drawn primitive — what a label has to stay off — or `null`
+ * for a primitive this pass deliberately does not treat as an obstacle.
+ *
+ * **A `line` is not an obstacle.** It encloses no area, so the area-overlap metric this
+ * pass is built on cannot say anything true about one: all it can offer is the line's
+ * bounding box, which for a diagonal is enormously bigger than the ink (the aquarium's
+ * `R12000` leader boxes 8.5 × 8.5 m of empty cafe floor). Nothing is lost by declining,
+ * because every line in a drawing is either backed by an area obstacle that IS measured
+ * — a wall face by its wall band, a door leaf by its swing arc, a window pane by its
+ * host wall — or is a hairline annotation (a dimension line, an axis datum) a room name
+ * may legitimately cross.
+ *
+ * A `region`/`hatch` is the unioned wall solid, whose bounding box is the whole
+ * building; those are never asked about here (the caller substitutes per-segment wall
+ * rectangles instead). An `arc` is bounded by its endpoints, its centre and its
+ * midpoint, which is exactly a door swing's quarter-disc box. Rotated text is boxed by
+ * the exact axis-aligned extent of the turned rectangle.
+ */
+export function primBBox(prim: ScenePrim): BBox | null {
+  switch (prim.t) {
+    case "polygon":
+      return bboxOfPoints(prim.pts);
+    case "line":
+      return null;
+    case "region":
+      return bboxOfPoints(prim.loops.flat());
+    // A `path` is either the unioned wall solid — never asked about here, the caller
+    // substitutes per-segment wall rectangles — or a fixture glyph's curved outline (a WC
+    // bowl, a cushion, a tree canopy), which IS an obstacle like any furniture polygon.
+    // Boxed by its vertices plus each arc's MIDPOINT, so a bulge between two vertices is
+    // not lost.
+    case "path": {
+      const pts: Point[] = [];
+      for (const lp of prim.loops) {
+        let from = lp.start;
+        pts.push(from);
+        for (const e of lp.edges) {
+          pts.push(e.to);
+          if (e.t === "arc") {
+            const mx = from.x + e.to.x - 2 * e.center.x;
+            const my = from.y + e.to.y - 2 * e.center.y;
+            const len = Math.hypot(mx, my);
+            if (len > 0) pts.push({ x: e.center.x + (mx / len) * e.r, y: e.center.y + (my / len) * e.r });
+          }
+          from = e.to;
+        }
+      }
+      return bboxOfPoints(pts);
+    }
+    case "hatch":
+      return bboxOfPoints(prim.region.flat());
+    case "circle":
+      return { x: prim.center.x - prim.r, y: prim.center.y - prim.r, w: 2 * prim.r, h: 2 * prim.r };
+    case "arc": {
+      const ax = prim.start.x - prim.center.x;
+      const ay = prim.start.y - prim.center.y;
+      const bx = prim.end.x - prim.center.x;
+      const by = prim.end.y - prim.center.y;
+      const mx = ax + bx;
+      const my = ay + by;
+      const len = Math.hypot(mx, my);
+      const mid: Point =
+        len === 0 ? prim.start : { x: prim.center.x + (mx / len) * prim.r, y: prim.center.y + (my / len) * prim.r };
+      return bboxOfPoints([prim.start, prim.end, prim.center, mid]);
+    }
+    case "text": {
+      const { w, h } = textExtent(prim);
+      const rot = ((prim.rotate ?? 0) * Math.PI) / 180;
+      const c = Math.abs(Math.cos(rot));
+      const s = Math.abs(Math.sin(rot));
+      const bw = w * c + h * s;
+      const bh = w * s + h * c;
+      return { x: prim.at.x - bw / 2, y: prim.at.y - bh / 2, w: bw, h: bh };
+    }
+  }
+}
+
+/**
+ * Boxes a label can be buried in, indexed so a query visits only the boxes it can touch.
+ *
+ * A query returns EXACTLY the float the plain loop `for (const b of boxes) sum +=
+ * overlapArea(rect, b)` returns (that loop is kept verbatim as the oracle in
+ * `test/label-placement-oracle.test.ts`): the same nonzero terms, added in the same index
+ * order. Only terms that are exactly `+0` are skipped, and `s + 0 === s` for every partial
+ * sum here (all terms are ≥ 0, so no sum is ever `-0`). A term is nonzero only when both
+ * overlaps are, i.e. when the two boxes share an interior point, and then they share a grid
+ * cell (`floor(v / cell)` is monotone). That argument needs finite numbers whose differences
+ * stay finite (so that a zero factor never meets an infinite one): a box or query outside
+ * {@link GRID_SAFE} is visited on every query, or answered by the plain loop.
+ *
+ * Exported for that oracle only; not part of the public surface.
+ */
+export class BoxSums {
+  readonly boxes: BBox[] = [];
+  private readonly cell: number;
+  /** Built on the first query that needs it (a small plan never does), then kept current. */
+  private grid: GridIndex<number> | undefined;
+  /** Boxes the grid cannot hold soundly: visited by every query. */
+  private readonly loose: number[] = [];
+  /** Scratch for a query's hits, reused (a typed array sorts numerically without a comparator). */
+  private hits = new Int32Array(64);
+  /** `seen[i] === stamp` when box `i` is already among this query's hits. */
+  private seen = new Int32Array(64);
+  private stamp = 0;
+
+  constructor(cell: number) {
+    this.cell = cell;
+  }
+
+  push(b: BBox): void {
+    this.boxes.push(b);
+    if (this.grid) this.index(this.boxes.length - 1);
+  }
+
+  private index(i: number): void {
+    const b = this.boxes[i]!;
+    if (gridSafe(b)) this.grid!.insert({ minX: b.x, minY: b.y, maxX: b.x + b.w, maxY: b.y + b.h }, i);
+    else this.loose.push(i);
+  }
+
+  /** `base` plus the overlap area of `rect` with every box from index `from` on, in index
+   *  order — the plain loop's running sum continued from where it stood after `from` boxes. */
+  sum(rect: BBox, from = 0, base = 0): number {
+    const boxes = this.boxes;
+    let sum = base;
+    // A short tail is cheaper to walk than to look up; either way the terms are the same.
+    if (boxes.length - from <= DIRECT_TAIL || !gridSafe(rect)) {
+      for (let i = from; i < boxes.length; i++) sum += overlapArea(rect, boxes[i]!);
+      return sum;
+    }
+    if (!this.grid) {
+      this.grid = new GridIndex<number>(this.cell);
+      for (let i = 0; i < boxes.length; i++) this.index(i);
+    }
+    let n = 0;
+    let hits = this.hits;
+    if (this.seen.length < boxes.length) {
+      const grown = new Int32Array(Math.max(boxes.length, this.seen.length * 2));
+      grown.set(this.seen);
+      this.seen = grown;
+    }
+    const seen = this.seen;
+    if (this.stamp === 0x7fffffff) {
+      seen.fill(0);
+      this.stamp = 0;
+    }
+    const stamp = ++this.stamp;
+    const take = (i: number): void => {
+      // A box in several of the cells is visited once per cell; it is summed once.
+      if (i < from || seen[i] === stamp) return;
+      seen[i] = stamp;
+      if (n === hits.length) {
+        const grown = new Int32Array(hits.length * 2);
+        grown.set(hits);
+        hits = grown;
+      }
+      hits[n++] = i;
+    };
+    this.grid.forEach({ minX: rect.x, minY: rect.y, maxX: rect.x + rect.w, maxY: rect.y + rect.h }, take);
+    for (const i of this.loose) take(i);
+    this.hits = hits;
+    for (const i of hits.subarray(0, n).sort()) sum += overlapArea(rect, boxes[i]!);
+    return sum;
+  }
+}
+
+/** How many trailing boxes {@link BoxSums.sum} walks directly rather than through the grid. */
+const DIRECT_TAIL = 32;
+
+/** Coordinates the grid argument in {@link BoxSums} holds for: finite, and small enough that
+ *  the difference of two of them is finite too. */
+const GRID_SAFE = 1e300;
+
+function gridSafe(b: BBox): boolean {
+  const x1 = b.x + b.w;
+  const y1 = b.y + b.h;
+  return (
+    Math.abs(b.x) <= GRID_SAFE && Math.abs(b.y) <= GRID_SAFE && Math.abs(x1) <= GRID_SAFE && Math.abs(y1) <= GRID_SAFE
+  );
+}
+
+/** Mean half-perimeter of the boxes (≥ 1): the grid's cell. Speed only — any cell gives the
+ *  same sums. */
+export function meanExtent(boxes: readonly BBox[]): number {
+  let s = 0;
+  let n = 0;
+  for (const b of boxes) {
+    if (!gridSafe(b)) continue;
+    s += (Math.abs(b.w) + Math.abs(b.h)) / 2;
+    n++;
+  }
+  const m = n > 0 ? s / n : 1;
+  return m >= 1 ? m : 1;
+}
+
+/** Fraction of `rect`'s own area that a raw overlap `sum` is (summed, so a doubly-covered
+ *  patch counts twice — exactly what makes a crowded spot score worse than a busy one). */
+function buried(rect: BBox, sum: number): number {
+  const area = rect.w * rect.h;
+  if (!(area > 0)) return 0;
+  return sum / area;
+}
+
+/** How badly a text box is crowded: what it is buried in, weighted. Drawn geometry is bad;
+ *  another room's already-placed name is 40× worse, because two names on top of each other
+ *  is the one failure a reader cannot decode. */
+function crowding(b: { obstacles: number; placed: number }): number {
+  return W_OBSTACLE * b.obstacles + W_PLACED * b.placed;
+}
+
+/**
+ * One place a label was tried, remembered across groups with the same signature (the same
+ * text box, anchor and ring: a pile of identical rooms). Its obstacle sum is fixed, and its
+ * placed-label sum is the plain loop's running sum over the first `placedN` placed labels,
+ * so a later group continues it over the labels placed since instead of starting again.
+ */
+interface Probe {
+  obstacles?: number;
+  placed: number;
+  placedN: number;
+}
+
+/** Bit-exact text of a number (`-0` kept apart from `0`). */
+function numKey(v: number): string {
+  return Object.is(v, -0) ? "-0" : String(v);
+}
+
+/**
+ * Every wall segment's band, grown by `clear` — what a label must stay off of a wall.
+ *
+ * Per segment, from the IR: the lowered wall nodes are a UNIONED region whose bounding box
+ * is the entire building — true, useless, and it would make every label in the plan read as
+ * colliding. Shared by the wrap step and the relocation, so "fits between the walls" and
+ * "collides with a wall" are measured against the very same boxes.
+ */
+export function wallBands(ir: ResolvedPlan, clear: number): BBox[] {
+  const bands: BBox[] = [];
+  for (const w of ir.walls) {
+    for (const s of segmentsOfWall(w)) {
+      // A CURVED edge is banded along its own tessellation rather than boxed whole: one
+      // box round a quarter arc would claim the entire square it turns through, most of
+      // which is the room the label is trying to sit in.
+      const run = s.arc ? arcTessellate(s.arc) : [s.a, s.b];
+      for (let k = 0; k + 1 < run.length; k++) {
+        const b = bboxOfPoints(segmentRectangle(run[k]!, run[k + 1]!, s.thickness));
+        if (b) bands.push(inflate(b, clear));
+      }
+    }
+  }
+  return bands;
+}
+
+/**
+ * The x-interval of `ring` along the horizontal line at `y` that contains `x` — or `null`
+ * when `x` is not on the ring's floor there. Half-open crossings (`(a.y > y) !== (b.y > y)`),
+ * the same rule `pointInPolygon` counts with, so a horizontal edge never counts twice.
+ */
+function chordAt(ring: readonly Point[], x: number, y: number): [number, number] | null {
+  const xs: number[] = [];
+  for (let i = 0; i < ring.length; i++) {
+    const a = ring[i]!;
+    const b = ring[(i + 1) % ring.length]!;
+    if (a.y > y !== b.y > y) xs.push(a.x + ((y - a.y) * (b.x - a.x)) / (b.y - a.y));
+  }
+  xs.sort((p, q) => p - q);
+  for (let i = 0; i + 1 < xs.length; i += 2) if (xs[i]! <= x && x <= xs[i + 1]!) return [xs[i]!, xs[i + 1]!];
+  return null;
+}
+
+/**
+ * The wall-free run, along the strip a line of text `h` tall centred on `y` occupies, that
+ * contains `x` — `[lo, hi]`, or `null` when there is none. The floor is the intersection of
+ * the ring's chords along the strip's top, middle and bottom (exact for a rectangle, and for
+ * any ring whose sides are straight across the strip); a wall band crossing the strip cuts
+ * the run, and one standing on `x` itself leaves none.
+ */
+function freeRun(
+  ring: readonly Point[],
+  bands: GridIndex<BBox>,
+  x: number,
+  y: number,
+  h: number,
+): [number, number] | null {
+  const y0 = y - h / 2;
+  const y1 = y + h / 2;
+  let lo = -Infinity;
+  let hi = Infinity;
+  for (const yy of [y0, y, y1]) {
+    const c = chordAt(ring, x, yy);
+    if (!c) return null;
+    lo = Math.max(lo, c[0]);
+    hi = Math.min(hi, c[1]);
+  }
+  let blocked = false;
+  bands.forEach({ minX: lo, minY: y0, maxX: hi, maxY: y1 }, (b) => {
+    if (!(b.y < y1 && b.y + b.h > y0)) return;
+    const bx1 = b.x + b.w;
+    if (bx1 <= x) lo = Math.max(lo, bx1);
+    else if (b.x >= x) hi = Math.min(hi, b.x);
+    else blocked = true;
+  });
+  return blocked || !(hi > lo) ? null : [lo, hi];
+}
+
+/** The length of a run (0 for none). */
+const runLength = (r: [number, number] | null): number => (r ? r[1] - r[0] : 0);
+
+/** A text `w` wide centred on `x` lies within the run. */
+const centredIn = (r: [number, number] | null, x: number, w: number): boolean =>
+  r !== null && x - w / 2 >= r[0] && x + w / 2 <= r[1];
+
+/** How many line counts past the fewest the wrap step tries before it keeps one line. */
+export const WRAP_TRIES = 3;
+
+/**
+ * Wrap a room's name onto several lines when it does not fit its room on one and a
+ * wrapped form does — the step `toScene` runs just before {@link relocateLabels}.
+ *
+ * Only a group marked `wrap` (a room's) with a name is considered, and only its TWO text
+ * nodes are touched: the name (first) and the area figure (second), the order `room.render`
+ * emits them in. "Fits" is measured by {@link freeRun} — on the room's own floor, clear of the
+ * wall bands the relocation itself steers by — at the drawing's label size:
+ *
+ * - **The one-line name fits** its row's run (anywhere along it: the relocation slides a label
+ *   along its row) → nothing is touched, so its bytes are exactly as before.
+ * - Otherwise the fewest-line balanced breaks ({@link fewestLines}, {@link balancedLines})
+ *   are tried, up to {@link WRAP_TRIES} line counts. A form fits when every line fits its
+ *   own row's run centred where it is drawn, and the area figure, now under the last line, is
+ *   no worse off than it was under the one-line name: it still fits if it did, and its run is
+ *   no shorter if it did not (so it is never pushed into a wall).
+ * - **No wrapped form fits** → nothing is touched: a label that overflows on one line is
+ *   not made worse by stacking it.
+ *
+ * A wrapped name keeps its `at` (the middle of its lines is where the one-line name was
+ * centred) and gains a `block`; the area figure moves down by half the added height, so it
+ * stays one line-gap under the last line. A `label … at (x,y)` group wraps the same way
+ * about its pinned anchor. The name as data never changes — only the drawn lines.
+ */
+export function wrapLabels(
+  nodes: SceneNode[],
+  groups: readonly LabelGroup[],
+  ir: ResolvedPlan,
+  sizes: RenderSizes,
+): void {
+  let bands: GridIndex<BBox> | undefined;
+  for (const g of groups) {
+    if (!g.wrap) continue;
+    const texts: number[] = [];
+    for (let i = g.from; i < g.to; i++) {
+      const n = nodes[i]!;
+      if (n.layer === "labels" && n.prim.t === "text") texts.push(i);
+    }
+    if (texts.length !== 2) continue;
+    const nameNode = nodes[texts[0]!]!;
+    const areaNode = nodes[texts[1]!]!;
+    const name = nameNode.prim;
+    const area = areaNode.prim;
+    if (name.t !== "text" || area.t !== "text" || name.block || name.rotate !== undefined) continue;
+    if (!bands) {
+      const list = wallBands(ir, sizes.roomFont * CLEARANCE);
+      bands = new GridIndex<BBox>(meanExtent(list));
+      for (const b of list) bands.insert({ minX: b.x, minY: b.y, maxX: b.x + b.w, maxY: b.y + b.h }, b);
+    }
+    const x = name.at.x;
+    const run = (y: number, h: number): [number, number] | null => freeRun(g.ring, bands!, x, y, h);
+    const row = run(name.at.y, name.size);
+    // Fits on one line (or stands on no floor at all, which no wrap can mend): untouched.
+    if (!row || textWidth(name.value, name.size) <= runLength(row)) continue;
+
+    const pitch = name.size * LABEL_LINE_PITCH;
+    const areaW = textWidth(area.value, area.size);
+    const areaRow = run(area.at.y, area.size);
+    const areaFitted = centredIn(areaRow, x, areaW);
+    // The widest a line centred on the anchor can be on the one-line row: where to start counting.
+    const first = Math.max(2, fewestLines(name.value, name.size, 2 * Math.min(x - row[0], row[1] - x)));
+    for (let n = first; n < first + WRAP_TRIES; n++) {
+      const lines = balancedLines(name.value, n);
+      if (!lines) break;
+      const mid = (n - 1) / 2;
+      const fits = lines.every((line, i) =>
+        centredIn(run(name.at.y + (i - mid) * pitch, name.size), x, textWidth(line, name.size)),
+      );
+      if (!fits) continue;
+      const drop = mid * pitch;
+      const areaRun = run(area.at.y + drop, area.size);
+      if (areaFitted ? !centredIn(areaRun, x, areaW) : runLength(areaRun) < runLength(areaRow)) continue;
+      nodes[texts[0]!] = { ...nameNode, prim: { ...name, block: { lines, pitch } } };
+      nodes[texts[1]!] = { ...areaNode, prim: { ...area, at: { x: area.at.x, y: area.at.y + drop } } };
+      break;
+    }
+  }
+}
+
+/**
+ * What a label stands on rather than collides with: the floor and the walls, whose unioned
+ * region boxes the whole building (the caller measures walls by {@link wallBands}), a roof and
+ * the ground. A roof outline is the same trap as the wall region: its bounding box is the whole
+ * building plus the eaves, so treating it as an obstacle would bury every label in the plan at
+ * once and set the relocation pass loose on all of them. It is also nothing a label collides
+ * WITH: an overhang is drawn above the plane the names are written on.
+ *
+ * The same argument, for the same reason, for the ground. A `fence` node's bounding box is its
+ * whole run, often the entire site, and a balcony's rail ticks sit outside the building; neither
+ * is something a room name can collide with. The surfaces themselves ride the `floor` pass; the
+ * last test catches the rails and the fences, which ride `furniture`.
+ *
+ * Note what is NOT skipped: an `outdoor` LABEL, which rides `labels` like a room's. Two names
+ * printed on top of each other is exactly the collision this pass exists for, so a room label
+ * does move off a terrace's name.
+ */
+export function underLabels(n: SceneNode): boolean {
+  if (n.layer === "floor" || n.layer === "wallFill" || n.layer === "wallFace") return true;
+  if (n.layerName === ROOF_LAYER) return true;
+  return n.layer !== "labels" && n.layerName !== undefined && OUTDOOR_LAYERS.includes(n.layerName);
+}
+
+/**
+ * Move each labelled area's name + area text off whatever is drawn under it.
+ *
+ * Mutates `nodes` in place (replacing, never editing, the text nodes it moves), which is
+ * safe: every node in the list was freshly built by this `toScene` call. Groups are
+ * visited in ELEMENT order and each placed label becomes an obstacle for the next, so two
+ * labels can never be relocated onto each other — and an `outdoor` surface takes its turn
+ * among the rooms rather than after them, which is what keeps a plan with no ground on
+ * exactly the group list, and therefore exactly the bytes, it would have without ground.
+ */
+export function relocateLabels(
+  nodes: SceneNode[],
+  groups: readonly LabelGroup[],
+  ir: ResolvedPlan,
+  sizes: RenderSizes,
+): void {
+  if (groups.length === 0) return;
+  const clear = sizes.roomFont * CLEARANCE;
+
+  // Nodes a room contributed are not obstacles to their own room; the label text is
+  // tracked as a sequentially-placed rect below, and the floor fill is what the label
+  // sits ON.
+  const own = new Set<number>();
+  for (const g of groups) for (let i = g.from; i < g.to; i++) own.add(i);
+
+  // Walls come from the IR, per segment (`wallBands`).
+  const obstacleList: BBox[] = wallBands(ir, clear);
+  // Everything else that is already drawn: furniture and its labels, door leaves and
+  // swings, window panes, opening covers, stair/elevator symbols, axis bubbles and —
+  // the reason this pass runs where it does — the `dims auto` numbers. `floor` is what
+  // a label sits on, and the wall passes were handled above.
+  for (let i = 0; i < nodes.length; i++) {
+    if (own.has(i)) continue;
+    const n = nodes[i]!;
+    if (underLabels(n)) continue;
+    const b = primBBox(n.prim);
+    if (b) obstacleList.push(inflate(b, clear));
+  }
+
+  const obstacles = new BoxSums(meanExtent(obstacleList));
+  for (const b of obstacleList) obstacles.push(b);
+  // The placed labels' grid is sized from the label texts as drawn now (speed only).
+  const labelBoxes: BBox[] = [];
+  for (const g of groups) {
+    for (let i = g.from; i < g.to; i++) {
+      const n = nodes[i]!;
+      const b = n.layer === "labels" && n.prim.t === "text" ? primBBox(n.prim) : null;
+      if (b) labelBoxes.push(b);
+    }
+  }
+  const placed = new BoxSums(meanExtent(labelBoxes));
+  const probes = new Map<string, Probe[]>();
+  /** The fractions of `rect` buried in obstacles and in placed labels, the placed sum
+   *  continued from where `probe` last stood. */
+  const crowd = (rect: BBox, probe: Probe): { obstacles: number; placed: number } => {
+    probe.obstacles ??= obstacles.sum(rect);
+    probe.placed = placed.sum(rect, probe.placedN, probe.placed);
+    probe.placedN = placed.boxes.length;
+    return { obstacles: buried(rect, probe.obstacles), placed: buried(rect, probe.placed) };
+  };
+  for (const g of groups) {
+    const texts: number[] = [];
+    for (let i = g.from; i < g.to; i++) {
+      const n = nodes[i]!;
+      if (n.layer === "labels" && n.prim.t === "text") texts.push(i);
+    }
+    if (texts.length === 0) continue;
+    let rect0: BBox | null = null;
+    for (const i of texts) {
+      const b = primBBox(nodes[i]!.prim);
+      if (b) rect0 = rect0 ? unionBBox(rect0, b) : b;
+    }
+    if (!rect0) continue;
+
+    // An explicit `label "…" at (x,y)` is the author's decision and is never overruled —
+    // it is also the anchor `W_ROOM_LABEL_OUTSIDE` reports on, so moving it would make
+    // that diagnostic describe a position nothing is drawn at. (`outdoor` has no such
+    // clause, so its groups are never `fixed`; the field is the room's.)
+    if (g.fixed) {
+      placed.push(rect0);
+      continue;
+    }
+
+    const { ring, anchor } = g;
+    // Probe 0 is the trigger, 1 the incumbent, 2 + k the k-th lattice point.
+    let sig = `${numKey(rect0.x)},${numKey(rect0.y)},${numKey(rect0.w)},${numKey(rect0.h)}|${numKey(anchor.x)},${numKey(anchor.y)}|`;
+    for (const p of ring) sig += `${numKey(p.x)},${numKey(p.y)};`;
+    let mine = probes.get(sig);
+    if (!mine) {
+      mine = [];
+      probes.set(sig, mine);
+    }
+    const probe = (k: number): Probe => (mine[k] ??= { placed: 0, placedN: 0 });
+
+    const trigger = crowd(rect0, probe(0));
+    if (trigger.obstacles + trigger.placed <= COLLIDE_MIN) {
+      placed.push(rect0);
+      continue;
+    }
+
+    const bb = polygonBounds(ring);
+    const diag = Math.max(1, Math.hypot(bb.w, bb.h));
+    const rectAt = (p: Point): BBox => shiftBBox(rect0, p.x - anchor.x, p.y - anchor.y);
+    const score = (p: Point, preference: number, k: number): number => {
+      const rect = rectAt(p);
+      return preference + (rectInsidePolygon(rect, ring) ? 0 : W_OUTSIDE) + crowding(crowd(rect, probe(k)));
+    };
+
+    // The incumbent is candidate zero and carries preference 0, so it wins every tie.
+    let best = anchor;
+    let bestScore = score(anchor, 0, 1);
+    // How far off its floor the label already stands, the most a place may be. The slack is for
+    // the clip's own rounding: two places the same distance off must read as equal. Every text
+    // of a group is centred on one line, so the widest text is the block's width.
+    let inkW = 0;
+    for (const i of texts) {
+      const prim = nodes[i]!.prim;
+      if (prim.t === "text") inkW = Math.max(inkW, inkExtent(prim).w);
+    }
+    const inkRect = inkOf(rect0, inkW);
+    const offFloor = rectAreaOutside(inkRect, ring) + inkRect.w * inkRect.h * 1e-9;
+    let k = 2;
+    for (const fy of FRACTIONS) {
+      for (const fx of FRACTIONS) {
+        const p: Point = { x: bb.x + bb.w * fx, y: bb.y + bb.h * fy };
+        const slot = k++;
+        if (!pointInPolygon(p.x, p.y, ring) || rectAreaOutside(inkOf(rectAt(p), inkW), ring) > offFloor) continue;
+        const s = score(p, 1 + (Math.hypot(p.x - anchor.x, p.y - anchor.y) / diag) * W_DISTANCE, slot);
+        if (s < bestScore) {
+          bestScore = s;
+          best = p;
+        }
+      }
+    }
+
+    const dx = best.x - anchor.x;
+    const dy = best.y - anchor.y;
+    if (dx !== 0 || dy !== 0) {
+      for (const i of texts) {
+        const n = nodes[i]!;
+        if (n.prim.t !== "text") continue;
+        nodes[i] = { ...n, prim: { ...n.prim, at: { x: n.prim.at.x + dx, y: n.prim.at.y + dy } } };
+      }
+    }
+    placed.push(shiftBBox(rect0, dx, dy));
+  }
+}

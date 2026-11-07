@@ -1,0 +1,247 @@
+/**
+ * ArchLang docs — "The Compile Boundary" brand layer on the VitePress default theme.
+ *
+ * ONE LIGHT WORLD (ADR 0014). The design system still has two surfaces — a cool
+ * SOURCE world (where code lives) and a warm SHEET world (drafting film,
+ * blue-black ink) — but both are LIGHT: they differ by temperature and texture,
+ * never by darkness. There is no dark mode and no dark surface anywhere. A
+ * single REDLINE accent (the architect's markup red) means attention only. The
+ * shared token block below is duplicated byte-for-byte in the playground
+ * (playground/src/styles/tokens.css) — the two build systems can't share a CSS
+ * import, so that duplicated block is the source of truth. Docs-only mapping
+ * (VitePress vars) follows the shared block.
+ */
+
+:root {
+  /* ── The Compile Boundary — shared brand tokens ──────────────────────────
+     Keep this block byte-identical in docs-site/.vitepress/theme/style.css
+     and playground/src/styles/tokens.css (the two build systems cannot share
+     a CSS import; this duplicated block is the source of truth). ────────── */
+
+  /* ONE LIGHT WORLD (ADR 0014). Two surfaces, BOTH light: SOURCE is cool
+     neutral grey, SHEET is warm drafting paper. They differ by temperature +
+     texture, never by darkness. No dark mode, no dark surfaces. */
+  color-scheme: only light; /* opts the page out of Chromium's forced Auto Dark */
+
+  /* SOURCE WORLD (cool light — code lives here) */
+  --src-bg: #eceef2; /* world ground: panes, header, gutters, bands */
+  --src-surface: #fbfbfc; /* the code PAGE: fences, editor content, tooltips */
+  --src-fg: #1a1d23; /* source text — 14.5:1 on --src-bg, 16.3:1 on --src-surface */
+  --src-muted: #5a616e; /* source secondary — 5.4:1 / 6.0:1 */
+  --src-border: oklch(0 0 0 / 12%); /* DECORATIVE hairline only (1.3:1) — never a control edge */
+  --src-rule: #7f858f; /* control edges, seams — 3.2:1 on --src-bg (AA non-text) */
+  --plum: #8052ff; /* brand plum — GRAPHICS & ≥24px text ONLY (4.1:1 on --src-bg) */
+  --plum-deep: #6b3ae0; /* plum as body text — 5.5:1 on --src-bg, 5.7:1 on --paper */
+
+  /* SYNTAX — ONE palette for every code surface: playground CodeMirror, docs
+     Shiki fences, and the docs site's generated highlighter (the hero's typing
+     pane + the ArchLive editor). All ≥4.5:1 on BOTH --src-bg and --src-surface.
+     The same hexes are duplicated as literal fallbacks in scripts/gen-grammars.ts
+     and as the Shiki theme in docs-site/.vitepress/config.ts — keep all four in
+     sync. The generated highlighter deliberately adds NO fifth copy: it emits
+     `ahl-<name>` classes whose suffix is a token name here, coloured once by the
+     .ahl-* rules at the foot of style.css. */
+  --syn-keyword: #6b3ae0; /* = --plum-deep · 5.5:1 / 6.1:1 · bold */
+  --syn-typename: #9a4a06; /* 5.4:1 / 6.1:1 · bold */
+  --syn-propertyname: #14602a; /* 6.6:1 / 7.4:1 */
+  --syn-atom: #0b57d0; /* 5.5:1 / 6.2:1 */
+  --syn-number: #0f6f7a; /* 5.1:1 / 5.7:1 */
+  --syn-string: #8a5a00; /* 5.1:1 / 5.7:1 */
+  --syn-comment: #5a616e; /* = --src-muted · 5.4:1 / 6.0:1 · italic */
+  --syn-operator: #464d59; /* 7.3:1 / 8.2:1 */
+
+  /* SHEET WORLD (warm drafting film) */
+  --paper: #f5f2ea; /* warm drafting-film ground */
+  --paper-panel: #fbfaf5; /* raised sheet / card ground */
+  --ink: #1c2430; /* blue-black drawing ink — 14.0:1 on paper */
+  --ink-muted: #5b6470; /* annotations — 5.4:1 on paper */
+  --hairline: #cfc9bb; /* sheet borders, dimension lines */
+  --grid-line: rgb(28 36 48 / 7%); /* fine drafting grid */
+
+  /* REDLINE — the single accent, ATTENTION ONLY (CTAs + errors) */
+  --redline: #c2362b; /* strokes, markers, fills — white-on-it 5.4:1 */
+  --redline-ink: #b3261e; /* redline as TEXT — 5.8:1 on paper, 5.6:1 on --src-bg */
+
+  /* STATUS */
+  --ok: #2e7d32;
+  --warn-ink: #7a6000; /* advisory amber as TEXT — 5.4:1 on paper */
+
+  /* TYPE ROLES */
+  --font-display: "Archivo Variable", Archivo, "Arial Narrow", sans-serif;
+  --font-body: "Public Sans Variable", "Public Sans", -apple-system, "Segoe UI", Roboto, Helvetica, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "SF Mono", "Cascadia Code", Consolas, monospace;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   Docs-only mapping (below is NOT shared with the playground).
+   ══════════════════════════════════════════════════════════════════════════ */
+
+:root {
+  /* VitePress brand palette → redline */
+  --vp-c-brand-1: var(--redline-ink); /* links / text on light: AA */
+  --vp-c-brand-2: var(--redline);
+  --vp-c-brand-3: var(--redline); /* solid button background */
+  --vp-c-brand-soft: color-mix(in srgb, var(--redline) 12%, transparent);
+  --vp-c-brand-softer: color-mix(in srgb, var(--redline) 7%, transparent);
+
+  /* brand "Get started" buttons (features/page CTAs) — white-on-#c2362b = 5.45:1 AA */
+  --vp-button-brand-bg: var(--redline);
+  --vp-button-brand-hover-bg: color-mix(in srgb, var(--redline) 92%, #000);
+  --vp-button-brand-active-bg: var(--redline-ink);
+  --vp-button-brand-border: transparent;
+  --vp-button-brand-hover-border: transparent;
+
+  /* typography → Public Sans body + IBM Plex Mono code */
+  --vp-font-family-base: var(--font-body);
+  --vp-font-family-mono: var(--font-mono);
+
+  /* surfaces → sheet world (light drafting film) */
+  --vp-c-bg: var(--paper-panel);
+  --vp-c-bg-alt: var(--paper);
+  --vp-c-bg-soft: var(--paper);
+  --vp-c-bg-elv: var(--paper-panel);
+  --vp-c-divider: var(--hairline);
+  --vp-c-text-1: var(--ink);
+  --vp-c-text-2: var(--ink-muted);
+  --vp-c-text-3: var(--ink-muted);
+}
+
+/* Squared-off chrome — the drafting-sheet corner, not the ArchCanvas pill. */
+.VPButton {
+  border-radius: 3px !important;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   ArchLang syntax spans — the ONE stylesheet for the generated highlighter
+   (.vitepress/theme/arch-highlight.js, written by scripts/gen-grammars.ts).
+
+   The generator emits `ahl-<name>` classes whose suffix IS a --syn-* token name,
+   so a syntax colour is never written a fifth time: change it in the shared
+   block above (and its three siblings — playground/src/styles/tokens.css,
+   scripts/gen-grammars.ts's fallbacks, config.ts's Shiki theme) and these
+   follow with no edit here.
+
+   GLOBAL rather than scoped on purpose: both call sites (CompileSeam.vue's
+   typing pane and components/ArchLive.vue's editor underlay) render the HTML
+   through `v-html`, and Vue stamps no data-v attribute on v-html children — a
+   scoped rule could only reach them through :deep(), in two places instead of
+   one. The weld between this list and what the tokenizer can emit is
+   test/arch-highlight.test.ts.
+   ══════════════════════════════════════════════════════════════════════════ */
+.ahl-keyword {
+  color: var(--syn-keyword);
+  font-weight: 600;
+}
+.ahl-typename {
+  color: var(--syn-typename);
+  font-weight: 600;
+}
+.ahl-propertyname {
+  color: var(--syn-propertyname);
+}
+.ahl-atom {
+  color: var(--syn-atom);
+}
+.ahl-number {
+  color: var(--syn-number);
+}
+.ahl-string {
+  color: var(--syn-string);
+}
+.ahl-comment {
+  color: var(--syn-comment);
+  font-style: italic;
+}
+.ahl-operator {
+  color: var(--syn-operator);
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   The desktop nav appears at 1152px, not 768px — the width at which it FITS.
+
+   VitePress reveals the whole desktop nav row the instant the hamburger is
+   dismissed, at `min-width: 768px`. That is right for a three-item bar and
+   wrong for ours: eight destinations (Guide / Reference / Examples / Showcase /
+   AI Agents / Playground / Ecosystem, plus the "…" flyout) measure 684 px of
+   menu beside a 105 px title, so the row does not fit until 1152.
+
+   THE FAULT HAS TWO FACES, AND ONLY ONE OF THEM SCROLLS. Below 960 `.VPNav` is
+   `position: relative`, so the overflowing row grows the document and the whole
+   page scrolls sideways: 272 px at 768, 240 at 800, 140 at 900. At 960 VitePress
+   makes `.VPNav` `position: fixed` — and a fixed element's overflow NEVER grows
+   the document. The row does not start fitting there; it starts being CLIPPED at
+   the viewport edge instead, silently, while `scrollWidth - clientWidth` reads
+   zero. Measured overhang of the last nav item ("Ecosystem"), which is the metric
+   that can see it:
+
+       /        960:+44  980:+24  1000:+4  1024:ok
+       /guide   960:+179 1000:+139 1024:+115 1100:+39 1152:ok
+
+   So on every doc page at 1024 and 1100 — ordinary laptop and tablet-landscape
+   widths — the last entry was severed and its dropdown, anchored `right: 0` to a
+   button half off-screen, opened where it could not be read. A doc page is the
+   tight case because `.content` reserves a 272 px padding-left for the sidebar
+   column; 1152 is the first width at which the row clears BOTH faces on BOTH
+   layouts, and it is a real device width rather than a bare `+1` off the
+   measurement. Never set this breakpoint from `scrollWidth` alone: that number
+   is 0 across the entire clipped band.
+
+   Below 1152 the hamburger persists, and its nav screen carries every
+   destination the bar does (21 links, all keyboard-focusable) plus the social
+   links, so nothing becomes unreachable at any width.
+
+   Rejected, for the record. (a) SHRINKING the row: on a doc page at 960 the space
+   left after the sidebar gutter, the 183 px search box and the padding is 473 px
+   against 684 px of menu — a 211 px deficit, and the whole non-IA budget is
+   84 px (item padding 12 → 6) + ~30 px (14 px → 13 px labels) + ~40 px (dropping
+   the `Ctrl K` chip) = 154 px. It cannot reach, and it degrades the bar at 1440
+   where nothing is wrong. (b) CUTTING the top level from seven items to five
+   (Showcase 91 px + Ecosystem 113 px = 204 px) DOES reach, and is the
+   structurally right answer — but Showcase is deliberate outreach material and
+   demoting it is a content-strategy call, not something a CSS fix should settle
+   on its own schedule. Owner decision 2026-09-20: take the breakpoint now, keep
+   the IA; (b) is logged in `docs/backlog.md` § N.1 with its costing.
+
+   UPDATE (public-surfaces D1): the bar is now five slots (Try it / Gallery / Docs /
+   Playground / GitHub), which is option (b) above. The breakpoint stays at 1152 until
+   a measured change moves it: with the desktop row forced on at 768–1151 the last item
+   ends 32 px inside the viewport on `/` and `/guide`, but the row then sits flush
+   against the search box, and a squeezed search box is not a fit this file should
+   declare from one probe. page-chrome.spec.ts holds both faces at every width.
+
+   SPECIFICITY. Each rule below overrides a VitePress `<style scoped>` rule of
+   the form `.VPNavBarMenu[data-v-…]` — an attribute selector counts as a class,
+   so theirs is (0,2,0). A bare `.VPNavBarMenu` would only tie and then depend on
+   bundle order, which is the trap ADR 0014 §7 documents. The `header.VPNav`
+   prefix makes every rule here at least (0,2,1), so it wins on specificity
+   rather than on which stylesheet happened to load last.
+
+   KNOWN EDGE, inherited: VitePress's `closeScreenOnTabletWindow` closes an open
+   nav screen on any resize while `window.outerWidth >= 768`. In the new band
+   that means resizing with the menu open closes it — which is the behaviour you
+   want on a rotate (the desktop bar takes over) and costs one tap otherwise.
+   Fixing it would mean forking `VPNav.vue` + `useNav()`, a far larger surface to
+   keep in step with VitePress than this is worth.
+   ══════════════════════════════════════════════════════════════════════════ */
+@media (min-width: 768px) and (max-width: 1151.98px) {
+  header.VPNav .VPNavBar .VPNavBarMenu {
+    display: none;
+  }
+
+  /* The "…" flyout that carries the social links between 768 and 1280; while the
+     hamburger is up they live in the nav screen instead, so it must not double up. */
+  header.VPNav .VPNavBar .VPNavBarExtra {
+    display: none;
+  }
+
+  header.VPNav .VPNavBar .VPNavBarHamburger {
+    display: flex;
+  }
+
+  /* VitePress hides the screen outright at >= 768, so the hamburger we just kept
+     would open nothing. No new surface: this is the same light panel the screen
+     already uses below 768. */
+  header.VPNav .VPNavScreen {
+    display: block;
+  }
+}

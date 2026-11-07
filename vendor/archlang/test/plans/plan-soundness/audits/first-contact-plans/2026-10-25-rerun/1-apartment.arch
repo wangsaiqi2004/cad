@@ -1,0 +1,46 @@
+plan "Two-bed apartment" {
+  units mm
+  grid 100
+  north up
+  dims auto all
+  paper A2 landscape
+
+  room id=living at (0,0) size 5200x4800 label "Living / Dining / Kitchen" uses living
+  room id=hall right-of living size 1400x7200 label "Hall" uses hall
+  room id=bed1 right-of hall align top size 3200x3600 label "Bedroom 1" uses bedroom
+  room id=bed2 below bed1 size 3200x3600 label "Bedroom 2" uses bedroom
+  room id=store below living size 2600x2400 label "Storage" uses storage
+  room id=bath right-of store size 2600x2400 label "Bathroom" uses bath
+  room id=corr below hall align left size 9800x1400 label "Corridor" uses circulation
+
+  walls from rooms exterior 200 partition 100 { open between living and hall }
+
+  outdoor balcony at (1000,-1600) size 3200x1500 label "Balcony"
+
+  door between corr and hall at center width 1000 swing into hall
+  door between hall and bed1 at 1800 from start width 900 swing into bed1
+  door between hall and bed2 at 1800 from end width 900 swing into bed2
+  door between hall and bath at 1200 from start width 800 swing into bath
+  door between living and store at 1300 from start width 800 swing into store
+  door sliding on living.top at 2100 from start width 1800
+  window on living.left at 2400 from start width 1800
+  window on living.top at 4400 from start width 1200
+  window on bed1.right width 1500
+  window on bed2.right width 1500
+
+  furniture sofa in living anchor left inset 600 size 900x2000
+  furniture tv_unit against living.left offset 3600 size 1600x400
+  furniture dining_table in living centered size 1800x900
+  furniture counter against living.bottom offset 4200 size 600x600
+  furniture kitchen_sink against living.bottom offset 3500 size 800x600
+  furniture stove against living.bottom offset 2400 size 600x600
+  furniture bed in bed1 anchor top-right flush size 1600x2000
+  furniture wardrobe against bed1.bottom offset 1000 size 1600x600
+  furniture bed in bed2 anchor bottom-right flush size 1600x2000
+  furniture wardrobe against bed2.top offset 1000 size 1600x600
+  furniture wc against bath.bottom offset 2000 size 400x700
+  furniture basin against bath.top offset 1500 size 500x400
+  furniture shower against bath.left offset 600 size 900x900
+
+  title { project "Two-bed apartment" drawn_by "ArchLang" date "2026-10-25" number "A-01" revision "A" }
+}

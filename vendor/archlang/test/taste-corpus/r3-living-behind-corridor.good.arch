@@ -1,0 +1,21 @@
+# criterion: R3
+# twin-of: r3-living-behind-corridor
+# origin: the same rooms and doors with the bedroom and the living room swapped (the bed moves
+#   with the bedroom)
+# fact: access depths hall 1, living room 2, corridor 2, bedroom 3: no pair inverted, R3 = 1/1
+plan "R3 bedroom behind a corridor" {
+  units mm
+  grid 100
+  room id=r_hall at (0,0) size 2000x4000 label "Hall" uses hall
+  room id=r_a at (2000,0) size 4000x4000 label "Living Room" uses living
+  room id=r_corr at (0,4000) size 2000x4000 label "Corridor" uses circulation
+  room id=r_b at (2000,4000) size 4000x4000 label "Bedroom" uses bedroom
+  walls from rooms exterior 200 partition 100
+  door id=d_front on r_hall.left at center width 900 swing into r_hall
+  door id=d_hall_a between r_hall and r_a at center width 900 swing into r_a
+  door id=d_hall_corr between r_hall and r_corr at center width 900 swing into r_corr
+  door id=d_corr_b between r_corr and r_b at center width 900 swing into r_b
+  window id=w_a on r_a.top at center width 1500
+  window id=w_b on r_b.bottom at center width 1500
+  furniture bed in r_b anchor bottom-right flush inset 300 size 1400x2000 label "Bed"
+}

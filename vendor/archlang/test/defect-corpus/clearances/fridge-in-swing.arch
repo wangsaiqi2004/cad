@@ -1,0 +1,17 @@
+# class: clearances
+# origin: audits/showcase-and-examples.md railroad-apartment ("fridge in swing", intentional there and caught); M Micro Machines (W_SWING_OBSTRUCTED)
+# expect: W_SWING_OBSTRUCTED
+# status: done
+# fact: d_kitchen is hinged at y=500 on w_mid and sweeps x 3050-3850, y 500-1300; the fridge spans x 3100-3700, y 100-750
+plan "Fridge in the door swing" {
+  units mm
+  grid 50
+  wall id=shell exterior thickness 200 { (0,0) (7000,0) (7000,4000) (0,4000) close }
+  wall id=w_mid partition thickness 100 { (3000,0) (3000,4000) }
+  room id=r_hall at (0,0) size 3000x4000 label "Hall" uses hall
+  room id=r_kitchen at (3000,0) size 4000x4000 label "Kitchen" uses kitchen
+  door id=d_entry at (1500,4000) width 900 wall shell
+  door id=d_kitchen at (3000,900) width 800 wall w_mid hinge near start swing into r_kitchen
+  window at (7000,2000) width 1200 wall shell
+  furniture fridge against wall shell segment 0 offset 3400 in r_kitchen
+}

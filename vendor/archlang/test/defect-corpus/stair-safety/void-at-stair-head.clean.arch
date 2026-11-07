@@ -1,0 +1,29 @@
+# class: stair-safety
+# twin-of: void-at-stair-head
+# origin: audits/showcase-and-examples.md X9 with the void moved beside the stair head
+# expect: none
+# fact: void gallery spans x 1200-2100, y 200-1300, beside the stair (x 100-1000) and not in front of its top tread
+plan "Void beside the stair head" {
+  units mm
+  grid 50
+  level 1 "Ground floor" {
+    wall id=shell exterior thickness 200 { (0,0) (8000,0) (8000,7000) (0,7000) close }
+    wall id=hall_w partition thickness 100 { (2200,0) (2200,7000) }
+    room id=hall at (0,0) size 2200x7000 label "Hall" uses hall
+    room id=living at (2200,0) size 5800x7000 label "Living" uses living
+    door id=front at (0,5500) width 1000 wall shell
+    door id=d_living at (2200,1800) width 900 wall hall_w swing into living
+    window at (5000,0) width 1800 wall shell
+    stair id=stair at (100,1500) size 900x2600 dir up
+  }
+  level 2 "First floor" {
+    wall id=shell exterior thickness 200 { (0,0) (8000,0) (8000,7000) (0,7000) close }
+    wall id=hall_w partition thickness 100 { (2200,0) (2200,7000) }
+    room id=landing at (0,0) size 2200x7000 label "Landing" uses circulation
+    room id=bed1 at (2200,0) size 5800x7000 label "Bedroom 1" uses bedroom
+    door id=d_bed1 at (2200,1800) width 900 wall hall_w swing into bed1
+    window at (5000,0) width 1500 wall shell
+    stair id=stair at (100,1500) size 900x2600 dir down
+    void id=gallery at (1200,200) size 900x1100
+  }
+}

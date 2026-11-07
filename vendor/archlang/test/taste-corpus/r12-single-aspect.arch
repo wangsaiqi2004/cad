@@ -1,0 +1,18 @@
+# criterion: R12
+# origin: design 2026-10-24-ps5-taste-design.md §3 R12 acceptance (a flat with every habitable
+#   window on one side)
+# fact: the living room's and the bedroom's windows both face N: one facing, R12 = 0.5 (no
+#   `site`, so no pole side is named)
+plan "R12 single aspect" {
+  units mm
+  grid 100
+  room id=r_living at (0,0) size 4000x4000 label "Living Room" uses living
+  room id=r_bed at (4000,0) size 4000x4000 label "Bedroom" uses bedroom
+  room id=r_hall at (0,4000) size 8000x1500 label "Hall" uses hall
+  walls from rooms exterior 200 partition 100
+  door id=d_front on r_hall.left at center width 900 swing into r_hall
+  door id=d_living between r_hall and r_living at center width 900 swing into r_living
+  door id=d_bed between r_hall and r_bed at center width 900 swing into r_bed
+  window id=w_living on r_living.top at center width 1800
+  window id=w_bed on r_bed.top at center width 1500
+}

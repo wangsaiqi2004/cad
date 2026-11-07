@@ -1,0 +1,19 @@
+# class: missing-defining-contents
+# twin-of: bath-no-shower
+# origin: audits/archcanvas-public-examples.md CB1 with a shower added
+# expect: none
+# fact: r_bath holds a wc, a basin and a shower
+plan "Bath with a shower" {
+  units mm
+  grid 50
+  wall id=shell exterior thickness 200 { (0,0) (6000,0) (6000,4000) (0,4000) close }
+  wall id=w_mid partition thickness 100 { (4000,0) (4000,4000) }
+  room id=r_studio at (0,0) size 4000x4000 label "Studio" uses living
+  room id=r_bath at (4000,0) size 2000x4000 label "Bath" uses bath
+  door id=d_entry at (2000,4000) width 900 wall shell
+  door id=d_bath at (4000,2000) width 800 wall w_mid swing into r_bath
+  window at (2000,0) width 1500 wall shell
+  furniture wc against wall shell segment 1 offset 500 in r_bath
+  furniture basin against wall shell segment 1 offset 1400 in r_bath
+  furniture shower against wall shell segment 1 offset 3350 in r_bath
+}

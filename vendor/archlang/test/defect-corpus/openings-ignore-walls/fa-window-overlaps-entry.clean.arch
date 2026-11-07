@@ -1,0 +1,15 @@
+# class: openings-ignore-walls
+# twin-of: fa-window-overlaps-entry
+# origin: repro/family-apartment.arch win_bed3 moved to the west wall
+# expect: none
+# fact: the window is on the west wall (y 1400-2600); the south wall holds only the entry door
+plan "Window clear of the entry door" {
+  units mm
+  grid 50
+  wall id=shell exterior thickness 200 { (0,0) (3000,0) (3000,4000) (0,4000) close }
+  room id=r_kitchen at (0,0) size 3000x4000 label "Kitchen" uses kitchen
+  door id=d_entry at (2000,4000) width 900 wall shell
+  window id=win_bed3 at (0,2000) width 1200 wall shell
+  furniture kitchen_sink at (100,100) size 800x600
+  furniture stove at (1000,100) size 600x600
+}

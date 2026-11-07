@@ -1,0 +1,68 @@
+# Relational placement: rooms positioned relative to one another with `right-of` /
+# `left-of` / `below` / `above` (+ `align` and `gap`), resolved to absolute coordinates by
+# pure arithmetic in dependency order. Only `living` is anchored with `at`; every other
+# room derives its position from a neighbour.
+#
+# The walls and openings follow the rooms the same way. `walls from rooms` derives the
+# shell on the rooms' outline and a partition on every shared edge, and each opening is
+# hosted by the rooms it joins (`door between`, `on <room>.<edge>`), so changing the
+# anchor, a size or a direction reflows the walls, the doors and the windows with the
+# rooms. Two things do not follow: the `dim` endpoints and the east-facade fixtures'
+# `offset`s are absolute, and would need editing.
+plan "Relational 1BR" {
+  units mm
+  grid 50
+  scale 1:100
+  north up
+
+  room id=living  at (0,0)                          size 5000x4000 label "Living"
+  room id=kitchen right-of living align top  gap 0  size 3000x4000 label "Kitchen"
+  room id=hall    below living    align left gap 0  size 8000x1200 label "Hall" uses hall
+  room id=bed     below hall      align left gap 0  size 5000x2300 label "Bedroom"
+  room id=bath    right-of bed    align top  gap 0  size 3000x2300 label "Bath"
+
+  # The living room and the kitchen are one open-plan space, and the hall opens off it.
+  walls from rooms exterior 200 partition 100 {
+    open between living and kitchen
+    open between living and hall width 1200
+  }
+
+  # Hung on its north jamb: on the south one the open leaf parked 100 mm in front of the
+  # bedroom door (W_LEAF_ACROSS_DOORWAY).
+  door on hall.left at center width 900 hinge right swing into hall
+  door between hall and bed  at 1000 from start width 800 swing into bed
+  door between hall and bath at 600 from start width 800 swing into bath
+
+  window on living.top  width 1800
+  window on kitchen.top width 1800
+  window on bed.bottom  width 1600
+
+  furniture bed in bed anchor bottom-right flush size 1500x2000 label "Bed"
+
+  furniture sofa         in living anchor bottom-left flush inset 300 size 1800x800 label "Sofa"
+  furniture coffee_table in living anchor left inset 300 size 900x500
+  furniture dining_table in kitchen anchor left inset 300 size 1400x800 label "Table"
+
+  # The serviced pieces back onto the east facade, the ring's segment 1 (it runs from
+  # (8000,0) down to (8000,7500), so `offset` is the piece's centre y).
+  furniture counter against wall exterior segment 1 offset 1500 size 600x600 in kitchen
+  furniture sink    against wall exterior segment 1 offset 2300 size 800x600 in kitchen
+  furniture stove   against wall exterior segment 1 offset 3100 size 600x600 in kitchen
+
+  furniture basin  against wall exterior segment 1 offset 5800 size 600x450 in bath
+  furniture wc     against wall exterior segment 1 offset 6800 size 400x700 in bath
+  furniture shower in bath anchor bottom-left flush size 900x900
+
+  # Overall width, outside face to outside face (`faces` projects each endpoint onto
+  # the wall it runs into, so it prints the true 8200 rather than the 8000 room grid).
+  dim faces (0,7500)->(8000,7500) offset 600
+
+  # The fridge closes the kitchen's work triangle (sink, stove, fridge on the east run).
+  furniture id=fridge fridge against wall exterior segment 1 offset 700 size 600x650 in kitchen
+
+  title {
+    project "Relational Layout Demo"
+    drawn_by "ArchCanvas"
+    date "2026-06-26"
+  }
+}

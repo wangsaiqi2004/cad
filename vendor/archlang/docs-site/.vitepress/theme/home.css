@@ -1,0 +1,223 @@
+/* ──────────────────────────────────────────────────────────────────────────
+   Landing-page chrome — "The Compile Boundary".
+
+   Owns: (1) the home nav bar; (2) full-bleed wiring for the landing sections,
+   which live inside VitePress's `.vp-doc` markdown container; (3) the inline
+   "built for agents" band. The hero itself (CompileSeam.vue) and the section
+   components (WhyCards / HowSteps / HomeGallery / IsIsntTable / FactsSection / TopicsRow)
+   carry their own scoped styles.
+
+   Specificity note: `.vp-doc` gives its bare-element rules a `.vp-doc x` prefix
+   (0,0,1,1). Every rule here that targets landing content therefore carries a
+   `.vp-doc` prefix so it deterministically wins, rather than relying on source
+   order against the default theme.
+   ────────────────────────────────────────────────────────────────────────── */
+
+/* ═══ Home nav — the paper bar, at every scroll position ═══════════════════
+   VitePress leaves `.VPNavBar.home.top` TRANSPARENT (it expects a hero to show
+   through) and only fills the bar once `.top` drops on the first pixel of
+   scroll. This page's nav used to exploit that to paint itself carbon over the
+   hero, which meant the bar visibly changed colour the moment you scrolled.
+   Assert the themed paper background positively so the bar is identical at
+   scroll-top and scrolled — deleting the old rule alone would leave it
+   see-through, a different bug. Reuse `.divider-line` rather than a
+   `border-bottom` so there is no 1px height jump against the scrolled bar. */
+.VPNavBar.home.top {
+  background-color: var(--vp-nav-bg-color);
+}
+.VPNavBar.home.top .divider-line {
+  background-color: var(--vp-c-divider);
+}
+
+/* ═══ Landing bottom — deliberate footer gap ═══════════════════════════════
+   The last landing section is the "agents" band; VitePress's default `.VPHome`
+   margin-bottom (96/128px) then drops the title-block footer far below it,
+   reading as a stranded gap. Tighten it to a deliberate ~112px so the footer
+   follows the band as an intended step, not empty paper.
+   (Selector carries `.VPContent.is-home` so it outranks VitePress's scoped
+   `.VPHome[data-v-…]` default of 96/128px.) */
+.VPContent.is-home .VPHome {
+  margin-bottom: 96px;
+}
+@media (min-width: 768px) {
+  .VPContent.is-home .VPHome {
+    margin-bottom: 112px;
+  }
+}
+
+/* ═══ Landing sections — full bleed ════════════════════════════════════════
+   The section components render inside `.vp-doc.container` (max-width + padding).
+   Pull them out to the full viewport width with VitePress's own `--vp-offset`
+   (the same var it exposes for full-bleed home blocks); each section keeps its
+   own inner max-width + gutters.
+
+   NB `--vp-offset` is never actually SET, so the fallback is the live value. That
+   fallback mixes two different widths: `50%` resolves against the container, which
+   excludes the vertical scrollbar, while `50vw` includes it. The bands therefore
+   come out exactly `100vw` wide — about a scrollbar wider than the client area —
+   and the landing page grew a horizontal scrollbar for a strip of BACKGROUND (the
+   inner content is `max-width`-capped and centred, so nothing readable is out
+   there). Clipped on the home wrapper below rather than "fixed" here, because
+   there is no unit for "50% of the client width", and every JS-free approximation
+   of one is worse than clipping a band of paper. */
+.VPHome .vp-doc .same-source,
+.VPHome .vp-doc .why,
+.VPHome .vp-doc .how,
+.VPHome .vp-doc .home-gallery,
+.VPHome .vp-doc .isisnt,
+.VPHome .vp-doc .facts,
+.VPHome .vp-doc .agents,
+.VPHome .vp-doc .topics {
+  margin-left: var(--vp-offset, calc(50% - 50vw));
+  margin-right: var(--vp-offset, calc(50% - 50vw));
+}
+
+/* A doc page's h2 is a dimension line with witness ticks (doc-pages.css); the landing
+   sections draw their own headings, so the ticks would float alone above each one. */
+.VPHome .vp-doc h2::before,
+.VPHome .vp-doc h2::after {
+  display: none;
+}
+
+/* The other half of the rule above: swallow the sub-scrollbar overhang so the
+   landing page never scrolls sideways.
+
+   `clip`, NOT `hidden`, and the difference is load-bearing: `overflow-x: hidden`
+   with a visible y-axis computes `overflow-y` to `auto`, which would make this a
+   nested scroll container — a second scrollbar, a broken `scroll-into-view` for
+   every in-page anchor, and sticky positioning inside it pinned to the wrong box.
+   `overflow-x: clip` leaves the y-axis alone and creates no scroll container.
+   Browsers without `clip` (pre-Safari 16) simply keep today's behaviour, which is
+   the right way for this to degrade. */
+.VPContent.is-home {
+  overflow-x: clip;
+}
+
+/* ═══ "Built for agents" band — mode-aware ════════════════════════════════
+   This is the SOURCE world returning mid-page: the cool grey ground stepping out
+   of the warm paper, bounded by hairline dimension rules top and bottom, with
+   the terminal block raised on it as the code page. Both worlds are light
+   (ADR 0014) — the band reads as a different *surface*, not a different mode.
+   Every element is class-targeted under `.vp-doc .agents` so it beats the
+   default markdown typography cleanly. */
+.vp-doc .agents {
+  background: var(--src-bg);
+  color: var(--src-fg);
+  border-block: 1px solid var(--hairline);
+  padding-block: clamp(56px, 8vw, 104px);
+}
+.vp-doc .agents__inner {
+  max-width: 1152px;
+  margin: 0 auto;
+  padding-inline: 24px;
+}
+.vp-doc .agents__eyebrow {
+  margin: 0 0 14px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  letter-spacing: 0.04em;
+  color: var(--redline-ink); /* 5.6:1 on --src-bg */
+}
+.vp-doc .agents__title {
+  margin: 0;
+  border: 0;
+  padding: 0;
+  max-width: 20ch;
+  font-family: var(--font-display);
+  font-variation-settings: "wdth" 118;
+  font-weight: 640;
+  letter-spacing: -0.01em;
+  line-height: 1.05;
+  font-size: clamp(2rem, 4.4vw, 3.2rem);
+  color: var(--src-fg); /* 14.5:1 on --src-bg */
+}
+.vp-doc .agents__lede {
+  margin: 20px 0 0;
+  max-width: 56ch;
+  font-family: var(--font-body);
+  font-size: 1.05rem;
+  line-height: 1.65;
+  color: var(--src-muted); /* 5.4:1 on --src-bg */
+}
+.vp-doc .agents__code {
+  font-family: var(--font-mono);
+  font-size: 0.88em;
+  color: var(--plum-deep); /* 5.5:1 on --src-bg */
+  background: transparent;
+  padding: 0;
+  border: 0;
+}
+.vp-doc .agents__term {
+  margin: 28px 0 0;
+  max-width: 640px;
+  padding: 16px 18px;
+  border: 1px solid var(--src-border);
+  border-radius: 4px;
+  background: var(--src-surface);
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 1.7;
+  color: var(--src-fg);
+  overflow-x: auto;
+}
+.vp-doc .agents__prompt {
+  color: var(--plum-deep);
+  user-select: none;
+}
+.vp-doc .agents__flag {
+  color: var(--redline-ink); /* 6.3:1 on --src-surface */
+}
+.vp-doc .agents__key {
+  color: var(--plum-deep);
+}
+.vp-doc .agents__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 30px;
+}
+.vp-doc .agents__btn {
+  display: inline-flex;
+  align-items: center;
+  padding: 10px 20px;
+  border-radius: 3px;
+  border: 1px solid transparent;
+  font-family: var(--font-body);
+  font-size: 0.95rem;
+  font-weight: 550;
+  text-decoration: none;
+  transition:
+    transform 0.12s,
+    background 0.2s,
+    border-color 0.2s,
+    color 0.2s;
+}
+.vp-doc .agents__btn:active {
+  transform: translateY(1px);
+}
+.vp-doc .agents__btn--solid {
+  /* white-on-redline-ink = 6.5:1. (These used to be fixed hexes because the band
+     was carbon in dark mode while --redline flipped; nothing flips now, so they
+     are tokens again.) */
+  background: var(--redline-ink);
+  color: #fff;
+}
+.vp-doc .agents__btn--solid:hover {
+  /* lighten the ground toward the graphics redline; white stays 5.4:1 (AA) */
+  background: var(--redline);
+  /* VitePress's `.vp-doc a:hover` (0,2,1) outranks this two-class base rule's
+     color (0,2,0), so the hover state must re-assert the text color. (The
+     :visited leak that made the base text invisible is fixed in doc-pages.css §7
+     by excluding .agents__btn from the link-colour rules.) */
+  color: #fff;
+}
+/* Ghost button — a control, so its border must clear 3:1: --src-rule, not the
+   decorative --src-border. */
+.vp-doc .agents__btn--ghost {
+  border-color: var(--src-rule);
+  color: var(--src-fg);
+}
+.vp-doc .agents__btn--ghost:hover {
+  border-color: var(--redline);
+  color: var(--redline-ink);
+}

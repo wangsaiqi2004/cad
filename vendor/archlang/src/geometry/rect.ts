@@ -1,0 +1,502 @@
+/**
+ * Shared axis-aligned rectangle math for the analysis/repair layer.
+ *
+ * The same point-in-rect / rect-overlap / wall-intrusion arithmetic used to be
+ * re-implemented (with identical expressions) in lint, repair, resolve and the
+ * occupancy flood-fill. It lives here once. Every helper is a pure expression —
+ * callers rely on the exact float behaviour, so change nothing lightly: lint
+ * warnings, repair pushes and the W_ROOM_OVERLAP check are all byte-pinned by
+ * the test suite.
+ */
+
+import type { Point } from "../ast.js";
+import type { Arc } from "./arc.js";
+import { arcBandIntrusion, arcOpeningVoid } from "./arc-band.js";
+import type { Vec, WallSegment } from "../geometry.js";
+import { normal, sub, unit } from "../geometry.js";
+
+/** A millimetre bounding box (origin top-left, +x right, +y down). */
+export interface BBox {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
+/** Overlap length of two 1-D intervals (0 when disjoint). */
+export function overlap1d(aLo: number, aHi: number, bLo: number, bHi: number): number {
+  return Math.max(0, Math.min(aHi, bHi) - Math.max(aLo, bLo));
+}
+
+/**
+ * Total length covered by a set of 1-D intervals after merging overlaps. Used by
+ * every "how much of this edge is backed by a wall?" scan (perimeter gaps, fixture
+ * wall-backing), so they all measure coverage the same way.
+ */
+export function mergedLength(intervals: Array<[number, number]>): number {
+  if (intervals.length === 0) return 0;
+  const sorted = [...intervals].sort((a, b) => a[0] - b[0]);
+  let total = 0;
+  let [cs, ce] = sorted[0]!;
+  for (let i = 1; i < sorted.length; i++) {
+    const [s, e] = sorted[i]!;
+    if (s <= ce) ce = Math.max(ce, e);
+    else {
+      total += ce - cs;
+      cs = s;
+      ce = e;
+    }
+  }
+  return total + (ce - cs);
+}
+
+/** Signed per-axis overlap amounts of two rects (negative when separated). */
+export function rectOverlapAmounts(a: BBox, b: BBox): { ox: number; oy: number } {
+  const ox = Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x);
+  const oy = Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y);
+  return { ox, oy };
+}
+
+/** Do two axis-aligned rects overlap by more than 1 mm on both axes? */
+export function rectsOverlap(a: BBox, b: BBox): boolean {
+  const { ox, oy } = rectOverlapAmounts(a, b);
+  return ox > 1 && oy > 1;
+}
+
+/**
+ * How many unordered pairs of `boxes` {@link rectsOverlap} holds for: the same number a double
+ * loop over every pair counts, in O(n log n) — or `undefined` if a coordinate is not finite (the
+ * argument below needs finite values; the caller then counts pairs itself).
+ *
+ * The derivation, float for float. With `hi = x + w` (the same sum `rectOverlapAmounts`
+ * forms), `ox = fl(min(hiA, hiB) − max(xA, xB))`. Rounding is monotone, so `ox` is the least of
+ * the four `fl(hi − lo)` and `ox > 1` holds exactly when all four do. Two of them are the boxes'
+ * own widths: a box with `fl(hi − x) ≤ 1` (likewise in y) overlaps nothing, so only the m boxes
+ * that pass both are counted. For those, "A ends within 1 of B's start", `Lx(A,B) =
+ * !(fl(hiA − xB) > 1)`, cannot hold both ways: `fl(r) ≤ 1` means `r ≤ 1 + 2⁻⁵³` and `fl(r) > 1`
+ * means `r > 1 + 2⁻⁵³`, and the two cross differences sum to the two own widths. So the pairs
+ * that fail on x are exactly the ORDERED pairs with `Lx`, and by inclusion–exclusion
+ *
+ *   overlapping = C(m,2) − #Lx − #Ly + #(Lx(A,B) ∧ Ly(A,B)) + #(Lx(A,B) ∧ Ly(B,A))
+ *
+ * over ordered pairs (an unordered pair failing both axes has one x-order and one y-order).
+ * `Lx(A,B)` falls as `hiA` grows and rises as `xB` grows, so for each A the B it holds for are a
+ * suffix of the boxes sorted by `x` (found by binary search with the predicate itself, so ties
+ * and rounding are the predicate's own), and `Ly(B,A)` a prefix of those sorted by `hi`. Each
+ * term is then a one- or two-dimensional dominance count (a Fenwick tree over ranks).
+ */
+export function countOverlappingRectPairs(boxes: readonly BBox[]): number | undefined {
+  const lx: number[] = [];
+  const hx: number[] = [];
+  const ly: number[] = [];
+  const hy: number[] = [];
+  for (const b of boxes) {
+    const x1 = b.x + b.w;
+    const y1 = b.y + b.h;
+    if (!(Number.isFinite(b.x) && Number.isFinite(b.y) && Number.isFinite(x1) && Number.isFinite(y1))) return undefined;
+    if (!(x1 - b.x > 1 && y1 - b.y > 1)) continue;
+    lx.push(b.x);
+    hx.push(x1);
+    ly.push(b.y);
+    hy.push(y1);
+  }
+  const m = lx.length;
+  // Ranks: position in the order of a key (ties in any fixed order — the predicates depend on
+  // values only, so equal values always fall on the same side of a cut).
+  const order = (key: number[]): number[] => {
+    const idx = Array.from({ length: m }, (_, i) => i);
+    idx.sort((a, b) => key[a]! - key[b]!);
+    return idx;
+  };
+  const byLx = order(lx);
+  const byLy = order(ly);
+  const byHy = order(hy);
+  const sortedLx = byLx.map((i) => lx[i]!);
+  const sortedLy = byLy.map((i) => ly[i]!);
+  const sortedHy = byHy.map((i) => hy[i]!);
+  const rankLy = new Array<number>(m);
+  const rankHy = new Array<number>(m);
+  byLy.forEach((i, r) => {
+    rankLy[i] = r;
+  });
+  byHy.forEach((i, r) => {
+    rankHy[i] = r;
+  });
+  /** First index of `sorted` where `holds` turns true (it is false then true along `sorted`). */
+  const firstTrue = (sorted: number[], holds: (v: number) => boolean): number => {
+    let lo = 0;
+    let hi = sorted.length;
+    while (lo < hi) {
+      const mid = (lo + hi) >>> 1;
+      if (holds(sorted[mid]!)) hi = mid;
+      else lo = mid + 1;
+    }
+    return lo;
+  };
+  // Per box A: B with Lx(A,B) are byLx[cutX..]; with Ly(A,B) are ranks rankLy ≥ cutY; with
+  // Ly(B,A) are ranks rankHy < cutHy.
+  const cutX = new Array<number>(m);
+  const cutY = new Array<number>(m);
+  const cutHy = new Array<number>(m);
+  let notX = 0;
+  let notY = 0;
+  for (let a = 0; a < m; a++) {
+    const ha = hx[a]!;
+    const va = hy[a]!;
+    const la = ly[a]!;
+    cutX[a] = firstTrue(sortedLx, (l) => !(ha - l > 1));
+    cutY[a] = firstTrue(sortedLy, (l) => !(va - l > 1));
+    cutHy[a] = firstTrue(sortedHy, (h) => h - la > 1);
+    notX += m - cutX[a]!;
+    notY += m - cutY[a]!;
+  }
+  // Two-dimensional counts: sweep the boxes A by cutX descending, adding each B whose x-rank
+  // is at least the cut, then count the added B by their y-rank.
+  const queries = Array.from({ length: m }, (_, i) => i).sort((a, b) => cutX[b]! - cutX[a]!);
+  const treeLy = new Array<number>(m + 1).fill(0);
+  const treeHy = new Array<number>(m + 1).fill(0);
+  const add = (tree: number[], r: number): void => {
+    for (let i = r + 1; i <= m; i += i & -i) tree[i]!++;
+  };
+  /** How many added ranks are below `r`. */
+  const below = (tree: number[], r: number): number => {
+    let s = 0;
+    for (let i = r; i > 0; i -= i & -i) s += tree[i]!;
+    return s;
+  };
+  let next = m - 1;
+  let added = 0;
+  let both = 0;
+  for (const a of queries) {
+    while (next >= cutX[a]!) {
+      const b = byLx[next--]!;
+      add(treeLy, rankLy[b]!);
+      add(treeHy, rankHy[b]!);
+      added++;
+    }
+    both += added - below(treeLy, cutY[a]!);
+    both += below(treeHy, cutHy[a]!);
+  }
+  return (m * (m - 1)) / 2 - notX - notY + both;
+}
+
+/** Is the point inside the rect (closed bounds — edges count as inside)? */
+export function pointInRect(px: number, py: number, r: BBox): boolean {
+  return px >= r.x && px <= r.x + r.w && py >= r.y && py <= r.y + r.h;
+}
+
+/* ---------------------------------------------------------------------------
+ * The wall's own frame — what makes the intrusion measurement angle-exact.
+ *
+ * Every "how far into this wall is that piece?" question used to be asked twice, once
+ * for a horizontal wall and once for a vertical one, opening with
+ * `if (horiz === vert) return 0`. That guard was a SILENT SKIP: it made
+ * `W_FURNITURE_WALL_COLLISION` blind to every wall in the language that is not axis-
+ * aligned, so a sofa drawn straight through a 45° wall linted clean. Worse, an ARC
+ * carries its CHORD in `a`/`b`, so a curved wall whose chord happened to be axis-aligned
+ * was measured against a line the wall is not on — flagging furniture near the chord and
+ * missing the wall itself.
+ *
+ * So the question is asked once, in the segment's own coordinates: `d` along the run,
+ * `n` across it. On an axis-aligned segment `d`/`n` are ±1 unit vectors, so every
+ * projection below reduces to the exact expression the two hand-written branches used
+ * (up to an exact negation) — which is why widening this moved no shipped byte.
+ * ------------------------------------------------------------------------- */
+
+/** A straight wall segment resolved into its own frame. */
+interface SegFrame {
+  /** Unit direction of travel, a→b. */
+  d: Vec;
+  /** Left normal of `d` — the across-wall axis. */
+  n: Vec;
+  /** The segment's centerline, as a coordinate on `n`. */
+  c: number;
+  /** The segment's run on `d` (its endpoints, ordered). */
+  lo: number;
+  hi: number;
+}
+
+/**
+ * The frame of a STRAIGHT wall segment, or `null` when there is none to speak of.
+ *
+ * `null` for a degenerate (zero-length) segment and — deliberately — for a CURVED one:
+ * an arc's across-wall direction turns along the run, so a single `n` would be a fiction,
+ * and an arc's `a`/`b` are its CHORD (measuring which flags furniture near a straight
+ * line the wall is not on, and misses the wall itself).
+ *
+ * A curve is not skipped any more, it is measured in the coordinates it actually has:
+ * `wallIntrusionDepth` routes an arc segment to {@link arcBandIntrusion}, where the
+ * across-wall axis is the RADIUS and the along-run axis is the ANGLE. See
+ * `./arc-band.ts` for the derivation, and `test/furniture-lint.test.ts` for the pins in
+ * both directions — a piece through the true band warns, one on the chord does not.
+ */
+function segmentFrame(s: { a: Point; b: Point; arc?: Arc }): SegFrame | null {
+  if (s.arc) return null;
+  const v = sub(s.b, s.a);
+  if (v.x === 0 && v.y === 0) return null;
+  const d = unit(v);
+  const n = normal(d);
+  const pa = s.a.x * d.x + s.a.y * d.y;
+  const pb = s.b.x * d.x + s.b.y * d.y;
+  return { d, n, c: s.a.x * n.x + s.a.y * n.y, lo: Math.min(pa, pb), hi: Math.max(pa, pb) };
+}
+
+/** The interval a rect's four corners project onto the unit axis `u` — closed form:
+ *  the extremes are the two corners the signs of `u` pick out. */
+function rectSpan(r: BBox, u: Vec): [number, number] {
+  const [x0, x1] = u.x >= 0 ? [r.x, r.x + r.w] : [r.x + r.w, r.x];
+  const [y0, y1] = u.y >= 0 ? [r.y, r.y + r.h] : [r.y + r.h, r.y];
+  return [x0 * u.x + y0 * u.y, x1 * u.x + y1 * u.y];
+}
+
+/**
+ * How deep (mm) a furniture rectangle `fr` intrudes into a wall segment's solid band
+ * **at any angle, straight or curved**, counting only the run that is *not* an opening
+ * (a door or window voids the wall there). A piece flush against the wall face intrudes
+ * ~0; one straddling the centerline intrudes by up to the wall thickness. Returns 0 for
+ * a degenerate segment (see {@link segmentFrame}).
+ *
+ * A CURVED segment is measured in polar coordinates by {@link arcBandIntrusion} —
+ * radius across, arc length along — because an arc has no single across-wall normal to
+ * project onto. Both branches answer the same question and return the same units, so
+ * the caller never learns which kind of edge it asked about.
+ *
+ * "Intrusion" is the across-wall overlap; it is only meaningful when the along-wall
+ * overlap survives opening subtraction, so a counter under a window or a piece in a
+ * doorway isn't read as passing through solid wall.
+ *
+ * Furniture is an AABB and its rotation is a quarter-turn (`E_FURN_ROTATE`), so `fr` is
+ * both its bounding box and its true footprint. The wall solid is an oriented box, so
+ * the two shapes genuinely overlap exactly when their projections meet on all FOUR
+ * separating axes: the wall's `d` and `n`, and the plan's own x and y. The last two are
+ * implied by the first two whenever the wall is axis-aligned (`d`/`n` *are* the plan
+ * axes there), which is what keeps every orthogonal plan's verdict unchanged; on an
+ * angled wall they are what stops a piece that crosses the wall's LINE somewhere and its
+ * RUN somewhere else from reading as a collision.
+ */
+export function wallIntrusionDepth(
+  fr: BBox,
+  s: WallSegment,
+  openings: Array<{ at: { x: number; y: number }; width: number }>,
+): number {
+  if (s.arc) return arcIntrusionDepth(fr, s.arc, s.thickness, openings);
+  const f = segmentFrame(s);
+  if (!f) return 0;
+  const half = s.thickness / 2;
+  const [fnLo, fnHi] = rectSpan(fr, f.n);
+  const band = overlap1d(fnLo, fnHi, f.c - half, f.c + half); // across-wall (depth)
+  if (band <= 0) return 0;
+  const [fdLo, fdHi] = rectSpan(fr, f.d);
+  const lo = Math.max(fdLo, f.lo);
+  const hi = Math.min(fdHi, f.hi);
+  if (hi - lo <= 1) return 0;
+  if (!bandMeetsRectOnPlanAxes(fr, s, f, half)) return 0;
+  // Subtract opening spans that lie on this segment's line, measured along the run.
+  const voids: Array<[number, number]> = [];
+  for (const o of openings) {
+    if (Math.abs(o.at.x * f.n.x + o.at.y * f.n.y - f.c) > half + 1) continue;
+    const along = o.at.x * f.d.x + o.at.y * f.d.y;
+    voids.push([along - o.width / 2, along + o.width / 2]);
+  }
+  return solidRemains(lo, hi, voids) ? band : 0;
+}
+
+/**
+ * {@link wallIntrusionDepth} for a curved segment: the radial overlap with the annular
+ * band, kept only where the arc length the piece covers still has solid left after the
+ * openings hosted on that curve are subtracted.
+ *
+ * The two axes swap kind but not role — `solidRemains` is the SAME void arithmetic the
+ * straight branch runs, applied to arc length instead of distance along a chord, so a
+ * piece standing in a curved doorway is no more a collision than one standing in a
+ * straight doorway.
+ */
+function arcIntrusionDepth(
+  fr: BBox,
+  arc: Arc,
+  thickness: number,
+  openings: Array<{ at: { x: number; y: number }; width: number }>,
+): number {
+  const hit = arcBandIntrusion(fr, arc, thickness);
+  if (!hit) return 0;
+  const voids: Array<[number, number]> = [];
+  for (const o of openings) {
+    const v = arcOpeningVoid(arc, o.at, o.width, thickness);
+    if (v) voids.push(v);
+  }
+  for (const [lo, hi] of hit.runs) {
+    if (hi - lo <= 1) continue;
+    if (solidRemains(lo, hi, voids)) return hit.depth;
+  }
+  return 0;
+}
+
+/**
+ * The plan-axis half of the separating-axis test: do `fr` and the segment's solid band
+ * (its four `a`/`b` ± `n`·half corners — the run UN-extended, exactly the region the
+ * `d`/`n` tests describe) overlap on x and on y?
+ *
+ * A no-op for an axis-aligned wall, where these two intervals are the very ones the
+ * caller has already tested.
+ */
+function bandMeetsRectOnPlanAxes(fr: BBox, s: { a: Point; b: Point }, f: SegFrame, half: number): boolean {
+  const ox = f.n.x * half;
+  const oy = f.n.y * half;
+  const xs = [s.a.x + ox, s.a.x - ox, s.b.x + ox, s.b.x - ox];
+  const ys = [s.a.y + oy, s.a.y - oy, s.b.y + oy, s.b.y - oy];
+  return (
+    overlap1d(fr.x, fr.x + fr.w, Math.min(...xs), Math.max(...xs)) > 0 &&
+    overlap1d(fr.y, fr.y + fr.h, Math.min(...ys), Math.max(...ys)) > 0
+  );
+}
+
+/** Is any > 1 mm of the interval [lo,hi] left uncovered by the `voids` intervals? */
+function solidRemains(lo: number, hi: number, voids: Array<[number, number]>): boolean {
+  let cuts = [lo, hi];
+  for (const [a, b] of voids) {
+    cuts.push(Math.max(lo, Math.min(hi, a)), Math.max(lo, Math.min(hi, b)));
+  }
+  cuts = [...new Set(cuts)].sort((p, q) => p - q);
+  for (let i = 0; i < cuts.length - 1; i++) {
+    const mid = (cuts[i]! + cuts[i + 1]!) / 2;
+    const len = cuts[i + 1]! - cuts[i]!;
+    if (len <= 1) continue;
+    const inVoid = voids.some(([a, b]) => mid > a && mid < b);
+    if (!inVoid) return true;
+  }
+  return false;
+}
+
+/**
+ * The across-wall intrusion of `fr` into one wall segment (null if there is none), at any
+ * angle and on a curve. Deliberately DISTINCT semantics from
+ * {@link wallIntrusionDepth}: this one **ignores openings** (the repair corrector
+ * moves a piece out of the wall band whether or not a door voids part of it) —
+ * do not merge the two.
+ *
+ * An ORTHOGONAL wall reports the plan `axis` the push runs along plus the wall's
+ * centerline on it, which is everything `repair` needs to compute a closed-form move.
+ * An ANGLED one — and a CURVED one, whose clearing move is along a radius — reports
+ * `axis: null`: the push is neither plan axis and lands off-grid, so `repair` declines
+ * and REPORTS the piece instead of inventing a diagonal push
+ * (`test/repair-coverage.test.ts` pins that every piece lint flags gets a change entry or
+ * an `unresolved` entry — never nothing, which is why the curved branch exists here at
+ * all rather than leaving `repair` silent on a collision `lint` now raises).
+ */
+export type WallIntrusion = { depth: number } & ({ axis: "x" | "y"; center: number } | { axis: null });
+
+export function wallIntrusion(fr: BBox, s: { a: Point; b: Point; thickness: number; arc?: Arc }): WallIntrusion | null {
+  if (s.arc) {
+    const hit = arcBandIntrusion(fr, s.arc, s.thickness);
+    return hit?.runs.some(([lo, hi]) => hi - lo > 1) ? { depth: hit.depth, axis: null } : null;
+  }
+  const f = segmentFrame(s);
+  if (!f) return null;
+  const h2 = s.thickness / 2;
+  const [fnLo, fnHi] = rectSpan(fr, f.n);
+  const band = overlap1d(fnLo, fnHi, f.c - h2, f.c + h2);
+  const [fdLo, fdHi] = rectSpan(fr, f.d);
+  const lo = Math.max(fdLo, f.lo);
+  const hi = Math.min(fdHi, f.hi);
+  if (band <= 0 || hi - lo <= 1) return null;
+  if (!bandMeetsRectOnPlanAxes(fr, s, f, h2)) return null;
+  if (s.a.y === s.b.y) return { depth: band, axis: "y", center: s.a.y };
+  if (s.a.x === s.b.x) return { depth: band, axis: "x", center: s.a.x };
+  return { depth: band, axis: null };
+}
+
+/**
+ * The clear-landing rectangle straddling a door or cased opening on its (orthogonal) host
+ * wall — the straight walk-through approach, `depth` mm on each side, measured from the
+ * wall's FACE on that side (plan-soundness PS2.54): jamb to jamb along the wall, and across it
+ * from `depth` past one face to `depth` past the other, the wall's own body between. A person
+ * standing in a doorway stands past the face, so the face is the datum, as it is for
+ * `W_LEAF_ACROSS_DOORWAY`'s approach; a host with no `thickness` reads as a line. Null when the
+ * opening has no host or the host is angled. Shared by the `W_DOORWAY_BLOCKED` lint rule, the
+ * placement check behind every quoted position, `finish`'s furnish stage and the repair
+ * corrector, so what repair clears and furnish keeps clear is exactly what lint flags.
+ */
+export function doorLandingRect(
+  d: {
+    at: { x: number; y: number };
+    width: number;
+    host?: { a: { x: number; y: number }; b: { x: number; y: number }; thickness?: number } | null;
+  },
+  depth: number,
+): BBox | null {
+  const seg = d.host;
+  if (!seg) return null;
+  const horiz = seg.a.y === seg.b.y;
+  const vert = seg.a.x === seg.b.x;
+  if (horiz === vert) return null;
+  const halfW = d.width / 2;
+  const reach = depth + (seg.thickness ?? 0) / 2;
+  return horiz
+    ? { x: d.at.x - halfW, y: d.at.y - reach, w: d.width, h: reach * 2 }
+    : { x: d.at.x - reach, y: d.at.y - halfW, w: reach * 2, h: d.width };
+}
+
+/**
+ * A doorway's width (mm): the widest cased opening judged as a door is (plan-soundness PS2.11e,
+ * the coordinator's ruling on PR #283), and the clear stretch a wider one must keep: a broad
+ * doorway's width.
+ */
+export const DOORWAY_WIDTH_MM = 1200;
+
+/** What {@link openingBlock} finds in a cased opening's approach. */
+export interface OpeningBlock {
+  /** The landing ({@link doorLandingRect}). */
+  landing: BBox;
+  /** Indices into the rects passed, in their order, of those whose footprint overlaps it. */
+  inside: number[];
+  /** The longest stretch (mm) of the opening's span, jamb to jamb, that none of them covers. */
+  stretch: number;
+  /** Is the opening blocked: any piece inside when it is at most {@link DOORWAY_WIDTH_MM} wide,
+   *  else a clear stretch under {@link DOORWAY_WIDTH_MM}? */
+  blocked: boolean;
+}
+
+/**
+ * Is a cased opening blocked by the footprints `rects` (plan-soundness PS2.11e)? An opening up to
+ * a doorway's width ({@link DOORWAY_WIDTH_MM}) is judged as a door is: any piece in its landing
+ * blocks it. A wider one, an open-plan join or the full shared edge `open between` derives, is
+ * blocked only when the pieces in its landing leave no doorway's width of it clear: the longest
+ * stretch of its span (along the wall, jamb to jamb) that none of them covers, each read where it
+ * stands across the span. `null` when the opening has no landing (no host, or an angled one).
+ * Shared by `W_DOORWAY_BLOCKED`, the placement check and the repair corrector, so what each clears
+ * is what the rule reads.
+ */
+export function openingBlock(
+  o: Parameters<typeof doorLandingRect>[0],
+  depth: number,
+  rects: readonly BBox[],
+): OpeningBlock | null {
+  const landing = doorLandingRect(o, depth);
+  if (!landing) return null;
+  const inside: number[] = [];
+  rects.forEach((r, i) => {
+    if (rectsOverlap(landing, r)) inside.push(i);
+  });
+  // The host is orthogonal (a landing exists only then): the span runs along x or y.
+  const horiz = o.host!.a.y === o.host!.b.y;
+  const lo = (horiz ? o.at.x : o.at.y) - o.width / 2;
+  const hi = lo + o.width;
+  const covers = inside
+    .map((i) => {
+      const r = rects[i]!;
+      const a = horiz ? r.x : r.y;
+      const b = a + (horiz ? r.w : r.h);
+      return [Math.max(lo, a), Math.min(hi, b)] as [number, number];
+    })
+    .filter(([a, b]) => b > a)
+    .sort((p, q) => p[0] - q[0]);
+  let stretch = 0;
+  let at = lo;
+  for (const [a, b] of covers) {
+    stretch = Math.max(stretch, a - at);
+    at = Math.max(at, b);
+  }
+  stretch = Math.max(stretch, hi - at);
+  const blocked = inside.length > 0 && (o.width <= DOORWAY_WIDTH_MM || stretch < DOORWAY_WIDTH_MM);
+  return { landing, inside, stretch, blocked };
+}

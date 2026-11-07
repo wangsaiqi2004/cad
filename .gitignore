@@ -1,0 +1,25 @@
+# 本机运行时数据（不进版本库，由 npm run setup 生成）
+node_modules/
+app/node_modules/
+app/.runtime/
+app/data/
+app/dist/
+dist/
+projects/
+*.log
+*.tmp
+
+# 上游快照中体积大且可重建的部分（409 MB node_modules 严禁误提交）
+vendor/**/node_modules/
+vendor/**/dist/
+vendor/**/out/
+vendor/opencalque/node_modules/
+vendor/archlang/node_modules/
+
+# 交付组装只读源码与必要产物，绝不把依赖打进导出包
+*.local
+secrets.json
+
+# 系统文件
+.DS_Store
+Thumbs.db

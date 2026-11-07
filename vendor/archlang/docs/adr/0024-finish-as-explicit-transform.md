@@ -1,0 +1,160 @@
+# 24. Finishing a sheet is an explicit source transform
+
+- **Status:** Accepted — **decision 7 superseded by [ADR 0025](0025-furnish-as-explicit-transform.md)**;
+  **the all-or-nothing roll-back of decision 6 amended (2026-10)**
+- **Date:** 2026-10
+- **Relates to:** [ADR 0005](0005-no-invisible-architect.md) and
+  [ADR 0006](0006-solver-as-explicit-transform.md) (compile renders what is written; a
+  correction is an explicit transform), [ADR 0011](0011-machine-applicable-fixes.md) (the
+  piece-table applier), [ADR 0015](0015-cli-as-agent-interface.md) (the CLI is the agent
+  interface)
+- **Scope:** a new transform, `finish()` / `arch finish`. No language syntax, no change to
+  `compile()`, `describe()` or `lint()`.
+
+## Context
+
+A plan can be sound and still not be a drawing sheet. `paper`, `scale`, `dims auto`, `title`,
+`schedule rooms` and `legend` are all optional, and a plan without them compiles to a correct
+picture with no sheet size, no dimension chains, no title block and no tables.
+
+`spec.llm.md` recommends `paper` with `dims auto all`. Models still leave them out. In a run of
+72 plans written from the public spec, the mean sheet-completeness score per model ranged from
+0.00 to 0.72. A downstream product that post-processes its plans scored 1.00 on the same measure.
+The gap is not knowledge of the syntax: it is a step nobody runs.
+
+The obvious remedy is to make `compile()` add what is missing. ADR 0005 and ADR 0006 already
+refuse that: a default sheet chosen inside the compiler is a decision the source does not state,
+and every existing plan without `paper` would render differently.
+
+## Decision
+
+**1. `finish` is an explicit transform outside `compile()`.** `finish(source, opts?)` returns
+`{ source, changes[], unresolved[], changed }`, the shape `repair` returns. `arch finish`
+follows `arch fix`'s write conventions: it rewrites the input in place by default, prints the
+unified diff on stderr, and takes `--dry-run`, `--backup` and `-o`.
+
+**2. It fills only what is missing, and deletes nothing.** Each of the six statements is added
+only when the plan has none. An authored `dim`, `axes`, `north` or title block is never
+rewritten. A plan with hand-written `dim` lines gets no `dims auto`; that is reported in
+`unresolved`. The title block carries only `project`, taken from the plan's own name: `finish`
+does not invent a date or an author.
+
+**3. `--reissue` may replace `paper` and `scale`, and nothing else.** Without it an authored
+sheet is kept. If the drawing does not fit that sheet, `finish` gives up statements in a fixed
+order (the two tables, then `dims auto`, then the title) until what is left fits, and reports
+each one it left out. With `--reissue` it replaces the sheet instead: it keeps the authored scale
+when some larger sheet holds it, and chooses both otherwise.
+
+**4. The sheet is chosen by the compiler's own fit rule.** `finish` calls `fitsOnSheet`
+(`src/sheet.ts`) with the extents, table rows and title rows that `resolve()` computes
+(`sheetExtents`, `planTableRows`, `titleRows`), taking the largest extent over the storeys of a
+multi-storey plan. It never reads a diagnostic's message. The order is: the finest of 1:50,
+1:100, 1:200 and 1:500 that fits some sheet from A4 to A1, on the smallest such sheet, landscape
+before portrait; A0 only when no scale fits A4 to A1. `dims auto` is `all`, or `overall` when
+the building's short facade is under 60 mm on paper. When nothing up to A0 at 1:500 holds the
+drawing, `paper` and `scale` are not added and that is reported.
+
+**5. The edits are span-based inserts.** They go through the `Data` piece table
+(`src/fix-apply.ts`), not through the formatter, so every authored byte and comment survives.
+A statement is inserted only at a line boundary, in the file's own indentation and line ending.
+
+**6. Four laws, each pinned by test** (`test/finish.test.ts`, `test/fuzz.test.ts`):
+
+| Law | Statement |
+|---|---|
+| Fixpoint | `finish(finish(s).source).source === finish(s).source` |
+| Never worse | the result has no compile error, no diagnostic code (compile and lint, counted) that the input did not have, and no new furniture conflict (drafting-layer codes and the residential-advisory profiles excepted, see the 2026-10-24 and 2026-10-25 amendments) |
+| Fitted | when `finish` wrote `paper` or `scale`, the result raises neither `W_SCALE_OVERFLOW` nor `W_DRAWING_OVERFLOW` |
+| Untouched | a source that does not compile is returned byte-identical |
+
+A result that breaks the never-worse law is not returned. The whole stage is rolled back and
+the reason goes in `unresolved`. A plan that needs nothing comes back byte-identical with
+`changed: false`.
+
+> *Amended 2026-10.* The law is unchanged and still absolute (drafting-layer codes excepted, see
+> the 2026-10-24 amendment); the roll-back is no longer all or
+> nothing. `dims auto all` on a plan with an opening no chain reaches raises the advisory
+> `W_OPENING_NOT_DIMENSIONED`, and the stage then wrote no `paper`, `scale`, `title`, schedule or
+> legend either. The sheet stage now degrades. When the whole set of statements is refused it
+> tries, in this fixed order, `dims auto overall` in place of `dims auto all`, then no
+> `dims auto`. If neither passes it builds the set up one statement at a time (`paper` with
+> `scale`, the title, `schedule rooms`, `legend`, then `dims auto all` and `dims auto overall`)
+> and keeps each one the plan passes the check with. Every statement left out is an `unresolved`
+> note with the `codes` it would have raised. The search is bounded: at most nine candidates are
+> checked after the input (`SHEET_MAX_CHECKS`, `src/finish.ts`). The stage is rolled back whole
+> only when no statement passes on its own. The law is checked under every lint profile.
+
+> *Amended 2026-10-24 (PR #245).* Drafting-layer codes (ADR 0032's `layer: "drafting"`: today
+> `W_ANNOTATION_OVERLAP`, `W_TITLE_OVERFLOW`, `W_DIM_INSIDE`, `W_DIM_OVERLAP`,
+> `W_OPENING_NOT_DIMENSIONED` and `W_DIM_TEXT_MISMATCH`, read from `LINT_CODE_LAYERS`) are excluded from the never-worse
+> comparison (`NOT_GATED_DRAFTING`, `src/furnish.ts`). A drafting-layer code reports the
+> annotation, not the plan, and the law protects the plan's soundness. So the sheet stage no
+> longer degrades `dims auto all` for an opening no chain reaches (the 2026-10 amendment above):
+> `W_OPENING_NOT_DIMENSIONED` reports that opening in the finished plan instead. `finish`'s
+> placement is unchanged, and the overprints it always drew are now named. Measured on the eval
+> goldens, the drafting-layer codes of `finish`'s output: `W_ANNOTATION_OVERLAP` `bungalow` 0 → 2,
+> `two-bath-flat` 0 → 2, `sized-bedrooms`, `three-bed-2bath`, `two-bed-hall` and `l-shaped-flat`
+> +1 each; no other drafting-layer code gained. Card PS2.40 makes `furnish` prefer a candidate
+> that raises no overlap.
+
+> *Amended 2026-10-25 (PR #248).* "Checked under every lint profile" now reads: under the
+> default ruleset and the UNIVERSAL advisory profiles (`accessibility-advisory`: physical access,
+> the same in any culture). The three residential-advisory profiles (`cn-`, `uk-`,
+> `us-residential-advisory`, `ADVISORY_CODE_PROFILES` in `src/lint/ruleset.ts`) are outside the
+> comparison: each reads one jurisdiction's room sizes, they disagree with each other by design
+> (plan-soundness D3), so no single furnished output can satisfy all three, and none of them may
+> govern the default output. Measured on the eval goldens, the profile-only warnings `finish`'s
+> furnish stage now leaves: with areas read as drawn (the PR's first head, as its review measured
+> it) 14 in 9 plans, `uk` 12, `cn` 2, `us` 0; with net areas (as merged) 28 in 14 plans, `uk` 22,
+> `cn` 6, `us` 0.
+> Every one is a `W_ROOM_TOO_SMALL` or `W_ROOM_TOO_NARROW` on a bedroom that the furnished
+> 1500 mm `bed` makes a double. The shipped examples gain one (`sheet-notes`, `uk`, with net
+> areas; none as drawn). Card PS5.6 lets `finish`/`furnish --profile <name>` hold the law under
+> that one profile.
+
+> *Amended 2026-11-02 (issue #364).* On a plan with `level` blocks the law is also read storey by
+> storey (`gainedCodes`, `src/furnish.ts`): a code a storey gained is a gain whatever another storey
+> lost. A single-storey plan has no storey to read, and nothing it gets moved.
+
+> **Superseded (2026-10).** The `furnish` stage exists: see
+> [ADR 0025](0025-furnish-as-explicit-transform.md). A full run is `furnish`, then `sheet`, and
+> `--only furnish` runs that stage. The paragraph below is the record of the first version.
+
+**7. Stages.** `finish` is built as stages so that `--only` can select one. This version has one
+stage, `sheet`. A `furnish` stage (placing the furniture a room's use implies) is planned.
+`--only furnish` is a usage error that says the stage is not available yet; it is never a
+silent no-op.
+
+## Why it is not a language form
+
+A `finish` keyword, or a `paper auto` setting, would put the choice back inside `compile()`.
+The source would then say "some sheet" and the drawing would show a particular one, which is
+the invisible decision ADR 0005 refuses. As a transform, `finish` writes its choice into the
+source as ordinary statements. The author reads the diff, and from then on the plan states its
+own sheet.
+
+It also keeps every existing plan stable. Nothing changes for a source nobody runs `finish`
+on, so no byte-identity baseline moves.
+
+## Consequences
+
+- An agent's loop gains one step, after lint is clean: `arch finish plan.arch`. `SKILL.md`
+  states it, and the command is in the manifest, so it is also in `arch context`, the CLI
+  reference and the generated CLI block of `spec.llm.md`.
+- `finish` adds a sheet to a plan that had none. That switches the plan to paper sizing: every
+  annotation becomes a fixed size on the sheet. This is what `paper` means, and it is why the
+  step is explicit.
+- The roll-back is all or nothing. A sheet can crowd two hand-written `dim` lines into
+  `W_DIM_OVERLAP`; `finish` then changes nothing and says so. Retrying with fewer statements
+  is not done in this version.
+
+  > *Amended 2026-10.* It is done now: see the amendment under decision 6. In this case the
+  > sheet is left out and reported, and the title and the tables are still written.
+- A plan with an authored sheet the drawing already overflows is left alone unless `--reissue`
+  is passed.
+
+## Provenance
+
+The idea of a finishing pass comes from ArchCanvas, a closed product by the same owner, which
+runs one over generated plans. This is an independent implementation under the MIT licence,
+written against ArchLang's own internals. No code was copied.

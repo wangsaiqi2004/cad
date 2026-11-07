@@ -1,0 +1,71 @@
+plan "Townhouse - two storeys of 55 m2" {
+  units mm
+  grid 100
+  paper A3 landscape
+  scale 1:100
+  north up
+  height 2800
+  dims auto all
+  title { project "Townhouse" drawn_by "ArchLang" date "2026-10-25" number "TH-01" revision "A" }
+
+  level 0 "Ground" {
+    room id=wc at (0,0) size 1500x3000 label "WC" uses wc
+    room id=hall right-of wc size 2500x3000 label "Hall" uses hall
+    room id=stair0 right-of hall size 1500x3000 label "Stair" at (4750,2900) uses circulation
+    room id=living below wc align left size 5500x3500 label "Living" uses living
+    room id=kitchen below living size 5500x3500 label "Kitchen / Dining" uses kitchen
+    walls from rooms exterior 200 partition 100 {
+      open between hall and stair0
+      open between living and kitchen
+    }
+    stair id=st at (4200,200) size 1100x2300 dir up
+    door on hall.top at center width 1000 swing into hall
+    door between hall and wc at center width 800 swing into hall
+    door between hall and living at center width 900 swing into living
+    window on wc.top at center width 600
+    window on stair0.top at center width 600
+    window on living.left width 1500
+    window on living.right width 1500
+    window on kitchen.left width 1500
+    window on kitchen.bottom at 3500 from start width 1800
+
+    furniture wc against wc.left
+    furniture basin against wc.top offset 750
+    furniture sofa_l in living anchor bottom-left flush inset 300 size 2200x900
+    furniture tv_unit against living.right
+    furniture counter against kitchen.bottom offset 1200
+    furniture kitchen_sink against kitchen.bottom offset 2400
+    furniture stove against kitchen.right
+    furniture fridge against kitchen.left offset 700
+    furniture dining_table in kitchen anchor center size 1600x900
+  }
+
+  level 1 "First" {
+    room id=bath at (0,0) size 1500x3000 label "Bathroom" uses bath
+    room id=landing right-of bath size 2500x3000 label "Landing" uses circulation
+    room id=stair1 right-of landing size 1500x3000 label "Stair" at (4750,2900) uses circulation
+    room id=bed1 below bath align left size 2750x7000 label "Bedroom 1" uses bedroom
+    room id=bed2 right-of bed1 size 2750x7000 label "Bedroom 2" uses bedroom
+    walls from rooms exterior 200 partition 100 {
+      open between landing and stair1
+    }
+    stair id=st at (4200,200) size 1100x2300 dir down
+    door between landing and bath at 1000 from start width 800 swing into landing
+    door between landing and bed1 at 625 from start width 800 swing into landing
+    door between landing and bed2 at 625 from end width 800 swing into landing
+    window on bath.top at center width 600
+    window on stair1.top at center width 600
+    window on bed1.left width 1500
+    window on bed2.right width 1500
+    window on bed1.bottom width 1200
+    window on bed2.bottom width 1200
+
+    furniture shower in bath anchor bottom-right flush size 900x900
+    furniture basin against bath.top offset 750
+    furniture wc against bath.left offset 1000
+    furniture double_bed in bed1 anchor top-left flush inset 300 size 1600x2000
+    furniture wardrobe against bed1.bottom offset 1000
+    furniture double_bed in bed2 anchor top-right flush inset 300 size 1600x2000
+    furniture wardrobe against bed2.bottom offset 1800
+  }
+}

@@ -1,0 +1,168 @@
+sequenceDiagram
+    autonumber
+    actor U as 员工(渲染进程)
+    participant IPC as preload/IPC
+    participant SET as ModelSettingsStore
+    participant SV as SecretVault
+    participant CT as CapabilityTester
+    participant PS as ProjectStore
+    participant VS as VersionStore
+    participant ING as IngestService
+    participant CE as CandidateExtractor
+    participant TO as TaskOrchestrator
+    participant SM as TaskStateMachine
+    participant EL as TaskEventLog
+    participant CAL as CalibrationService
+    participant PG as PermissionGate
+    participant WL as ToolWhitelist
+    participant PBOX as PathSandbox
+    participant AU as AuditLog
+    participant AO as AgentOrchestrator
+    participant RT as OpencalqueRuntime(runRequest)
+    participant EM as ArchSourceEmitter
+    participant AB as ArchlangBridge
+    participant OP as OpencalqueProjector
+    participant CC as CadChecker
+    participant IL as IdempotencyLedger
+    participant IGT as ImageGenTool
+    participant IPA as ImageProviderAdapter
+    participant DP as DeliveryPackager
+
+    Note over U,DP: ① 启动初始化 + BYOK 两组配置 + 5 项能力测试
+    U->>IPC: App 启动
+    IPC->>SET: load()
+    SET-->>U: 两组配置状态徽标(未配置/部分可用/全部可用)
+    U->>IPC: 保存两组配置(Provider/接口类型/BaseURL/模型名)
+    IPC->>SV: set('text', key) / set('image', key)
+    SV-->>IPC: safeStorage 加密写入 secrets.json(不含明文)
+    U->>IPC: 点击「测试连接」(5 项各自独立)
+    IPC->>CT: testFive(configs)
+    CT->>IPA: 文本生成/工具调用/图片理解/图片生成/图片编辑 各一次(模拟端点)
+    IPA-->>CT: 各自 通过|不支持|失败原因
+    CT-->>U: 5 个独立结论徽标；不支持→禁用对应功能
+    Note right of CT: 端点不支持图像能力时不发出任何生图请求(PRD 4.8)
+
+    Note over U,DP: ② 新建项目 + 导入资料(INGESTING/EXTRACTING) + 需求 8 字段候选值
+    U->>IPC: 新建项目(name, customer)
+    IPC->>PS: create()
+    PS-->>U: Project{projectId, rootPath}
+    U->>IPC: 拖入户型图/PDF/DXF/参考图
+    IPC->>TO: start(projectId) 分配 taskId + versionId
+    TO->>SM: next(DRAFT, submit) = INGESTING
+    TO->>EL: append(真实计数 已校验 N/M 个文件)
+    TO->>ING: validateAndDedupe()
+    ING-->>TO: SourceAsset[]；DWG 不解析，仅提示另存为 DXF
+    TO->>SM: INGESTING → EXTRACTING
+    TO->>CE: extract(assets)
+    CE-->>U: 8 字段候选值(带来源文件 + 待确认标记)
+    Note right of CE: 图片/PDF 不自动矢量化；确认前不写入 StructuredPlan
+
+    Note over U,DP: ③ AWAITING_CALIBRATION 硬阻塞（正式必经，不可跳过）
+    TO->>CAL: buildPendingItems()
+    CAL-->>U: 待确认项清单(比例未知/尺寸缺失/薄内墙/洞口/结构墙)
+    TO->>SM: EXTRACTING → AWAITING_CALIBRATION
+    TO->>EL: append(不显示百分比，显示「等待你确认」)
+    U->>CAL: 两点已知距离设定比例(placeFloorPlan/applyCalibration)
+    U->>CAL: 人工补漏薄内墙/合并房间/核对洞口与尺寸/确认结构墙
+    CAL->>SM: 必填项未完成 → 「确认并继续」不可用
+    U->>CAL: 逐项确认
+    CAL-->>TO: StructuredPlan vN(唯一权威数据源, mm)
+    TO->>SM: AWAITING_CALIBRATION → STRUCTURE_READY
+    TO->>EL: append(结构化数据版本号)
+
+    Note over U,DP: ④ LAYOUT_PLANNING：薄 Agent 编排 + 权限确认门(每次工具调用)
+    TO->>SM: STRUCTURE_READY → LAYOUT_PLANNING
+    TO->>AO: planLayout(plan, req)
+    AO->>RT: runRequest(session, host, text, events, signal)
+    loop 模型每轮 tool_call（MAX_STEPS 上限）
+        RT->>AO: runToolGuarded(name, input)
+        AO->>PG: assertAllowed(name, input)
+        PG->>WL: allow(name)
+        WL-->>PG: 白名单结果(拒绝任意命令/脚本/绝对路径)
+        PG->>PBOX: assertContained(targetPath)
+        PBOX-->>PG: realpath 规范化 + isWithin(projectRoot)
+        PG->>AU: record(允许|拒绝)
+        alt 用户确认「仅本次允许」
+            U->>PG: 确认(显示项目绝对路径+白名单+禁止项)
+            PG-->>AO: 放行 → runDrawingTool(name,input,host)
+        else 拒绝 / 扩大范围未重确认
+            PG-->>AO: 拒绝，任务保持原状态，审计留痕
+            Note right of PG: 覆盖 agent.ts:76「无需确认」默认；不得静默放行
+        end
+    end
+    AO-->>TO: 布局方案落盘(已完成 4/6 个房间 的真实计数)
+    TO->>EL: append(LAYOUT_PLANNING 计数)
+
+    Note over U,DP: ⑤ CAD_BUILDING：单一数据源 → 双发射器（非 AutoCAD COM）
+    TO->>SM: LAYOUT_PLANNING → CAD_BUILDING
+    TO->>EM: emit(StructuredPlan)
+    EM-->>AB: .arch 文本
+    AB->>AB: compile → plan.dxf(AC1015/AIA 图层/DIMENSION) + svg + pdf
+    AB->>AB: 双编 sha256 比对(确定性回归)
+    TO->>OP: toOps(StructuredPlan) → ops.json
+    OP->>OP: apply → drawing.opencalque(可编辑工作文档)
+    OP->>OP: checkDrawing()/quantities() 几何自检
+    TO->>EL: append(墙体→门窗→家具→标注→尺寸 5 个子阶段真实计数)
+    TO->>SM: CAD_BUILDING → CAD_CHECKING
+    TO->>CC: check(plan.dxf)
+    CC-->>TO: 六类元素齐全 + DXF 可解析 + ezdxf.audit 0 errors
+    alt 自检不通过
+        CC-->>TO: 缺失项清单
+        TO->>SM: CAD_CHECKING → STRUCTURE_READY(回退，附缺失项)
+    else 自检通过
+        TO->>SM: CAD_CHECKING → IMAGE_AWAITING_CONFIRM
+    end
+
+    Note over U,DP: ⑥ 生图：幂等预写 + 显式确认 + 结果未知禁止重提
+    TO->>IL: beginCharge(taskId, stepId, inputHash)
+    IL->>IL: 【提交前】write-ahead 落盘「已提交」记录(时间/模型名/输入哈希/请求ID)
+    IL-->>U: 显示「将调用：模型名/输入/费用由公司 API 账户承担」，等待显式确认
+    opt 用户跳过生图
+        U->>TO: 跳过(标注本版本无效果图)
+        TO->>SM: IMAGE_AWAITING_CONFIRM → PACKAGING
+    end
+    U->>TO: 显式确认提交
+    TO->>SM: IMAGE_AWAITING_CONFIRM → IMAGE_GENERATING
+    TO->>EL: append(已提交请求数=1；不显示百分比/ETA)
+    TO->>IGT: submit(ImageRequest)
+    IGT->>SV: readKeyAtCallTime()（Skill 不存 Key）
+    IGT->>IPA: HTTP(主进程 net.request)
+    alt 成功且结果校验通过
+        IPA-->>IGT: 可解码图片
+        IGT->>IL: markResult(key, SUCCESS)
+        TO->>VS: writeArtifact(效果图 + RenderRecord 不含 Key)
+        TO->>SM: IMAGE_GENERATING → PACKAGING
+    else 401/403/429/5xx/能力不支持
+        IPA-->>IGT: 错误
+        IGT->>IL: markResult(key, FAILED)
+        TO->>SM: → FAILED（中文错误 + 下一步；不自动重试）
+    else 超时 / 结果未知
+        IPA-->>IGT: timeout
+        IGT->>IL: markUnknown(key)
+        TO->>SM: → FAILED(resultUnknown=true)
+        Note right of IL: 禁止直接重提；仅提供「检查结果 / 放弃并新建任务」
+    end
+
+    opt 用户显式重试（非自动、非定时、非循环）
+        U->>TO: 点击重试（弹窗显示上次 成功/失败/结果未知 + 可能已产生费用）
+        TO->>IL: canResubmit(key)
+        IL-->>TO: 结果未知 → 阻断；仅允许新建键或放弃
+        TO->>SM: FAILED → IMAGE_AWAITING_CONFIRM（新 idempotencyKey）
+    end
+
+    Note over U,DP: ⑦ PACKAGING → DONE：新版本 + 交付包 + 脱敏自检
+    TO->>SM: → PACKAGING
+    TO->>EL: append(已写入文件数/总文件数)
+    TO->>DP: pack(versionId)
+    DP->>SV: assertNoPlaintextKey(zip)（S4=0）
+    DP->>DP: 写入边界声明(不改名 DWG/不承诺自动识别/效果图不作施工依据)
+    DP-->>U: ZIP 交付包(不含密钥) + 版本目录
+    TO->>SM: PACKAGING → DONE
+    TO->>EL: append(版本目录与交付包路径)
+
+    Note over U,DP: ⑧ 对话修改 / 重做：新 Task + 新 versionId，旧版本保留
+    U->>IPC: 「重做成果」(提示「将生成新版本，旧版本保留」并确认)
+    IPC->>TO: redo()
+    TO->>VS: newVersion(projectId, newTaskId)
+    TO->>SM: DONE → INGESTING（全新 taskId + versionId）
+    Note right of VS: 人工编辑文件哈希不变；每次生成独立版本目录

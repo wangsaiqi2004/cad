@@ -1,0 +1,156 @@
+plan "Gallery Wing" {
+  units mm
+  grid 100
+  paper A2 landscape
+  north up
+  schedule rooms
+
+  # Both long facades bow outward. An `arc` clause makes that edge a true
+  # circular arc — the faces draw as arcs and openings walk the real run length.
+  # The plan is dimensioned by hand (end of file) rather than with `dims auto
+  # all`, whose facade chains run straight through both bows.
+  wall id=shell exterior thickness 300 {
+    (0,0) (8000,0) arc (18000,0) radius 9000 cw (26000,0)
+    (26000,17000) (18000,17000) arc (8000,17000) radius 9000 cw (0,17000) close
+  }
+  wall id=w_spine partition thickness 200 { (0,10500) (26000,10500) }
+  wall id=w_b1    partition thickness 200 { (8000,0) (8000,10500) }
+  wall id=w_b2    partition thickness 200 { (18000,0) (18000,10500) }
+  wall id=w_south partition thickness 200 { (0,13000) (26000,13000) }
+  wall id=w_s1    partition thickness 200 { (8000,13000) (8000,17000) }
+  wall id=w_s2    partition thickness 200 { (13000,13000) (13000,17000) }
+  wall id=w_s3    partition thickness 200 { (19000,13000) (19000,17000) }
+  wall id=w_s4    partition thickness 200 { (22000,13000) (22000,17000) }
+
+  zone galleries "Galleries" {
+    room id=r_g1 at (0,0)     size 8000x10500  label "Gallery A"
+    room id=r_g2 at (8000,0)  size 10000x10500 label "Gallery B"
+    room id=r_g3 at (18000,0) size 8000x10500  label "Gallery C"
+  }
+  zone visitor "Visitor services" {
+    room id=r_concourse at (0,10500)     size 26000x2500 label "Concourse" uses circulation
+    room id=r_foyer     at (0,13000)     size 8000x4000  label "Foyer"     uses entry
+    room id=r_shop      at (8000,13000)  size 5000x4000  label "Shop"      uses storage
+    room id=r_cafe      at (13000,13000) size 6000x4000  label "Cafe"      uses dining
+    room id=r_wc        at (19000,13000) size 3000x4000  label "WC"        uses wc
+  }
+  zone back "Back of house" {
+    room id=r_plant at (22000,13000) size 4000x4000 label "Plant" uses utility
+  }
+
+  # The entrance is on the straight run of the south facade, opening outward as
+  # a public exit must; the fire exit does the same at the east end.
+  door    id=d_main on shell at 66208 width 2400 hinge left swing out
+  door    id=d_exit on shell at 35100 width 1200 hinge left swing out
+  opening id=o_g1 on w_spine at 4000  width 3000
+  opening id=o_g2 on w_spine at 13000 width 3000
+  opening id=o_g3 on w_spine at 22000 width 3000
+  opening id=o_foyer on w_south at 4000  width 3000
+  door    id=d_shop  on w_south at 10500 width 1200 swing into r_shop
+  opening id=o_cafe  on w_south at 16000 width 2400
+  door    id=d_wc    on w_south at 20500 width 1000 swing into r_wc
+  door    id=d_plant on w_south at 24000 width 900  swing into r_plant
+
+  window id=win_n1  on shell at 4000  width 3000
+  window id=win_n2  on shell at 13000 width 4000
+  window id=win_n3  on shell at 22000 width 3000
+  window id=win_w   at (0,5000)  width 2400 wall shell
+  window id=win_cafe on shell at 56000 width 3000
+
+  furniture id=f_bench1 bench at (3400,9400)  size 2400x600 label "Bench" in r_g1
+  furniture id=f_bench2 bench at (11300,9800) size 3400x600 label "Bench" in r_g2
+  furniture id=f_bench3 bench at (21400,9400) size 2400x600 label "Bench" in r_g3
+  furniture id=f_bench4 bench at (6000,11400)  size 2400x600 label "Bench" in r_concourse
+  furniture id=f_bench5 bench at (17000,11400) size 2400x600 label "Bench" in r_concourse
+  furniture id=f_till  counter in r_shop anchor left flush size 700x2400 label "Till"
+  furniture id=f_bar   counter in r_cafe anchor left flush size 700x2400 label "Counter"
+  furniture id=f_ct1 table at (14600,14200) size 900x900 in r_cafe
+  furniture id=f_ct2 table at (16200,14200) size 900x900 in r_cafe
+  furniture id=f_ct3 table at (17600,14200) size 900x900 in r_cafe
+  furniture id=f_wcp   wc    in r_wc anchor left  flush size 700x400
+  furniture id=f_basin basin in r_wc anchor right flush size 450x600
+
+  # ── Dimensions ─────────────────────────────────────────────────────────────
+  # The GB/T chains `dims auto all` draws — openings, rooms, overall — written
+  # out by hand, at its tier offsets (1.2, 3.4 and 5.6 × the display drawing's
+  # 526 mm dimension text) from the outer faces. Two things differ:
+  #  - the openings chains on the bowed facades stop where each bow springs
+  #    (x 8000 and 18000); auto ran one span across the bow and printed it on
+  #    the curved wall. The window in each bow is dimensioned on the arc
+  #    instead, jamb to jamb, with its width along the arc.
+  #  - the room chains tick x 13000 off the bow's outer apex, so that witness
+  #    line starts at the curve, as auto's did, not inside the building.
+  let FN = -150        # outer faces of the straight runs: north, south, west, east
+  let FS = 17150
+  let FW = -150
+  let FE = 26150
+  let AN = -1666.69    # outer face of each bow at its apex (x 13000)
+  let AS = 18666.69
+  let T0 = 631.2       # openings tier
+  let T1 = 1788.4      # rooms tier
+  let T2 = 2945.6      # overall tier
+
+  # North — read right to left, so a positive offset lands outside.
+  dim (2500,FN)->(-150,FN) offset T0
+  dim (5500,FN)->(2500,FN) offset T0
+  dim (8000,FN)->(5500,FN) offset T0
+  dim (19900,FN)->(18000,FN) offset T0
+  dim (22900,FN)->(19900,FN) offset T0
+  dim (26150,FN)->(22900,FN) offset T0
+  dim (8000,FN)->(0,FN) offset T1
+  dim (13000,AN)->(8000,AN) offset T1 - (FN - AN)
+  dim (18000,AN)->(13000,AN) offset T1 - (FN - AN)
+  dim (19000,FN)->(18000,FN) offset T1
+  dim (22000,FN)->(19000,FN) offset T1
+  dim (26000,FN)->(22000,FN) offset T1
+  dim (FE,FN)->(FW,FN) offset T2
+  # South — left to right.
+  dim (-150,FS)->(2800,FS) offset T0
+  dim (2800,FS)->(5200,FS) offset T0
+  dim (5200,FS)->(8000,FS) offset T0
+  dim (18000,FS)->(26150,FS) offset T0
+  dim (0,FS)->(8000,FS) offset T1
+  dim (8000,AS)->(13000,AS) offset T1 - (AS - FS)
+  dim (13000,AS)->(18000,AS) offset T1 - (AS - FS)
+  dim (18000,FS)->(19000,FS) offset T1
+  dim (19000,FS)->(22000,FS) offset T1
+  dim (22000,FS)->(26000,FS) offset T1
+  dim (FW,FS)->(FE,FS) offset T2
+  # West — top to bottom.
+  dim (FW,-150)->(FW,3800) offset T0
+  dim (FW,3800)->(FW,6200) offset T0
+  dim (FW,6200)->(FW,17150) offset T0
+  dim (FW,0)->(FW,10500) offset T1
+  dim (FW,10500)->(FW,13000) offset T1
+  dim (FW,13000)->(FW,17000) offset T1
+  dim (FW,FN)->(FW,FS) offset T2
+  # East — bottom to top.
+  dim (FE,17150)->(FE,9100) offset T0
+  dim (FE,9100)->(FE,7900) offset T0
+  dim (FE,7900)->(FE,-150) offset T0
+  dim (FE,17000)->(FE,13000) offset T1
+  dim (FE,13000)->(FE,10500) offset T1
+  dim (FE,10500)->(FE,0) offset T1
+  dim (FE,FS)->(FE,FN) offset T2
+
+  # The two bowed windows, jamb to jamb on the arc's inner face, reading inward
+  # (on the centreline the chord would lie over the glazing). The text states
+  # the width along the arc, not the chord.
+  dim (10761.65,-1078.95)->(14660.51,-1209.51) offset 0 text "4000"
+  dim (15335.77,18052.88)->(12414.2,18347.28) offset 0 text "3000"
+
+  # Radius call-outs, 30° east of each apex, clear of the window dimensions.
+  # North: from the centre, across the open floor of Gallery B. South: the centre
+  # is in Gallery B, two rooms and a wall away, so the leader is cut short and
+  # stays in the cafe's bow instead of running down the Shop/Cafe wall.
+  dim (13000,7483.31)->(17500,-310.91) offset 0 text "R9000"
+  dim (16350,15319.06)->(17500,17310.91) offset 0 text "R9000"
+
+  # Wall thicknesses: the shell on the east wall, as auto placed it, and the
+  # spine on a solid run of it — auto put that one in Gallery B's opening, on
+  # top of the bench.
+  dim (FE,5275)->(25850,5275) offset 0
+  dim (16500,10600)->(16500,10400) offset 0
+
+  title { project "Gallery Wing" drawn_by "ArchCanvas" }
+}

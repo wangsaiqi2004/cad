@@ -1,0 +1,243 @@
+# gitleaks findings that are verified FALSE POSITIVES, allowlisted by fingerprint.
+#
+# Read this before adding a line. A fingerprint is `<commit>:<path>:<ruleID>:<line>` and is
+# pinned to ONE line of ONE blob in ONE commit, so an entry here cannot suppress a future
+# finding — not even a real secret on the next line of the same file. That is the only form
+# an entry may take: never a path glob, never a bare rule name, never a regex allowlist.
+#
+# Two rules have produced entries here, and both match a bare hex run in a context that
+# looks like an assignment:
+#
+#   `sourcegraph-access-token`  a 40-character hex string. A git commit SHA is also 40 hex
+#                               characters, so any corpus recording git revisions trips it.
+#   `generic-api-key`           a longer opaque value next to a key-ish word.
+#
+# A file's CONTENT is not guarded by an entry here — an entry excludes one line of one blob
+# and says nothing about what that file may hold in future. `test/opaque-literal-guard.test.ts`
+# is the separate, positive guard that asserts what each of these files is allowed to
+# contain; it runs in `npm run check`. Neither replaces the other.
+#
+# ---------------------------------------------------------------------------------------
+# 2026-09-04 — three findings, all in `paper/experiments/ecosystem/results-2026-08-22.json`
+# at commit ba3bbc4c, the 7,272-package ecosystem census captured for the ArchLang papers.
+# Each was opened and read before being listed here:
+#
+#   119236  "-  - uses: memi-design/memi@74fc6ce8…<32 more hex> # v2.7.7"
+#   119237  "+  - uses: memi-design/memi@5fcbf39e…<32 more hex> # v2.7.9"
+#           A third party's workflow diff, captured verbatim by the census. These are
+#           SHA-PINNED GitHub Action references — the recommended supply-chain practice —
+#           and the trailing `# v2.7.x` comment is the convention that goes with it.
+#
+#   254081  "revision": "c74576c4…<32 more hex>"
+#           The git revision of a public npm package (github.com/taygunsavas/patina-unity-mcp),
+#           read out of that package's own metadata.
+#
+# All three are public commit SHAs belonging to other people's public repositories. None is
+# a credential, none grants access to anything, and none was ever ours.
+#
+# EVERY quoted match in this file is TRUNCATED on purpose, and must stay that way. The
+# 2026-09-20 entry below was drafted with the IndexNow key written out in full, inside the
+# very `key: "…"` context that produced the finding — so the justification reproduced the
+# finding, and the scan reported `.gitleaksignore` itself. Caught by planting probes and
+# reading the whole report, not by reading the file. Quote a match the way the entries here
+# do: enough to recognise, never enough to re-trigger.
+#
+# The SHAs above are TRUNCATED on purpose, and must stay that way. Quoted in full they are
+# 40-character hex strings, so this file trips the very rule it exists to quiet — the first
+# draft did, at these three lines, and would have turned the nightly red again on the commit
+# that added it. Found by running gitleaks against the working tree, not by reading the file.
+# The fingerprint lines at the bottom are unaffected: a fingerprint is not a hex run in a
+# scannable context, and they are what actually does the work.
+#
+# WHY THIS FILE HAD TO EXIST RATHER THAN THE FINDINGS BEING DELETED: `paper/` moved to a
+# separate repository on 2026-08-26, so the file is gone from the
+# working tree — but gitleaks scans the FULL HISTORY, and history is not being rewritten for
+# three public SHAs. Left alone, the nightly secret scan fails every night forever, which
+# does not protect anything; it trains every reader to ignore a security gate, so the next
+# finding — a real one — arrives in a job everybody already scrolls past. A permanently red
+# gate is a disabled gate that still costs CI minutes.
+# ---------------------------------------------------------------------------------------
+
+ba3bbc4c98f4a7be21139a3963e4dcd34c6476f4:paper/experiments/ecosystem/results-2026-08-22.json:sourcegraph-access-token:119236
+ba3bbc4c98f4a7be21139a3963e4dcd34c6476f4:paper/experiments/ecosystem/results-2026-08-22.json:sourcegraph-access-token:119237
+ba3bbc4c98f4a7be21139a3963e4dcd34c6476f4:paper/experiments/ecosystem/results-2026-08-22.json:sourcegraph-access-token:254081
+
+# ---------------------------------------------------------------------------------------
+# 2026-09-20 — five findings, all rule `generic-api-key`, all in `test/`. Each was opened
+# and read before being listed. The nightly secret scan had been RED on these alone since
+# 2026-09-18, with every other nightly job green.
+#
+#   test/byte-identity-baseline.ts:20,64   at a5e4be08
+#   test/height-byte-identity.test.ts:59,103  at aa6da412
+#
+#           `accessible", "5602b128…<56 more hex>"` and one more per table.
+#           MEASURED SHA-256 BYTE-IDENTITY BASELINES, not credentials.
+#           `docs/agents/iron-laws.md`: every new language form ships with a byte-identity
+#           law proved by a SHA-256 sweep over the shipped examples, and these digests ARE
+#           the law. Each is a hash OF PUBLIC OUTPUT — the SVG, `describe()` and `lint()`
+#           of a `.arch` file committed in `examples/` — so anyone can recompute every one
+#           of them from this repository; the digest body is `test/byte-identity-digest.ts`.
+#           They grant access to nothing and are not secret in any sense.
+#
+#           WHY ONLY TWO ROWS OF EACH THIRTY-ROW TABLE TRIP: the row is keyed by example
+#           name, and the first example is `accessible`, which CONTAINS "access" — one of
+#           the rule's key-ish words. No other example name does, so `aquarium`, `studio`
+#           and the rest are never flagged. A row re-measured later mints no new finding
+#           unless it is the `accessible` one (confirmed 2026-09-20: `hillside-villa`'s two
+#           rows were re-measured in this same branch and the scan still reports five).
+#
+#           BOTH PATHS appear because the scan covers the FULL HISTORY. The tables were
+#           extracted from `height-byte-identity.test.ts` into `byte-identity-baseline.ts`
+#           when a second law began importing them; the old blob is still scanned at the
+#           commit that introduced it.
+#
+#   test/indexnow-script.test.ts:78 at 51db42a9
+#
+#           `key: "0aecad13…<24 more hex>"` — THE INDEXNOW VERIFICATION KEY, and
+#           it is PUBLIC BY PROTOCOL DESIGN. IndexNow authenticates a submitter by requiring
+#           the key to be fetchable at the domain root: the search engine reads
+#           `https://archlang.uk/<key>.txt` and accepts the submission only if that file is
+#           there and contains the key. PUBLISHING IT IS THE MECHANISM. The file is committed
+#           at `docs-site/public/<that key>.txt` and served to the whole
+#           internet on purpose; see `scripts/indexnow.mjs` and `docs/seo.md`. What the key
+#           permits is asking Bing to re-crawl pages on a domain its holder already controls —
+#           no read access, no write access, no account. Do not "discover" this again and do
+#           not rotate it as if it had leaked.
+#
+# A `.gitleaks.toml` was tried for these first and REVERTED, because it became the hole this
+# file's header exists to prevent: gitleaks 8.30.1 silently ignores `matchCondition` on a
+# top-level `[[allowlists]]` block and ORs the conditions, so an entry scoped to a path AND
+# a secret shape exempted that shape in EVERY file. Measured on this tree — no allowlist, 6
+# findings (these 5 plus a planted probe); path+regex+AND, 0; the probe was swallowed. A
+# fingerprint cannot fail that way, which is the argument for the rule above. See CHANGELOG.
+# ---------------------------------------------------------------------------------------
+
+a5e4be08f691200488704e1ebab3dae0c0d84655:test/byte-identity-baseline.ts:generic-api-key:20
+a5e4be08f691200488704e1ebab3dae0c0d84655:test/byte-identity-baseline.ts:generic-api-key:64
+aa6da412c4355a333198e3d6c94bebb4478b2aa7:test/height-byte-identity.test.ts:generic-api-key:59
+aa6da412c4355a333198e3d6c94bebb4478b2aa7:test/height-byte-identity.test.ts:generic-api-key:103
+51db42a99a53069e5c953e79fb0f9609ced0ce0e:test/indexnow-script.test.ts:generic-api-key:78
+
+# ---------------------------------------------------------------------------------------
+# 2026-09-30 — one finding, rule `generic-api-key`, the same false positive as the 2026-09-20
+# block above, in the table added for the while/reassignment deprecation law. Opened and read.
+#
+#   test/while-byte-identity-baseline.ts:16 at 1f58e609
+#
+#           `["examples/accessible.arch", "a8b70a68…<56 more hex>"]` — a MEASURED SHA-256
+#           BYTE-IDENTITY BASELINE of public output (`compile().diagnostics` over the shipped
+#           examples), keyed by `accessible`, which contains the rule's key-ish word "access".
+#           Nothing else in the table trips it. `test/opaque-literal-guard.test.ts` now holds
+#           this file to "digests and shipped example names only".
+# ---------------------------------------------------------------------------------------
+
+1f58e6090cdb6db444dabb0be4660ee77df099f8:test/while-byte-identity-baseline.ts:generic-api-key:16
+# ---------------------------------------------------------------------------------------
+# 2026-10-03 — two findings, rule `generic-api-key`, the same false positive as the blocks above,
+# from re-measuring the whole-surface digests for the visual-polish symbol redraw. Opened and read.
+#
+#   test/byte-identity-baseline.ts:676 at 5ca445c9
+#   test/while-byte-identity-baseline.ts:102 at 5ca445c9
+#
+#           `["accessible", "9ca87c1c…<56 more hex>"]` and
+#           `["examples/accessible.arch", "7d17249d…<56 more hex>"]` — MEASURED SHA-256
+#           BYTE-IDENTITY BASELINES of public output (SVG + `describe()` + `lint()`, and with
+#           `compile().diagnostics`), keyed by `accessible`, which contains the rule's key-ish
+#           word "access". Nothing else in either table trips it.
+# ---------------------------------------------------------------------------------------
+5ca445c904b47aca761044fef9689d7fe1b77c94:test/byte-identity-baseline.ts:generic-api-key:676
+5ca445c904b47aca761044fef9689d7fe1b77c94:test/while-byte-identity-baseline.ts:generic-api-key:102
+
+# ---------------------------------------------------------------------------------------
+# 2026-10-17 — nine findings, rule `generic-api-key`, the same false positive as the blocks
+# above (nightly run 38869516582, issue #124). Each was opened and read before being listed.
+#
+#   test/byte-identity-baseline.ts:937,982            at 3115f219 (net internal area)
+#   test/while-byte-identity-baseline.ts:205          at 3115f219
+#   test/import-module-lets.test.ts:349,412,413       at 3115f219
+#   test/import-module-lets.test.ts:274,324,325       at 12509431 (the module-`let`s law)
+#
+#           `["accessible", "a3c542ae…<56 more hex>"]`,
+#           `["examples/accessible.arch", "dd7d71eb…<56 more hex>"]` and
+#           `["eval/goldens/accessible-bath.arch", "0f2e47f8…<56 more hex>"]` and their kin —
+#           MEASURED SHA-256 BYTE-IDENTITY BASELINES of public output (SVG + `describe()` +
+#           `lint()`, with `compile().diagnostics` in the last two files), keyed by a plan whose
+#           name contains the rule's key-ish word "access": `examples/accessible.arch` and
+#           `eval/goldens/accessible-{bath,flat}.arch`. Recomputable by anyone from this
+#           repository (`test/byte-identity-digest.ts`); they grant access to nothing.
+#
+#           `test/import-module-lets.test.ts` is new to this file: its corpus-wide table covers
+#           the eval goldens too, so it holds two more `accessible` rows than the others. It
+#           now has its own content rule in `test/opaque-literal-guard.test.ts`.
+# ---------------------------------------------------------------------------------------
+3115f219d8543f2ef5550b52e972f10d11ac7a16:test/byte-identity-baseline.ts:generic-api-key:937
+3115f219d8543f2ef5550b52e972f10d11ac7a16:test/byte-identity-baseline.ts:generic-api-key:982
+3115f219d8543f2ef5550b52e972f10d11ac7a16:test/while-byte-identity-baseline.ts:generic-api-key:205
+3115f219d8543f2ef5550b52e972f10d11ac7a16:test/import-module-lets.test.ts:generic-api-key:349
+3115f219d8543f2ef5550b52e972f10d11ac7a16:test/import-module-lets.test.ts:generic-api-key:412
+3115f219d8543f2ef5550b52e972f10d11ac7a16:test/import-module-lets.test.ts:generic-api-key:413
+125094317842c845913d09480e16b202cdab78eb:test/import-module-lets.test.ts:generic-api-key:274
+125094317842c845913d09480e16b202cdab78eb:test/import-module-lets.test.ts:generic-api-key:324
+125094317842c845913d09480e16b202cdab78eb:test/import-module-lets.test.ts:generic-api-key:325
+
+# ---------------------------------------------------------------------------------------
+# 2026-10-20 — six findings, rule `generic-api-key`, the same false positive as the blocks
+# above (nightly runs 39222412780 and 39391005480). Each was opened and read before being listed.
+#
+#   test/import-module-lets.test.ts:519 at 8d8530da, :527 at c82d5dd8
+#   test/byte-identity-baseline.ts:1079,1127          at 4a32ce1e
+#   test/import-module-lets.test.ts:407               at 4a32ce1e
+#   test/while-byte-identity-baseline.ts:264          at 4a32ce1e
+#
+#           `["eval/goldens/accessible-bath.arch", "0f2e47f8…<56 more hex>"]`,
+#           `["accessible", "cdc14f20…<56 more hex>"]` and
+#           `["examples/accessible.arch", "37750afd…<56 more hex>"]` and their kin — MEASURED
+#           SHA-256 BYTE-IDENTITY BASELINES of public output, keyed by a plan whose name
+#           contains the rule's key-ish word "access". Recomputable from this repository
+#           (`test/byte-identity-digest.ts`); they grant access to nothing.
+# ---------------------------------------------------------------------------------------
+8d8530da5e1c6b68df25ac66fdef0d133c3cc814:test/import-module-lets.test.ts:generic-api-key:519
+c82d5dd89bdd450a64c9160064fefaa97bfe3f20:test/import-module-lets.test.ts:generic-api-key:527
+4a32ce1eb1e6c462bb1c69a97332fe55be6f227d:test/byte-identity-baseline.ts:generic-api-key:1079
+4a32ce1eb1e6c462bb1c69a97332fe55be6f227d:test/byte-identity-baseline.ts:generic-api-key:1127
+4a32ce1eb1e6c462bb1c69a97332fe55be6f227d:test/import-module-lets.test.ts:generic-api-key:407
+4a32ce1eb1e6c462bb1c69a97332fe55be6f227d:test/while-byte-identity-baseline.ts:generic-api-key:264
+# ---------------------------------------------------------------------------------------
+# 2026-10-26 — six findings, rule `generic-api-key`, the same false positive as the blocks above,
+# from re-measuring every `describe()` digest for PS4.4's new totals key (PR #271). Each was
+# opened and read: the `accessible` rows of the byte-identity tables and the two
+# `eval/goldens/accessible-*` rows, MEASURED SHA-256 BYTE-IDENTITY BASELINES of public output.
+# `gitleaks git --log-opts=origin/main..HEAD` on the branch reported exactly these six.
+# ---------------------------------------------------------------------------------------
+32aed0908d16b09df9cad48ccfe045915ec878bf:test/byte-identity-baseline.ts:generic-api-key:1481
+32aed0908d16b09df9cad48ccfe045915ec878bf:test/byte-identity-baseline.ts:generic-api-key:1529
+32aed0908d16b09df9cad48ccfe045915ec878bf:test/while-byte-identity-baseline.ts:generic-api-key:329
+32aed0908d16b09df9cad48ccfe045915ec878bf:test/import-module-lets.test.ts:generic-api-key:501
+32aed0908d16b09df9cad48ccfe045915ec878bf:test/import-module-lets.test.ts:generic-api-key:575
+32aed0908d16b09df9cad48ccfe045915ec878bf:test/import-module-lets.test.ts:generic-api-key:576
+# 2026-10-26 (PR #271 red-team round 1) — the same six rows re-measured once more, for the top-level
+# building key; the same false positive, each opened and read.
+344cc2d24b14dd542920586e520d6020536ce8f7:test/byte-identity-baseline.ts:generic-api-key:1486
+344cc2d24b14dd542920586e520d6020536ce8f7:test/byte-identity-baseline.ts:generic-api-key:1534
+344cc2d24b14dd542920586e520d6020536ce8f7:test/import-module-lets.test.ts:generic-api-key:501
+344cc2d24b14dd542920586e520d6020536ce8f7:test/while-byte-identity-baseline.ts:generic-api-key:329
+344cc2d24b14dd542920586e520d6020536ce8f7:test/import-module-lets.test.ts:generic-api-key:575
+344cc2d24b14dd542920586e520d6020536ce8f7:test/import-module-lets.test.ts:generic-api-key:576
+# ---------------------------------------------------------------------------------------
+# 2026-10-27 — one finding, rule `generic-api-key`, the same false positive as the blocks above
+# (nightly run 40291956443, the `secrets` job of 2026-10-26). Opened and read:
+#
+#   test/double-door-byte-identity.test.ts:49   at c2978a47
+#
+#           `["examples/accessible.arch", "5f69fe78…<56 more hex>"]`, the first row of the
+#           double-door byte-identity BASELINE: a MEASURED SHA-256 digest of public output,
+#           keyed by a plan whose name contains the rule's key-ish word "access". Recomputable
+#           from this repository (`test/byte-identity-digest.ts`); it grants access to nothing.
+#           `gitleaks detect` 8.24.3 over the full history at adbf0dbb reported exactly this one.
+# ---------------------------------------------------------------------------------------
+c2978a477cf30cf228233c5707d5ddfb9e9c45ea:test/double-door-byte-identity.test.ts:generic-api-key:49
+# Two more of the same: byte-identity rows keyed by `examples/accessible.arch` (wall-status table) and
+# by a plan in the open-crossing table. Recomputable, they grant access to nothing. `gitleaks detect`
+# 8.24.3 over the full history at origin/main on 2026-10-31 reported exactly these two.
+2574428a96a0eccbb0b0ea1c0bdfda4266236655:test/open-crossing.test.ts:generic-api-key:73
+d6c2ff5ad9267d12b7ec4e207c7467ed4cb41ff4:test/wall-status-byte-identity.test.ts:generic-api-key:36

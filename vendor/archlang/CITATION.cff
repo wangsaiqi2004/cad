@@ -1,0 +1,68 @@
+# Citation metadata for ArchLang.
+#
+# Read by three things, which is why it is worth keeping accurate: GitHub renders a
+# "Cite this repository" panel from it, the Zenodo/GitHub integration takes a release's
+# archive metadata from it, and Zotero imports it directly.
+#
+# NOT drift-gated — the `version` and `date-released` fields below are release facts, and
+# they move when a release moves. Update them in the release checklist (CONTRIBUTING.md),
+# not by regeneration.
+#
+# The papers that cite this software moved to a separate repository on 2026-08-26.
+cff-version: 1.2.0
+message: "If you use ArchLang in academic work, please cite it as below."
+title: ArchLang
+abstract: >-
+  A declarative language that compiles floor-plan source to professional SVG, DXF, PDF, PNG
+  and ASCII drawings. The compiler is pure, synchronous, deterministic and has no runtime
+  dependencies, and its diagnostic surface is designed as a protocol for language-model
+  authors: catalogued codes carrying byte spans, machine-applicable fixes with declared
+  applicability tiers, and a semantic description channel that lets a text-only agent verify
+  what it drew without rasterising anything.
+type: software
+authors:
+  - family-names: Meng
+    given-names: Chan
+    email: chanmeng.career@gmail.com
+    orcid: "https://orcid.org/0009-0002-1446-778X"
+# Snapshot is main on 2026-09-25. package.json is still 1.36.0; this tree includes
+# commits after the npm tag v1.36.0 (2026-09-13). The GitHub tag is archive-1.36.0
+# and does not start with v, so .github/workflows/release.yml does not publish.
+version: 1.36.0
+date-released: "2026-09-25"
+license: MIT
+repository-code: "https://github.com/ChanMeng666/archlang"
+url: "https://archlang.uk"
+repository-artifact: "https://www.npmjs.com/package/@chanmeng666/archlang"
+keywords:
+  - domain-specific language
+  - compiler
+  - floor plan
+  - architecture
+  - determinism
+  - LLM code generation
+  - program repair
+  - SVG
+# The concept DOI resolves to the latest version and is the one to cite. The version
+# DOI names the archive-1.36.0 release.
+identifiers:
+  - description: The concept DOI for all archived versions of ArchLang
+    type: doi
+    value: "10.5281/zenodo.22950936"
+  - description: The archived snapshot of ArchLang 1.36.0 (main, 2026-09-25)
+    type: doi
+    value: "10.5281/zenodo.22950937"
+# Work about ArchLang. A preprint on Zenodo, not peer-reviewed.
+references:
+  - type: article
+    title: "Reproducible Is Not Correct: Reflexive Gates and the Self-Descriptions We Ship to Language Models"
+    authors:
+      - family-names: Meng
+        given-names: Chan
+        orcid: "https://orcid.org/0009-0002-1446-778X"
+    year: 2026
+    status: preprint
+    publisher:
+      name: Zenodo
+    doi: "10.5281/zenodo.22958002"
+    url: "https://doi.org/10.5281/zenodo.22958002"

@@ -1,0 +1,19 @@
+# class: circulation-privacy
+# twin-of: bath-door-off-kitchen
+# origin: repro/family-apartment.arch d_kitchen_bath2 moved onto the hall
+# expect: none
+# fact: the bathroom's only door joins it to the hall
+plan "Bath off the hall" {
+  units mm
+  grid 50
+  wall id=shell exterior thickness 200 { (0,0) (6500,0) (6500,4000) (0,4000) close }
+  wall id=w_mid partition thickness 100 { (4000,0) (4000,4000) }
+  wall id=w_bath partition thickness 100 { (4000,2000) (6500,2000) }
+  room id=r_kitchen at (0,0) size 4000x4000 label "Kitchen" uses kitchen
+  room id=r_bath at (4000,0) size 2500x2000 label "Bathroom 2" uses bath
+  room id=r_hall at (4000,2000) size 2500x2000 label "Hall" uses hall
+  door id=d_entry at (2000,4000) width 900 wall shell
+  door id=d_kitchen_hall at (4000,3000) width 800 wall w_mid
+  door id=d_hall_bath at (5250,2000) width 700 wall w_bath
+  window at (2000,0) width 1500 wall shell
+}

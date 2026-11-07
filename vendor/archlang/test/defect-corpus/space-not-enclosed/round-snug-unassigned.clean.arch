@@ -1,0 +1,12 @@
+# class: space-not-enclosed
+# twin-of: round-snug-unassigned
+# origin: audits/archcanvas-public-examples.md BB1 with the room drawn as the walled rectangle
+# expect: none
+# fact: the room covers the whole walled rectangle (3.8 x 2.4 m)
+plan "Snug filling its walls" {
+  units mm
+  grid 50
+  wall id=shell exterior thickness 200 { (0,0) (3800,0) (3800,2400) (0,2400) close }
+  room id=r_snug at (0,0) size 3800x2400 label "Snug" uses living
+  door id=d_snug on shell at 5000 width 900
+}

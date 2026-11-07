@@ -1,0 +1,79 @@
+plan "Three-Bed Family House" {
+  units mm
+  grid 100
+  paper A3 landscape
+  north up
+  dims auto all
+  schedule rooms
+
+  room id=master at (0,0) size 3800x3800 label "Master Bedroom" uses bedroom
+  room id=ensuite at (3800,0) size 2000x2400 label "Ensuite" uses bath
+  room id=dress at (3800,2400) size 2000x1400 label "Dressing" uses storage
+  room id=bed2 at (5800,0) size 3200x3800 label "Bedroom 2" uses bedroom
+  room id=bed3 at (9000,0) size 3500x3800 label "Bedroom 3" uses bedroom
+  room id=passage at (0,3800) size 12500x1200 label "Passage" uses circulation
+  room id=garage at (0,5000) size 3600x4800 label "Garage" uses garage
+  room id=bath at (3600,5000) size 1800x2400 label "Bathroom" uses bath
+  room id=utility at (3600,7400) size 1800x2400 label "Utility" uses utility
+  room id=hall at (5400,5000) size 1600x4800 label "Entrance Hall" uses entry
+  room id=living at (7000,5000) size 5500x2500 label "Living" uses living
+  room id=kitchen at (7000,7500) size 5500x2300 label "Kitchen / Dining" uses kitchen
+
+  walls from rooms exterior 250 partition 100 {
+    open between living and kitchen width 2400
+  }
+
+  door on hall.bottom at center width 1000 swing inward
+  door between hall and passage at center width 900 swing into passage
+  door between hall and living at center width 900 swing into living
+  door between hall and kitchen at center width 900 swing into kitchen
+  door between hall and utility at center width 800 swing into utility
+  door between hall and bath at center width 800 swing into bath
+  door between passage and master at center width 900 swing into master
+  door between passage and bed2 at center width 900 swing into bed2
+  door between passage and bed3 at center width 900 swing into bed3
+  door between master and ensuite at center width 800 swing into ensuite
+  door between master and dress at center width 800 swing into dress
+  door between garage and utility at center width 800 swing into utility
+  door garage on garage.bottom at center width 2400
+
+  window on master.left width 1500
+  window on master.top width 1500
+  window on ensuite.top width 600
+  window on bed2.top width 1500
+  window on bed3.top width 1500
+  window on bed3.right width 1200
+  window on living.right width 1800
+  window on kitchen.right width 1500
+  window on kitchen.bottom width 1500
+  window on utility.bottom width 600
+
+  furniture double_bed in master anchor top flush size 1800x2100
+  furniture nightstand in master anchor top-left flush inset 300 size 450x400
+  furniture nightstand in master anchor top-right flush inset 300 size 450x400
+  furniture wc against ensuite.right offset 1700
+  furniture basin against ensuite.bottom offset 600
+  furniture shower in ensuite anchor top-right flush size 900x900
+  furniture wardrobe in dress anchor right flush size 600x1200
+
+  furniture bed in bed2 anchor top-left flush inset 300 size 1500x2000
+  furniture wardrobe in bed2 anchor right flush size 600x1800
+  furniture bed in bed3 anchor top-left flush inset 300 size 1500x2000
+  furniture wardrobe in bed3 anchor right flush size 600x1800
+
+  furniture bathtub in bath anchor top-left flush size 750x1700
+  furniture wc against bath.bottom offset 1300
+  furniture basin against bath.bottom offset 500
+
+  furniture washer against utility.top offset 500
+  furniture laundry_sink against utility.top offset 1300
+
+  furniture sofa_l in living anchor bottom-right flush size 2400x900
+  furniture tv_unit in living anchor top flush size 1600x450
+  furniture counter against kitchen.bottom offset 2400 size 2400x600
+  furniture kitchen_sink in kitchen anchor bottom-right flush size 1000x600
+  furniture stove against kitchen.bottom offset 4000
+  furniture fridge in kitchen anchor top-right flush size 700x700
+
+  title { project "Three-Bed Family House" drawn_by "ArchLang" date "2026-10-23" number "H-01" revision "A" }
+}

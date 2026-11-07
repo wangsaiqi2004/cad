@@ -1,0 +1,21 @@
+# class: circulation-privacy
+# twin-of: bedroom-via-bedroom
+# origin: repro/family-apartment.arch with Bedroom 4's door moved onto the living room
+# expect: none
+# fact: each bedroom has its own door from the living room
+plan "Bedrooms off the living room" {
+  units mm
+  grid 50
+  wall id=shell exterior thickness 200 { (0,0) (6000,0) (6000,7000) (0,7000) close }
+  wall id=w_band partition thickness 100 { (0,3500) (6000,3500) }
+  wall id=w_beds partition thickness 100 { (3000,3500) (3000,7000) }
+  room id=r_living at (0,0) size 6000x3500 label "Living Room" uses living
+  room id=r_bed3 at (0,3500) size 3000x3500 label "Bedroom 3" uses bedroom
+  room id=r_bed4 at (3000,3500) size 3000x3500 label "Bedroom 4" uses bedroom
+  door id=d_entry at (3000,0) width 900 wall shell
+  door id=d_living_bed3 at (1500,3500) width 800 wall w_band
+  door id=d_living_bed4 at (4500,3500) width 800 wall w_band
+  window at (1500,0) width 1200 wall shell
+  window at (1500,7000) width 1200 wall shell
+  window at (4500,7000) width 1200 wall shell
+}

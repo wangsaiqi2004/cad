@@ -1,0 +1,507 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "array",
+  "items": {
+    "oneOf": [
+      {
+        "type": "object",
+        "properties": {
+          "op": {
+            "type": "string",
+            "const": "add_node"
+          },
+          "node": {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "type"
+            ],
+            "additionalProperties": {},
+            "description": "A node as in the document schema. \"id\" and \"order\" may be omitted."
+          }
+        },
+        "required": [
+          "op",
+          "node"
+        ],
+        "additionalProperties": false,
+        "description": "Adds a node. Pages and components take no parent; every other node needs a page, component or group as parent."
+      },
+      {
+        "type": "object",
+        "properties": {
+          "op": {
+            "type": "string",
+            "const": "update_node"
+          },
+          "id": {
+            "type": "string"
+          },
+          "patch": {
+            "type": "object",
+            "propertyNames": {
+              "type": "string"
+            },
+            "additionalProperties": {},
+            "description": "Shallow merge patch: each key replaces that property, and a null value removes it."
+          }
+        },
+        "required": [
+          "op",
+          "id",
+          "patch"
+        ],
+        "additionalProperties": false,
+        "description": "Changes properties of a node. Set \"parent\" or \"order\" to move it. \"id\" and \"type\" cannot change."
+      },
+      {
+        "type": "object",
+        "properties": {
+          "op": {
+            "type": "string",
+            "const": "remove_node"
+          },
+          "id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "op",
+          "id"
+        ],
+        "additionalProperties": false,
+        "description": "Removes a node and everything inside it. Removing a component also removes its instances."
+      },
+      {
+        "type": "object",
+        "properties": {
+          "op": {
+            "type": "string",
+            "const": "add_layer"
+          },
+          "layer": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "name"
+            ],
+            "additionalProperties": {}
+          }
+        },
+        "required": [
+          "op",
+          "layer"
+        ],
+        "additionalProperties": false
+      },
+      {
+        "type": "object",
+        "properties": {
+          "op": {
+            "type": "string",
+            "const": "update_layer"
+          },
+          "id": {
+            "type": "string"
+          },
+          "patch": {
+            "type": "object",
+            "propertyNames": {
+              "type": "string"
+            },
+            "additionalProperties": {},
+            "description": "Shallow merge patch: each key replaces that property, and a null value removes it."
+          }
+        },
+        "required": [
+          "op",
+          "id",
+          "patch"
+        ],
+        "additionalProperties": false
+      },
+      {
+        "type": "object",
+        "properties": {
+          "op": {
+            "type": "string",
+            "const": "remove_layer"
+          },
+          "id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "op",
+          "id"
+        ],
+        "additionalProperties": false,
+        "description": "Removes a layer. Its nodes move to the first remaining layer."
+      },
+      {
+        "type": "object",
+        "properties": {
+          "op": {
+            "type": "string",
+            "const": "add_color"
+          },
+          "color": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "value": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "name",
+              "value"
+            ],
+            "additionalProperties": {}
+          }
+        },
+        "required": [
+          "op",
+          "color"
+        ],
+        "additionalProperties": false,
+        "description": "Adds a shared colour. Use it by setting a colour property (style.stroke, style.fill, a layer color) to \"var(--<id>)\"."
+      },
+      {
+        "type": "object",
+        "properties": {
+          "op": {
+            "type": "string",
+            "const": "add_wall_type"
+          }
+        },
+        "required": [
+          "op"
+        ],
+        "additionalProperties": {},
+        "description": "Refused since format 2, which took wall types out: a wall carries what it is made of itself."
+      },
+      {
+        "type": "object",
+        "properties": {
+          "op": {
+            "type": "string",
+            "const": "update_wall_type"
+          }
+        },
+        "required": [
+          "op"
+        ],
+        "additionalProperties": {},
+        "description": "Refused since format 2, which took wall types out: a wall carries what it is made of itself."
+      },
+      {
+        "type": "object",
+        "properties": {
+          "op": {
+            "type": "string",
+            "const": "remove_wall_type"
+          }
+        },
+        "required": [
+          "op"
+        ],
+        "additionalProperties": {},
+        "description": "Refused since format 2, which took wall types out: a wall carries what it is made of itself."
+      },
+      {
+        "type": "object",
+        "properties": {
+          "op": {
+            "type": "string",
+            "const": "add_dimension_style"
+          },
+          "dimensionStyle": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "name"
+            ],
+            "additionalProperties": {}
+          }
+        },
+        "required": [
+          "op",
+          "dimensionStyle"
+        ],
+        "additionalProperties": false,
+        "description": "Adds a dimension style: a name and whichever properties of a dimension it defines, under the same names (style, startMarker, size, unit…). Dimensions take it with \"dimensionStyle\": \"<id>\"."
+      },
+      {
+        "type": "object",
+        "properties": {
+          "op": {
+            "type": "string",
+            "const": "update_dimension_style"
+          },
+          "id": {
+            "type": "string"
+          },
+          "patch": {
+            "type": "object",
+            "propertyNames": {
+              "type": "string"
+            },
+            "additionalProperties": {},
+            "description": "Shallow merge patch: each key replaces that property, and a null value removes it."
+          }
+        },
+        "required": [
+          "op",
+          "id",
+          "patch"
+        ],
+        "additionalProperties": false,
+        "description": "Changes a dimension style; every dimension in it follows, except where it has a value of its own. A null in the patch makes the style stop defining that property."
+      },
+      {
+        "type": "object",
+        "properties": {
+          "op": {
+            "type": "string",
+            "const": "remove_dimension_style"
+          },
+          "id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "op",
+          "id"
+        ],
+        "additionalProperties": false,
+        "description": "Removes a dimension style. Its dimensions keep how they look: what the style gave them becomes their own."
+      },
+      {
+        "type": "object",
+        "properties": {
+          "op": {
+            "type": "string",
+            "const": "add_material"
+          },
+          "material": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "name"
+            ],
+            "additionalProperties": {}
+          }
+        },
+        "required": [
+          "op",
+          "material"
+        ],
+        "additionalProperties": false,
+        "description": "Adds a material: a name, and the fill and pattern it is drawn with. Walls and the floors of rooms take it with \"material\": \"<id>\"."
+      },
+      {
+        "type": "object",
+        "properties": {
+          "op": {
+            "type": "string",
+            "const": "update_material"
+          },
+          "id": {
+            "type": "string"
+          },
+          "patch": {
+            "type": "object",
+            "propertyNames": {
+              "type": "string"
+            },
+            "additionalProperties": {},
+            "description": "Shallow merge patch: each key replaces that property, and a null value removes it."
+          }
+        },
+        "required": [
+          "op",
+          "id",
+          "patch"
+        ],
+        "additionalProperties": false,
+        "description": "Changes a material; every wall and floor made of it follows. A null in the patch removes that property."
+      },
+      {
+        "type": "object",
+        "properties": {
+          "op": {
+            "type": "string",
+            "const": "remove_material"
+          },
+          "id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "op",
+          "id"
+        ],
+        "additionalProperties": false,
+        "description": "Removes a material. Walls made of it are of the default material after; floors made of it keep its colour and pattern as their own. The default material cannot be removed."
+      },
+      {
+        "type": "object",
+        "properties": {
+          "op": {
+            "type": "string",
+            "const": "update_color"
+          },
+          "id": {
+            "type": "string"
+          },
+          "patch": {
+            "type": "object",
+            "propertyNames": {
+              "type": "string"
+            },
+            "additionalProperties": {},
+            "description": "Shallow merge patch: each key replaces that property, and a null value removes it."
+          }
+        },
+        "required": [
+          "op",
+          "id",
+          "patch"
+        ],
+        "additionalProperties": false,
+        "description": "Changes a shared colour; everything that refers to it changes with it."
+      },
+      {
+        "type": "object",
+        "properties": {
+          "op": {
+            "type": "string",
+            "const": "remove_color"
+          },
+          "id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "op",
+          "id"
+        ],
+        "additionalProperties": false,
+        "description": "Removes a shared colour. What referred to it keeps the colour it had, as a plain colour."
+      },
+      {
+        "type": "object",
+        "properties": {
+          "op": {
+            "type": "string",
+            "const": "add_asset"
+          },
+          "asset": {
+            "type": "object",
+            "properties": {
+              "mime": {
+                "type": "string"
+              },
+              "data": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "mime",
+              "data"
+            ],
+            "additionalProperties": {}
+          }
+        },
+        "required": [
+          "op",
+          "asset"
+        ],
+        "additionalProperties": false,
+        "description": "Embeds a file (base64) so image nodes can show it. Assets are dropped on save once nothing uses them."
+      },
+      {
+        "type": "object",
+        "properties": {
+          "op": {
+            "type": "string",
+            "const": "set_document"
+          },
+          "name": {
+            "type": "string"
+          },
+          "info": {
+            "type": "object",
+            "propertyNames": {
+              "type": "string"
+            },
+            "additionalProperties": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "settings": {
+            "type": "object",
+            "properties": {
+              "system": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "enum": [
+                      "metric",
+                      "imperial"
+                    ]
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "decimal": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "enum": [
+                      ".",
+                      ","
+                    ]
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "op"
+        ],
+        "additionalProperties": false,
+        "description": "Renames the document and/or changes what it says about itself (\"info\": project, client, address, author), shown in title blocks, and/or how it writes its numbers (\"settings\": system, decimal). In \"info\" and \"settings\" each key replaces that entry and a null or empty value removes it."
+      }
+    ]
+  }
+}

@@ -1,0 +1,83 @@
+plan "Two-Bed Apartment, Level 3 Unit 12" {
+  units mm
+  grid 50
+  paper A3 landscape
+  scale 1:100
+  north up
+  dims auto all
+  height 2700
+
+  title { project "Two-bed apartment" drawn_by "AI first-contact" date "2026-10-18" number "A-101" revision "A" }
+
+  # ---- rooms (centreline rectangles) ----
+  room id=r_bed2  at (0,1500)    size 3600x3200  label "Bedroom 2"      uses bedroom
+  room id=r_bed1  at (0,4700)    size 3600x3800  label "Bedroom 1"      uses bedroom
+  room id=r_hall  at (3600,1500) size 1600x4500  label "Hall"           uses hall
+  room id=r_laun  at (3600,6000) size 1600x2500  label "Laundry"        uses utility
+  room id=r_bath  at (5200,1500) size 2000x2500  label "Bathroom"       uses bath
+  room id=r_kit   at (7200,1500) size 2800x2500  label "Kitchen"        uses kitchen
+  room id=r_liv   at (5200,4000) size 4800x4500  label "Living / Dining" uses living dining
+
+  # ---- exterior shell, one wall per side so openings have simple run positions ----
+  wall id=w_e    exterior thickness 250 { (10000,1500) (10000,8500) }
+  wall id=w_s    exterior thickness 250 { (10000,8500) (0,8500) }
+  wall id=w_w    exterior thickness 250 { (0,8500) (0,1500) }
+
+  # ---- entrance wall: faces the common corridor (drawn as paving outside) ----
+  wall id=w_dem  exterior thickness 250 { (0,1500) (10000,1500) }
+
+  # ---- interior partitions ----
+  wall id=w_p1 partition thickness 100 { (3600,1500) (3600,8500) }
+  wall id=w_p2 partition thickness 100 { (0,4700) (3600,4700) }
+  wall id=w_p3 partition thickness 100 { (3600,6000) (5200,6000) }
+  wall id=w_p4 partition thickness 100 { (5200,1500) (5200,8500) }
+  wall id=w_p5 partition thickness 100 { (7200,1500) (7200,4000) }
+  wall id=w_p6 partition thickness 100 { (5200,4000) (10000,4000) }
+
+  # ---- doors ----
+  door id=d_front on w_dem at 4400  width 1000 swing into r_hall
+  door id=d_bed2  on w_p1  at 700  width 900  swing into r_bed2
+  door id=d_bed1  on w_p1  at 3800  width 900  swing into r_bed1
+  door id=d_bath  on w_p4  at 1900  width 800  swing into r_hall
+  door id=d_liv   on w_p4  at 3500  width 900  swing into r_liv
+  door id=d_laun  on w_p4  at 5700  width 800  swing into r_laun
+  door id=d_bal   sliding on w_s at 2000 width 2000
+  opening id=o_kit on w_p6 at 3400 width 1800
+
+  # ---- windows ----
+  window on w_w at 5400 width 1400
+  window on w_w at 1900 width 1400
+  window on w_s at 8200 width 1200
+  window on w_s at 4000 width 1200
+  window on w_e at 1250 width 1200
+  window on w_e at 4700 width 1600
+
+  # ---- common corridor (outside this unit) and balcony off the living room ----
+  outdoor id=o_corr paving at (0,0) size 10000x1350 label "Common corridor"
+  outdoor id=o_bal balcony at (5500,8625) size 4200x1400 label "Balcony" rail left right bottom
+
+  # ---- furniture ----
+  furniture double_bed in r_bed1 anchor bottom inset 300 size 1800x2000 label "Bed"
+  furniture wardrobe against wall w_p2 offset 1300 label "Wardrobe" in r_bed1
+  furniture bed against wall w_p2 offset 2000 label "Bed" in r_bed2
+  furniture wardrobe against wall w_dem offset 1300 label "Wardrobe" in r_bed2
+
+  furniture bathtub against wall w_dem offset 6200 in r_bath
+  furniture wc against wall w_p5 offset 2000 in r_bath
+  furniture basin against wall w_p5 offset 1400 in r_bath
+
+  furniture kitchen_sink against wall w_dem offset 8500 in r_kit
+  furniture stove against wall w_dem offset 9450 in r_kit
+  furniture fridge against wall w_dem offset 7600 in r_kit
+
+  furniture washer against wall w_p3 offset 800 in r_laun
+
+  furniture sofa at (5500,6300) size 2200x900 label "Sofa"
+  furniture tv_unit against wall w_p6 offset 1000 label "TV" in r_liv
+  furniture table in r_liv anchor right inset 400 size 1600x900 label "Dining table"
+  furniture chair at (8200,5300) size 450x450
+  furniture chair at (9000,5300) size 450x450
+  furniture chair at (8200,6750) size 450x450
+  furniture chair at (9000,6750) size 450x450
+  furniture coffee_table at (6000,5400) size 1000x500 label "Coffee"
+}

@@ -1,0 +1,88 @@
+plan "Two-Storey Townhouse" {
+  units mm
+  grid 50
+  paper A3 portrait
+  north up
+  dims auto all
+  height 2700
+
+  title { project "Mid-terrace townhouse" drawn_by "AI first-contact" date "2026-10-18" number "T-101" revision "A" }
+
+  # 5500 x 10000 footprint = 55 m2 per floor. Street to the south, garden to the north.
+  # West and east walls are party walls (no openings).
+
+  level 0 "Ground floor" height 2700 {
+    room id=g_hall at (0,6000)    size 2100x4000 label "Hall"            uses hall
+    room id=g_liv  at (2100,6000) size 3400x4000 label "Living"          uses living
+    room id=g_wc   at (0,4000)    size 2100x2000 label "WC"              uses wc
+    room id=g_kit  polygon (0,0) (5500,0) (5500,6000) (2100,6000) (2100,4000) (0,4000) label "Kitchen / Dining" uses kitchen dining
+
+    wall id=g_n exterior thickness 250 { (0,0) (5500,0) }
+    wall id=g_e exterior thickness 250 { (5500,0) (5500,10000) }
+    wall id=g_s exterior thickness 250 { (0,10000) (5500,10000) }
+    wall id=g_w exterior thickness 250 { (0,0) (0,10000) }
+    wall id=g_h1 partition thickness 100 { (0,6000) (5500,6000) }
+    wall id=g_h2 partition thickness 100 { (0,4000) (2100,4000) }
+    wall id=g_v1 partition thickness 100 { (2100,6000) (2100,10000) }
+    wall id=g_v2 partition thickness 100 { (2100,4000) (2100,6000) }
+
+    stair id=st at (150,6200) size 900x3400 dir up
+
+    door id=g_front on g_s at 1500 width 900 swing into g_hall
+    door id=g_dwc on g_h1 at 1500 width 800 swing into g_wc
+    opening id=g_o_hl on g_v1 at 2000 width 1000
+    opening id=g_o_lk on g_h1 at 3800 width 1800
+    door id=g_patio sliding on g_n at 4400 width 1600
+
+    window on g_s at 3800 width 2000
+    window on g_n at 1200 width 1200
+
+    furniture wc against wall g_h2 offset 1000 in g_wc
+    furniture basin against wall g_w offset 5000 in g_wc
+    furniture sofa at (2400,7200) size 900x2000 label "Sofa"
+    furniture coffee_table at (3500,7800) size 600x1000
+    furniture tv_unit against wall g_e offset 8000 in g_liv
+    furniture fridge against wall g_n offset 450 in g_kit
+    furniture kitchen_sink against wall g_n offset 1200 in g_kit
+    furniture stove against wall g_n offset 2300 in g_kit
+    furniture table at (2700,4200) size 1600x900 label "Dining table"
+    furniture chair at (2900,3750) size 450x450
+    furniture chair at (3500,3750) size 450x450
+    furniture chair at (2900,5100) size 450x450
+    furniture chair at (3500,5100) size 450x450
+  }
+
+  level 1 "First floor" height 2700 {
+    room id=f_bed1 at (0,0)      size 3800x4400 label "Bedroom 1" uses bedroom
+    room id=f_bath at (3800,0)   size 1700x4400 label "Bathroom"  uses bath
+    room id=f_land polygon (0,4400) (5500,4400) (5500,6000) (1200,6000) (1200,10000) (0,10000) label "Landing" uses circulation
+    room id=f_bed2 at (1200,6000) size 4300x4000 label "Bedroom 2" uses bedroom
+
+    wall id=f_n exterior thickness 250 { (0,0) (5500,0) }
+    wall id=f_e exterior thickness 250 { (5500,0) (5500,10000) }
+    wall id=f_s exterior thickness 250 { (0,10000) (5500,10000) }
+    wall id=f_w exterior thickness 250 { (0,0) (0,10000) }
+    wall id=f_h1 partition thickness 100 { (0,4400) (5500,4400) }
+    wall id=f_h2 partition thickness 100 { (1200,6000) (5500,6000) }
+    wall id=f_v1 partition thickness 100 { (1200,6000) (1200,10000) }
+    wall id=f_v2 partition thickness 100 { (3800,0) (3800,4400) }
+
+    stair id=st at (150,6200) size 900x3400 dir down
+
+    door id=f_d1 on f_h1 at 1700 width 900 swing into f_bed1
+    door id=f_d2 on f_h1 at 4700 width 800 swing into f_bath
+    door id=f_d3 on f_h2 at 1800 width 900 swing into f_bed2
+
+    window on f_n at 1900 width 1600
+    window on f_n at 4650 width 600
+    window on f_s at 3400 width 1800
+
+    furniture double_bed against wall f_w offset 2000 in f_bed1
+    furniture wardrobe against wall f_h1 offset 3100 size 1200x600 in f_bed1
+    furniture bathtub against wall f_e offset 1000 in f_bath
+    furniture wc against wall f_e offset 2500 in f_bath
+    furniture basin against wall f_e offset 3300 in f_bath
+    furniture double_bed against wall f_e offset 8000 in f_bed2
+    furniture wardrobe against wall f_v1 offset 1500 size 1600x600 in f_bed2
+  }
+}

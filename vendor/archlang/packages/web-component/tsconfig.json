@@ -1,0 +1,27 @@
+{
+  // `npm run typecheck` (part of the root `typecheck:all`): the element, its build script and
+  // its tests. The element is browser code, the script and tests run in Node, so both lib sets.
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "types": ["node"],
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noImplicitOverride": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "noEmit": true,
+    // The core is a peer dependency; inside the monorepo it is the repo root's SOURCE (the same
+    // mapping vitest.config.ts uses), so this typechecks with no prior `npm run build`.
+    "baseUrl": ".",
+    "paths": { "@chanmeng666/archlang": ["../../src/index.ts"] }
+  },
+  "include": ["src", "test", "scripts"]
+}

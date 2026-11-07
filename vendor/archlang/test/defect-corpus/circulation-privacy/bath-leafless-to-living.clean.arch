@@ -1,0 +1,20 @@
+# class: circulation-privacy
+# twin-of: bath-leafless-to-living
+# origin: repro/family-apartment.arch with the opening replaced by a door
+# expect: none
+# fact: the bathroom's only connector is an 800 mm hinged door onto the living room
+plan "Bath with a door to the living room" {
+  units mm
+  grid 50
+  wall id=shell exterior thickness 200 { (0,0) (8000,0) (8000,5000) (0,5000) close }
+  wall id=w_mid partition thickness 100 { (5000,0) (5000,5000) }
+  wall id=w_bath partition thickness 100 { (5000,2500) (8000,2500) }
+  room id=r_living at (0,0) size 5000x5000 label "Living Room" uses living
+  room id=r_bath at (5000,0) size 3000x2500 label "Bathroom 1" uses bath
+  room id=r_bed at (5000,2500) size 3000x2500 label "Bedroom" uses bedroom
+  door id=d_entry at (2500,5000) width 900 wall shell
+  door id=d_bath at (5000,1250) width 800 wall w_mid
+  door id=d_bed at (5000,3750) width 800 wall w_mid
+  window at (2500,0) width 1500 wall shell
+  window at (6500,5000) width 1200 wall shell
+}

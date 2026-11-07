@@ -1,0 +1,19 @@
+# class: annotation-collisions
+# origin: evidence.md section 4 "A lying dimension" (examples/studio.arch top dim with text "4500" over a 4000 span)
+# expect: W_DIM_TEXT_MISMATCH
+# status: done
+# fact: the dim runs (4000,-100) to (0,-100), a 4000 mm span, and its text says "4500"
+plan "Dimension text that lies" {
+  units mm
+  grid 50
+  wall id=shell exterior thickness 200 { (0,0) (7000,0) (7000,6000) (0,6000) close }
+  wall id=w_mid partition thickness 100 { (4000,0) (4000,6000) }
+  room id=r_living at (0,0) size 4000x6000 label "Living / Kitchen" uses living kitchen
+  room id=r_bed at (4000,0) size 3000x6000 label "Bedroom" uses bedroom
+  door at (2000,6000) width 900 wall shell
+  door at (4000,3000) width 800 wall w_mid
+  window at (2000,0) width 1500 wall shell
+  window at (5500,0) width 1200 wall shell
+  dim (4000,-100)->(0,-100) offset 250 text "4500"
+  dim (7000,-100)->(4000,-100) offset 250 text "3000"
+}

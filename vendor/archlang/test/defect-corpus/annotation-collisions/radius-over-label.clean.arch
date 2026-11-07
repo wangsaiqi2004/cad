@@ -1,0 +1,21 @@
+# class: annotation-collisions
+# twin-of: radius-over-label
+# origin: the same pavilion with the name pinned below the centre line, as examples/aquarium.arch now does
+# expect: none
+# fact: the name drawn at (3000,4265) and its area figure at (3000,4458) are clear of the R3000 call-out at
+#   (3000,1500) and of the φ6000 call-out on the centre line
+plan "Radius call-out clear of the label" {
+  units mm
+  grid 50
+  paper A4 landscape
+  scale 1:50
+  dims auto overall
+  wall id=drum exterior thickness 200 {
+    (6000,3000)
+    arc (0,3000) radius 3000
+    arc (6000,3000) radius 3000
+  }
+  room id=r_pav circle at (3000,3000) radius 3000 label "Pavilion" at (3000,4300) uses living
+  door on drum at 75% width 900
+  window on drum at 25% width 1200
+}

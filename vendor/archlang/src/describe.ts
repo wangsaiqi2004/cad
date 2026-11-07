@@ -1,0 +1,2295 @@
+/**
+ * `describe(source)` — a pure, semantic summary of a floor plan.
+ *
+ * Where {@link import("./index.js").compile} produces *pixels* (an SVG/Scene), this
+ * produces *facts*: a small JSON object listing rooms (with computed areas, bounding
+ * boxes, and which rooms each is adjacent to), doors (which two spaces they connect),
+ * windows (which room they serve), and plan totals. It is the channel a **text-only AI
+ * agent** uses to verify what it drew — "did I produce a 2-bedroom plan with a bath
+ * reachable by a door?" — without ever rasterizing or "seeing" the image.
+ *
+ * Pure, synchronous, isomorphic, deterministic. The resolve pipeline and the
+ * rectilinear geometry it leans on live in {@link import("./analyze.js")}; this module
+ * just shapes the result. All numbers are rounded deterministically so the summary is
+ * byte-stable across runs.
+ */
+
+import { relationText } from "./opening-relation.js";
+import { wallPhraseOf } from "./wall-ref.js";
+import type {
+  ResolvedLevel,
+  ResolvedPlan,
+  RRoom,
+  RDoor,
+  RWindow,
+  ROpening,
+  RFurniture,
+  RVoid,
+  ROutdoor,
+  RFence,
+  RWallsFromRooms,
+  DerivedWallRow,
+  RWall as RWallFact,
+  RoomPlacement,
+  OpeningPlacement,
+  FurniturePlacement,
+} from "./ir.js";
+import type { FenceStyle, OutdoorKind, PlanNode, Point, RailSide, VerticalDir } from "./ast.js";
+import { polygonArea, polygonBounds } from "./geometry/polygon.js";
+import { voidPieces } from "./elements/void.js";
+import { memoRoomNetAreaMm2, storeyNetAreaBands } from "./analyze/net-area-memo.js";
+import { grossInternalArea, type GrossAreaReason } from "./analyze/gross-area.js";
+import { openShells } from "./analyze/open-shell.js";
+import { type DoorKind, WALL_STATUSES, type WallStatus, type WindowKind } from "./grammar/tokens.js";
+import type { Diagnostic } from "./diagnostics.js";
+import {
+  resolvePlan,
+  rectOf,
+  pointInRoomBox,
+  roomAreaMm2,
+  roomBox,
+  roomsAdjacent,
+  roomsAtPoint,
+  arcWindowRoom,
+  connectorConnection,
+  roomUses,
+  buildDoorAccessGraph,
+  DEFAULT_TOL,
+  storeyGrounded,
+  buildingRoomReach,
+  type AnalyzeOptions,
+  type AccessGraph,
+  type BBox,
+  type RoomBox,
+} from "./analyze.js";
+import { outerFaceBounds, segmentsOfWall, type WallSegment } from "./geometry.js";
+import type { PaperOrientation, PaperSize } from "./sheet.js";
+import { computeCirculation, type CirculationModel } from "./analyze/circulation.js";
+import { entranceInputs, storeyHasEntranceCandidate, withMainEntrance } from "./analyze/entrance.js";
+import { symmetryFacts, type SymmetryFacts } from "./analyze/symmetry.js";
+import { syntaxFacts, type SyntaxFacts } from "./analyze/syntax.js";
+import { type DependsFacts, dependsFacts, indexStatements, type StatementIndex } from "./analyze/depends.js";
+import { keepFacts } from "./analyze/keep-facts.js";
+import { roomTypeForUses, buildInputGraph } from "./plan-json.js";
+import { roomSchedule, type ScheduleRow } from "./sheet-tables.js";
+// The page→compass conversion and the `site` derivation live in ONE module: the site
+// layer's lint rule asks the same question of the same windows, and a second place to
+// apply the north rotation is a second place to get it wrong.
+import { deriveSite, planCenterOfRooms, type SiteFacts, toCompass, windowFacingPage } from "./site.js";
+import {
+  type ArrivingRun,
+  arrivalRuns,
+  flightRun,
+  flightsOf,
+  isBlockStair,
+  levelsEnteredFromBelow,
+  type RBlockStair,
+  type RVertical,
+  roomOfVertical,
+  type StairTurn,
+  stairTurns,
+  tailEdge,
+  type VerticalConnection,
+  verticalConnections,
+  type VerticalKind,
+  verticalReach,
+  verticalsOf,
+} from "./vertical.js";
+import type { RectEdge } from "./fixture-orientation.js";
+import { fmt2, fmt3 } from "./num-format.js";
+import { type KeepSummary, keepSummary } from "./keep.js";
+import { drawnView, keepResultsOf } from "./ir.js";
+import { type D4, fromSpelling, northQuarterTurns } from "./algebra/d4.js";
+import { type ClearWorld, clearWorldOf, measureClear } from "./furniture-relation.js";
+import { type ClearanceFacts, clearanceFacts } from "./lint/clearance-facts.js";
+import { openRunsOf } from "./analyze.js";
+import { type QuantityFacts, quantityFacts } from "./analyze/quantities.js";
+
+export type { ScheduleRow } from "./sheet-tables.js";
+
+export type { VerticalConnection, VerticalKind, VerticalStop } from "./vertical.js";
+
+export type {
+  CirculationModel,
+  RoomCirculation,
+  CirculationRoute,
+  BlockedRoom,
+  UnmeasuredRoom,
+  UnmeasuredReason,
+} from "./analyze/circulation.js";
+
+export type { BBox } from "./analyze.js";
+
+export type {
+  LayerSymmetry,
+  MirrorAxis,
+  MirrorRepeat,
+  Repeat,
+  SymmetryElement,
+  SymmetryFacts,
+  SymmetryGroup,
+  TranslationRepeat,
+} from "./analyze/symmetry.js";
+export type { SyntaxFacts, SyntaxRoom } from "./analyze/syntax.js";
+export type { DependsEntry, DependsFacts, DerivedWallDepends } from "./analyze/depends.js";
+export type {
+  ApproachFact,
+  ClearanceFacts,
+  ClearanceObstacle,
+  DoorwayFact,
+  HobFact,
+  HobWindowFact,
+  LandingFact,
+  LowUnitFact,
+  StairFact,
+  TallUnitFact,
+  WcFact,
+  WcSideFact,
+  WindowCoverFact,
+} from "./lint/clearance-facts.js";
+export type {
+  DoorQuantity,
+  QuantityFacts,
+  RoomQuantity,
+  WallQuantity,
+  WindowQuantity,
+} from "./analyze/quantities.js";
+export type { ContactFact, RoomEdge } from "./analyze/contacts.js";
+export type { KeepFact, KeepRedundancy } from "./analyze/keep-facts.js";
+
+// The access graph and its two node/edge shapes are DECLARED in `analyze.js`, but
+// `describe()` is the only public value that surfaces them ({@link SceneSummary.access}),
+// so they leave through the same door they arrive by. Without this a consumer could read
+// `summary.access.rooms[0].reachable` but never *name* the type of the thing it holds.
+export type { AccessEdge, AccessGraph, AccessRoomNode, MainEntranceBasis, MainEntranceFact } from "./analyze.js";
+
+// Likewise for the door kind: it is a grammar token type, but {@link DoorSummary.kind} is
+// where a consumer of the facts channel meets it.
+export type { DoorKind, WindowKind } from "./grammar/tokens.js";
+// And for the wall status (B3a): {@link WallStatusFacts} is where a consumer meets it.
+export type { WallStatus } from "./grammar/tokens.js";
+
+/** Options for {@link describe}; the shared analysis options plus an adjacency tolerance. */
+export interface DescribeOptions extends AnalyzeOptions {
+  /**
+   * How close (in mm) two room edges may be and still count as adjacent, and how
+   * close an opening must be to a room edge to count as serving it. Defaults to
+   * 200 mm — wide enough to treat rooms separated by a typical partition wall as
+   * adjacent, narrow enough to avoid joining clearly separate rooms.
+   */
+  adjacencyTolMm?: number;
+  /**
+   * Opt-in derived facts, each computed only when named here: `"symmetry"` adds
+   * {@link SceneSummary.symmetry}, `"syntax"` adds {@link SceneSummary.syntax}, `"depends"`
+   * adds {@link SceneSummary.depends}, `"clearances"` adds {@link SceneSummary.clearances},
+   * `"quantities"` adds {@link SceneSummary.quantities}.
+   * Absent or empty (the default), the summary is
+   * byte-identical to one written before any of them existed.
+   */
+  facts?: readonly DescribeFact[];
+  /**
+   * A waste percentage for {@link QuantityFacts.floor_area_with_waste_m2}, read only by the
+   * `"quantities"` fact: a parameter the caller passes, never a default. Absent, the figure is
+   * absent. A number from 0 to {@link MAX_WASTE_PCT}; anything else throws a `RangeError` (a
+   * caller's argument, never plan source).
+   */
+  wastePct?: number;
+}
+
+/** The largest waste percentage {@link DescribeOptions.wastePct} accepts. */
+export const MAX_WASTE_PCT = 100;
+
+/** Every opt-in fact {@link DescribeOptions.facts} can name — `arch describe --facts` reads this list. */
+export const DESCRIBE_FACTS = ["symmetry", "syntax", "depends", "clearances", "quantities"] as const;
+
+/** One opt-in fact of {@link DESCRIBE_FACTS}. */
+export type DescribeFact = (typeof DESCRIBE_FACTS)[number];
+
+export interface RoomSummary {
+  id: string;
+  label?: string;
+  /** Declared or inferred function(s) of the room (e.g. `["living","kitchen"]`). */
+  uses: string[];
+  /** Canonical RPLAN-style room category derived from {@link uses}. */
+  room_type: string;
+  /**
+   * Floor area in square metres, rounded to 2 decimals — measured on the room's own shape,
+   * which is drawn on wall CENTRELINES, so it runs to the middle of every wall round it.
+   */
+  area_m2: number;
+  /**
+   * NET internal area in square metres, rounded to 2 decimals: the room's shape less every
+   * part of it a wall's solid covers (each wall's band as drawn, before openings: its
+   * faces, caps, mitres and arcs). A wall on the edge takes half of itself out of the room;
+   * a wall standing on the floor takes what it stands on. Always `<= area_m2`; equal to it
+   * when no wall touches the room. Computed exactly in closed form, or OMITTED (absent)
+   * when it cannot be — and then {@link totals}`.net_floor_area_m2` is absent too. The rule:
+   * `docs/adr/0027-net-internal-area.md`. Appended beside {@link area_m2}, which is unchanged.
+   */
+  net_area_m2?: number;
+  bbox: BBox;
+  /**
+   * The room's FLOOR as a closed ring: a rectangle's four corners clockwise from
+   * top-left, or — for a `room polygon` — its authored vertices in source order.
+   * This, not `bbox`, is the room's actual shape; `bbox` is the vertex extent.
+   */
+  floor_polygon: { x: number; y: number }[];
+  /**
+   * A CIRCULAR room's exact centre + radius, present only for `room … circle`.
+   * Such a room reports this INSTEAD of a 48-vertex ring: the tessellation is an
+   * implementation detail of the grid layer, so `floor_polygon` is `[]` here and
+   * `area_m2` is the exact πR². Append-only, like the rest of the summary.
+   */
+  floor_circle?: { cx: number; cy: number; r: number };
+  /** Ids of rooms whose edges touch this one (within the adjacency tolerance). */
+  adjacent: string[];
+  /** The `place`d instance this room was drawn inside; absent at plan level. */
+  instance?: string;
+  /** The component {@link RoomSummary.instance} was made from. */
+  component?: string;
+}
+
+export interface DoorSummary {
+  id: string;
+  /** The `place`d instance this door was drawn inside; absent at plan level. */
+  instance?: string;
+  /**
+   * The one or two spaces this door connects: room ids, and/or the literal
+   * `"exterior"` when the door sits on an outer wall with open space on one side.
+   * Read off the host wall: the space one wall thickness either side of its centreline.
+   */
+  between: string[];
+  /** Every room the door's clear span covers on one face of its host wall, when that is
+   *  more than one — a partition runs into the doorway. Absent otherwise
+   *  (`AccessEdge.straddles`). */
+  straddles?: string[];
+  width: number;
+  /**
+   * How a relational opening was placed, as written (ADR 0028 §5): `between a and b at 800
+   * from end`, `on r.top`. Never the internal name of a derived host. Present only on a
+   * relational opening, so every other payload is byte-identical.
+   */
+  relation?: string;
+  /**
+   * The door's kind — emitted **only when it is not the default `hinged`**,
+   * so every payload written before kinds existed is byte-identical.
+   *
+   * It is here because a kind is a SEMANTIC fact, not a drawing one: it decides
+   * whether a swing arc exists at all (so which clearance rules can fire), and an
+   * agent that has just authored a pocket door has no other way to verify it did.
+   * `slide` and `open` are deliberately NOT here — the first is a drafting handedness
+   * and the second is purely how far the panel is drawn.
+   */
+  kind?: DoorKind;
+  /**
+   * Top of the doorway above this storey's floor, in mm (the vertical datum).
+   *
+   * Present **only when the plan authored a height clause somewhere** — see
+   * {@link SceneSummary.heights}. A door's sill is the floor by definition, so there is no
+   * `sill` here to pair with it.
+   */
+  head?: number;
+  /**
+   * Where a `between` door landed: the centre of its span on its host wall's centreline, in plan
+   * mm, the point `door at (x,y)` would name. Read off the resolved position, so it answers what
+   * `from start` counted from (the shared run, not the room). Present only on a door placed
+   * `between`, whose position cannot be read off one room's edge, so every other row is byte-identical.
+   */
+  centreline_at?: Point;
+}
+
+export interface WindowSummary {
+  id: string;
+  /** The room this window serves, or `null` if it sits on no room edge. */
+  room: string | null;
+  width: number;
+  /**
+   * How a relational opening was placed, as written (ADR 0028 §5): `between a and b at 800
+   * from end`, `on r.top`. Never the internal name of a derived host. Present only on a
+   * relational opening, so every other payload is byte-identical.
+   */
+  relation?: string;
+  /** The window on the other wall of a corner, on a window placed `at corner`. Each row keeps its
+   *  own wall, `width` and `facing`: a window faces one way. */
+  corner_with?: string;
+  /**
+   * The window's kind, emitted **only when one was written**, so a kind-free window's row is
+   * byte-identical. A semantic fact, like a door's: it says whether the window opens and how. The
+   * hinge side is not here, as a door's is not: it is a drafting handedness.
+   */
+  kind?: WindowKind;
+  /**
+   * **True compass** direction the window's wall faces (the outward normal of its host
+   * wall segment), read against the plan's declared `north`.
+   *
+   * It is computed in two steps. First the PAGE-relative direction: ArchLang geometry is
+   * rectilinear and +y is DOWN, so a window on a room's TOP edge points at the top of the
+   * page, its bottom edge at the bottom, and so on — when the window has a rectangular
+   * host {@link WindowSummary.room} that is whichever of the room's four edges it sits
+   * closest to, and otherwise it is the outward face of the host wall segment, found by
+   * probing one wall thickness off each of its two faces and taking the side with no room
+   * on it (see `windowFacingPage`, `src/site.ts`). Second, that direction is turned
+   * by the plan's `north` setting (see {@link northQuarterTurns}): under the default
+   * `north up` the page's top IS compass north and the two coincide, but under
+   * `north right` compass north points at the page's RIGHT edge, so a right-edge window
+   * faces `"N"` and a top-edge one faces `"W"`.
+   *
+   * Always one of the four; pure and deterministic. This is the direction an intent
+   * `windows.facing` assertion is checked against. When the two differ, the page-relative
+   * answer is still available as {@link WindowSummary.facingPage}.
+   */
+  facing: "N" | "S" | "E" | "W";
+  /**
+   * The PAGE-relative direction the window's wall faces — `"N"` = toward the top of the
+   * drawing — before the plan's `north` is applied.
+   *
+   * Present **only** when the declared `north` actually turns the compass answer (i.e.
+   * {@link northQuarterTurns} is non-zero), so a plan on the default `north up` — where
+   * this would always equal {@link WindowSummary.facing} — has a byte-identical summary
+   * to before. Append-only.
+   */
+  facingPage?: "N" | "S" | "E" | "W";
+  /** Bottom of the glazing above this storey's floor, in mm. Present only when
+   *  the plan authored a height clause somewhere — see {@link SceneSummary.heights}. */
+  sill?: number;
+  /** Top of the glazing above this storey's floor, in mm. Same gating. */
+  head?: number;
+}
+
+export interface OpeningSummary {
+  id: string;
+  /** The one or two spaces this cased opening connects (room ids and/or `"exterior"`). */
+  between: string[];
+  /** As {@link DoorSummary.straddles}: rooms one face of the opening spans, when more than one. */
+  straddles?: string[];
+  width: number;
+  /**
+   * How a relational opening was placed, as written (ADR 0028 §5): `between a and b at 800
+   * from end`, `on r.top`. Never the internal name of a derived host. Present only on a
+   * relational opening, so every other payload is byte-identical.
+   */
+  relation?: string;
+  /** Top of the cased opening above this storey's floor, in mm — by default the
+   *  host wall's own height. Present only when the plan authored a height somewhere. */
+  head?: number;
+  /** As {@link DoorSummary.centreline_at}: only on a cased opening placed `between`. */
+  centreline_at?: Point;
+}
+
+/**
+ * The **vertical datum** of one storey — `describe().heights`.
+ *
+ * ## Why it is here at all, and why it is gated
+ *
+ * ArchLang draws a horizontal cut, so heights change nothing in the drawing: a plan with a
+ * `height` on every wall renders byte-for-byte identically to the same plan without them.
+ * They are FACTS, for the consumers a drawing cannot serve — a 2.5D occupancy slice at a
+ * sensor height, a section, an extruded preview — and for an agent that has just authored
+ * a 2200 mm parapet and has no other way to confirm it landed.
+ *
+ * The block is present **only when the source authored at least one `height`, `sill` or
+ * `head` clause**, anywhere in the plan: a wall, a storey, an opening, an imported module.
+ * That is the `doors[].kind` rule (present only when it is not the default) applied to a
+ * whole block, and it is what makes the byte-identity law total — every plan written
+ * before this layer existed describes exactly as it did.
+ *
+ * ## Why the walls are here rather than on a `walls[]` array
+ *
+ * `describe()` has never reported walls as objects; a room is a space and a wall is the
+ * fabric between spaces, and the summary is about spaces. Rather than mint a whole new
+ * top-level array to carry one number each, the heights that have nowhere else to live sit
+ * here. The opening heights do have somewhere else to live — `doors[]`, `windows[]`,
+ * `openings[]` — and are reported there, beside the width they belong with.
+ */
+export interface WallStatusFacts {
+  /** How many walls of the storey have each status (every status listed, zeros included). */
+  counts: Record<WallStatus, number>;
+  /** Every wall of the storey as drawn, in source order: its id (a derived wall's internal
+   *  name), category and status. */
+  walls: Array<{ id: string; category: string; status: WallStatus }>;
+}
+
+/** {@link DescribeSummary.wall_status}: absent unless a wall on the storey writes `status`. */
+function wallStatusFacts(ir: ResolvedPlan): WallStatusFacts | undefined {
+  const walls = drawnView(ir).walls;
+  if (!walls.some((w) => w.status !== undefined)) return undefined;
+  const counts = Object.fromEntries(WALL_STATUSES.map((s) => [s, 0])) as Record<WallStatus, number>;
+  const rows = walls.map((w) => {
+    const status = w.status ?? "existing";
+    counts[status]++;
+    return { id: w.id, category: w.category, status };
+  });
+  return { counts, walls: rows };
+}
+
+export interface HeightFacts {
+  /** This storey's floor-to-floor height in mm: the `level`'s own `height`, else the
+   *  plan's, else 3000. What a wall inherits when it declares none. */
+  storey_height: number;
+  /**
+   * This storey's floor above the building's LOWEST floor, in mm — `0` for a
+   * single-storey plan and for the ground storey of any plan.
+   *
+   * The sum of the heights of the storeys below, so a 3600 ground floor puts the first
+   * floor at 3600 whatever the storeys above it declare. It is NOT `level ×
+   * storey_height`, and a consumer that computes it that way will be wrong on exactly the
+   * plans that bothered to declare per-storey heights.
+   */
+  elevation: number;
+  /** Every wall on this storey, in source order, with the height it resolved to. */
+  walls: { id: string; height: number }[];
+}
+
+export interface FurnitureSummary {
+  id: string;
+  category: string;
+  label?: string;
+  /** Declared owning room id (`in <roomId>`), if any. */
+  room?: string;
+  /**
+   * The quarter-turn the drawn symbol carries (0/90/180/270), when it is not 0 — either
+   * authored (`rotate`), derived from the backing wall, or carried through a `place`d
+   * instance's own turn. Absent for an upright symbol.
+   */
+  rotate?: number;
+  /** The `place`d instance this piece was drawn inside; absent at plan level. */
+  instance?: string;
+  /** The component {@link FurnitureSummary.instance} was made from. */
+  component?: string;
+  /** `against <room>.<edge>[ offset <mm>]` as written (ADR 0029 §2); present only on that form. */
+  relation?: string;
+  /** The `facing <id>` target (ADR 0029 §3); the derived turn is {@link FurnitureSummary.rotate}.
+   *  Present only when declared. */
+  facing?: string;
+  /** The declared `clear front|sides` depths and the depth measured free (ADR 0029 §4), the
+   *  smaller side for `sides`. Present only when declared. */
+  clear?: { front?: ClearFact; sides?: ClearFact };
+}
+
+/** One declared clear zone: the depth the author asked for and the depth measured free (capped
+ *  at the declared depth). */
+export interface ClearFact {
+  declared: number;
+  measured: number;
+}
+
+/**
+ * One run of vertical circulation ON THIS STOREY. Present in the summary only
+ * when the storey draws at least one `stair`/`elevator`/`escalator`, so every existing
+ * summary is unchanged. The cross-storey view is {@link SceneSummary.vertical}.
+ */
+export interface VerticalSummary {
+  id: string;
+  kind: VerticalKind;
+  /** `up`/`down` as declared on THIS storey; absent for an `elevator`. */
+  dir?: VerticalDir;
+  /** The room whose rectangle contains the footprint's centre, or `null`; on a block stair, the
+   *  centre of the flight boarded on this storey, because that of its {@link bbox} can stand off the
+   *  stair. */
+  room: string | null;
+  /** The footprint; on a block stair the bounding box of its pieces, which holds floor that is no
+   *  stair (read {@link flights} and {@link landings}). */
+  bbox: BBox;
+  /** Flight width across the run (mm) — `stair` only. */
+  flight_width?: number;
+  /** A block stair's flights, in climbing order on every storey; absent on any other run. */
+  flights?: StairFlightSummary[];
+  /** A block stair's landings, in climbing order; absent on any other run. */
+  landings?: StairLandingSummary[];
+  /** How the last flight climbs from the first, as the person climbing turns: the net of
+   *  {@link StairLandingSummary.turn}, so two right turns read `half`. A block stair only. */
+  turn?: StairTurn;
+}
+
+/** One flight of a block stair. */
+export interface StairFlightSummary {
+  bbox: BBox;
+  /** Its length along its run (mm). */
+  run_mm: number;
+  /** The edge a person on THIS storey meets it by: its foot on a `dir up` stop, its head on a
+   *  `dir down` one. */
+  entry: RectEdge;
+}
+
+/** One landing between a block stair's flights. */
+export interface StairLandingSummary {
+  bbox: BBox;
+  /** How the person climbing turns on it. */
+  turn: StairTurn;
+  /** The tapered steps this landing is divided into (`landing … winders <n>`); absent on a
+   *  level landing. */
+  winders?: number;
+}
+
+/**
+ * One hole in this storey's floor plate (`void`). Present in the summary only when
+ * the storey declares at least one, so every existing summary is unchanged.
+ *
+ * The room's own `area_m2` is NOT reduced by the void — see `src/elements/void.ts` for
+ * why — so a consumer that needs the net floor of a double-height space subtracts
+ * `size.w × size.h` here (`area_m2` on a `polygon` void) from the room named by
+ * {@link VoidSummary.room}.
+ */
+export interface VoidSummary {
+  id: string;
+  /** Top-left of the opening, in mm; on a `polygon` void, of its ring's bounding box. */
+  at: Point;
+  /** The extent; on a `polygon` void the ring's bounding box, an index and never the hole's
+   *  area (that is {@link VoidSummary.area_m2}). */
+  size: { w: number; h: number };
+  /** The `polygon` spelling only: the ring, as resolved. */
+  polygon?: Point[];
+  /** The `polygon` spelling only: the hole's area in m², 2 dp, by the exact shoelace. */
+  area_m2?: number;
+  /** Present only when written: the rectangle's railed sides, or the ring's railed edge
+   *  numbers (edge n runs from point n to n+1). `[]` is `rail none`. */
+  rail?: RailSide[] | number[];
+  /**
+   * The room whose FLOOR contains the opening's centre — the poly-aware containment test,
+   * never the room's bounding box, so a void inside a courtyard plan's notch is reported
+   * as belonging to no room rather than to the U-shaped room whose box surrounds it. On a
+   * `polygon` void, the room holding most of its area (by the cells of its ring).
+   */
+  room: string | null;
+}
+
+/**
+ * One ground surface (`outdoor`). Present in the summary only when the storey
+ * declares at least one, so every existing summary is unchanged.
+ *
+ * **Its area is NOT part of `totals.floor_area_m2`, and must never become so.** A terrace
+ * is not floor area; a lawn certainly is not. The whole-plan floor figure is the number
+ * every downstream consumer — the schedule, the intent channel, a brief's assertions —
+ * trusts, and quietly adding the garden to it would be wrong in the one place a summary
+ * cannot afford to be. The separate {@link SceneSummary.totals}`.outdoor_area_m2` is where
+ * the ground is totalled, and a consumer that wants "plot coverage" adds the two itself,
+ * having decided that is what it means.
+ */
+export interface OutdoorSummary {
+  id: string;
+  /** Which ground surface (`lawn`, `paving`, `balcony`, …). */
+  kind: OutdoorKind;
+  label?: string;
+  /**
+   * Area in m², 2 dp — the EXACT shoelace for the `polygon` spelling and w x h for the
+   * rectangle, never the bounding box in either case.
+   */
+  area_m2: number;
+  /** The extent, as top-left + size. On a polygon surface this is the ring's bounding
+   *  box: a convenience for indexing, never the datum any measurement comes from. */
+  bbox: { x: number; y: number; w: number; h: number };
+  /** Which edges carry a railing — `balcony` only, and absent on every other kind. An
+   *  empty array is a real answer (`rail none`), distinct from the key being absent. */
+  rail?: RailSide[];
+}
+
+/** One fence run. Present only when the storey declares at least one. */
+export interface FenceSummary {
+  id: string;
+  style: FenceStyle;
+  /** Total run length in mm, summed along the segments (plus the closing one). */
+  length_mm: number;
+  closed: boolean;
+}
+
+/**
+ * The building's **vertical connections**: every `stair`/`elevator`/`escalator`
+ * id drawn on two or more storeys. Identity is the whole rule — same id, same shaft —
+ * so nothing is inferred from geometry (ADR 0005). Present only on a multi-storey plan
+ * that actually has one; a run on a single storey is not a connection and is what
+ * `W_STAIR_UNMATCHED` reports.
+ *
+ * `reachable_levels` is the reason this block matters to an agent: a storey with no
+ * exterior door of its own is still reachable if a shaft joins it to one that has —
+ * which is exactly the reachability `lint` now evaluates per storey.
+ */
+export interface VerticalReport {
+  connections: VerticalConnection[];
+  /** Level numbers reachable from the outside once shafts are counted, ascending. */
+  reachable_levels: number[];
+}
+
+/**
+ * One `place`d component instance as a fact: its addressable name — which is also
+ * the id namespace of everything inside it — the component it was made from, where its
+ * local `(0,0)` landed, and the exact rigid transform applied.
+ */
+export interface InstanceSummary {
+  name: string;
+  component: string;
+  at: { x: number; y: number };
+  rotate: 0 | 90 | 180 | 270;
+  mirror?: "x" | "y";
+}
+
+/**
+ * The rigid map an instance applies, as ONE canonical value: the D4 element its
+ * `(rotate, mirror)` spelling denotes (`src/algebra/d4.ts`). Two spellings of one map —
+ * `mirror y` and `rotate 180 mirror x` — describe differently (the summary echoes what was
+ * written) and have equal transforms, so compare instances with this, never by spelling.
+ */
+export function instanceTransform(i: Pick<InstanceSummary, "rotate" | "mirror">): D4 {
+  return fromSpelling(i.rotate, i.mirror);
+}
+
+export type { RoomPlacement, OpeningPlacement, FurniturePlacement, DerivedWallRow } from "./ir.js";
+export type { KeepAt, KeepSkipped, KeepSummary } from "./keep.js";
+
+/** How a single placed element's position was authored vs derived. */
+export interface FreedomElement {
+  id: string;
+  kind: "room" | "door" | "window" | "opening" | "furniture";
+  /** `absolute` = a literal `at (x,y)`; anything else was computed by the
+   *  resolver from a higher-level clause (relational/strip/attach/anchor/wall). */
+  placement: RoomPlacement | OpeningPlacement | FurniturePlacement;
+  /**
+   * The `place`d instance this element lives in. When present, `placement`
+   * describes how the element was authored **inside its component** — its position ON
+   * THE PAGE additionally derives from the instance frame, which is the authored-absolute
+   * thing (see {@link SceneSummary.instances}). So: an instance is a degree of freedom,
+   * and everything inside it is derived from that one. Absent at plan level, so existing
+   * reports are unchanged.
+   */
+  instance?: string;
+}
+
+/**
+ * Degrees-of-freedom report: for each placed element, whether its
+ * position was authored **absolutely** or **derived** by the resolver — the
+ * "how constrained is this plan" fact an agent reads before editing. Facts only
+ * (ADR 0005): no advice, no scoring, no thresholds. Counts per family plus one
+ * `elements` row each, in `describe()`'s own emission order (rooms, doors,
+ * windows, openings, furniture). Openings pools doors + windows + cased openings.
+ */
+export interface FreedomReport {
+  rooms: { total: number; absolute: number; relational: number; strip: number };
+  /** `relational` (`between A and B`, `on <room>.<edge>`, ADR 0028 §6) is present only when
+   *  the storey has such an opening, so every other report is byte-identical. */
+  openings: { total: number; attached: number; absolute: number; relational?: number };
+  /** `relational` (`against <room>.<edge>`, ADR 0029 §2) is present only when the storey has
+   *  such a piece, so every other report is byte-identical. */
+  furniture: { total: number; anchored: number; againstWall: number; absolute: number; relational?: number };
+  elements: FreedomElement[];
+  /** The walls: how many were derived by `walls from rooms` (ADR 0028 §6), how many were
+   *  typed as points, and (`relational`, present only when there is one) how many authored
+   *  walls were written `between`/`around` rooms (§4). Present only on a storey that derived a
+   *  wall or holds a pairwise one. */
+  walls?: { total: number; derived: number; absolute: number; relational?: number };
+}
+
+/** One positioning axis as a fact: where the datum is and what it is called. */
+export interface AxisSummary {
+  /** mm along the axis's own direction (x for a vertical axis, y for a horizontal one). */
+  pos: number;
+  /** The GB/T label drawn in its bubble — derived from position, never authored. */
+  label: string;
+}
+
+/**
+ * The plan's declared **positioning axes** (定位轴线), in label order: `x` numbered
+ * `1 2 3 …` left-to-right, `y` lettered `A B C …` bottom-to-top (so `y[0]` is `A`, the
+ * BOTTOM-most axis — +y points down). Absent from the summary entirely when the plan
+ * declares no axes, so existing summaries are unchanged.
+ */
+export interface AxesSummary {
+  x: AxisSummary[];
+  y: AxisSummary[];
+}
+
+/**
+ * The sheet facts for a plan that declares `paper`: which sheet, which way
+ * round, the operative scale denominator, and whether the building fits on it at that
+ * scale. `fits: false` is the `W_SCALE_OVERFLOW` condition — the drawing is still
+ * produced, on a page grown past the sheet.
+ */
+export interface SheetSummary {
+  paper: PaperSize;
+  orientation: PaperOrientation;
+  /** The `<denom>` of `1:<denom>` — authored, or chosen by auto-fit. */
+  scale_denominator: number;
+  /** True when the denominator was chosen by auto-fit (the plan declared no `scale`). */
+  scale_auto: boolean;
+  /** Does the BUILDING's outer-face extent fit the sheet's drawing area at this scale? */
+  fits: boolean;
+  /**
+   * `false` when **everything the plan draws** does not fit the sheet's drawing area at
+   * this scale — **present only then**. Absent means the whole drawing fits;
+   * read it as `sheet.drawing_fits === false`, never as a tri-state.
+   *
+   * It is the residual {@link fits} cannot report. `fits` measures the BUILDING's
+   * outer-face extent, and a plan draws more than its building — `outdoor` ground, a
+   * `fence`, a `site … boundary`, a `roof` eaves line — so a 4 × 3 m cottage with a 40 m
+   * yard reported `fits: true` with nothing anywhere saying its sheet could not hold the
+   * drawing. Same ruler, wider extent: `fits === false` implies this is `false` too, and
+   * the case worth acting on is `fits` true with this present, which raises
+   * `W_DRAWING_OVERFLOW`.
+   *
+   * **It is not a claim that the page grew.** Like `fits` it is measured against the area
+   * the sheet RESERVES for the drawing, and a marginal overflow eats the reserved margin
+   * rather than growing the page — of the three shipped examples that report it, only one
+   * is actually issued on a larger page. The page rectangle is `scene.sheet.page`, which
+   * needs a laid-out Scene; `describe()` never builds one.
+   *
+   * **Emitted conditionally on purpose.** An always-present key would move every
+   * `describe()` payload for every plan that declares `paper`, which the standing
+   * byte-identity law forbids — a plan that does not use a feature must describe exactly as
+   * before. This follows `circulation.unmeasured[]`, which omits itself when
+   * empty for the same reason.
+   */
+  drawing_fits?: false;
+}
+
+/**
+ * One declared **zone** — a wing, a department, a phase — and the rooms it groups.
+ *
+ * Membership is by DECLARATION, never geometry (ADR 0005): a room is listed here because
+ * it was written inside that `zone` block, not because the compiler decided it looks like
+ * it belongs there. A zone has no geometric semantics at all — deleting every `zone`
+ * wrapper from a plan leaves the drawing byte-identical.
+ *
+ * **Nesting rolls up.** `rooms` lists the zone's own rooms *plus* every room in a zone
+ * nested inside it, so `west` reports the whole west wing even when its rooms are written
+ * in `west.galleries` and `west.stores`. That makes the list a rollup, not a partition:
+ * **summing `floor_area_m2` over `zones` double-counts** whenever zones nest, and it is
+ * not the plan total. `totals.floor_area_m2` remains the one whole-plan figure. (The
+ * drawn ROOM SCHEDULE groups by the *innermost* zone instead, so its subtotals do
+ * partition the rooms and do add up to its TOTAL.)
+ */
+export interface ZoneSummary {
+  /** The zone's own id — the last segment of {@link path}. */
+  id: string;
+  /** The printed name from `zone west "West wing"`, when the source gave one. */
+  label?: string;
+  /** Dotted path from the outermost enclosing zone (`"west.galleries"`). Its identity —
+   *  the value `describe --zone` selects on, and what `id` alone cannot disambiguate. */
+  path: string;
+  /** The storey this zone was declared on, for a multi-storey plan. Absent otherwise. */
+  level?: number;
+  /** Member room ids in source order — the zone's own rooms and every nested zone's. */
+  rooms: string[];
+  room_count: number;
+  /** Sum of the member rooms' (rounded) areas, in m². See the rollup caveat above. */
+  floor_area_m2: number;
+}
+
+/**
+ * One **storey** of a multi-storey plan as facts: the level number and name plus the exact
+ * same fact shape a single-storey plan reports at the top level (rooms, areas, adjacency,
+ * access, circulation, totals, freedom, …). So an agent reads `levels[i]` with the code it
+ * already has for a whole plan — a storey IS a plan.
+ */
+export interface LevelSummary extends Omit<SceneSummary, "ok" | "diagnostics" | "levels" | "vertical"> {
+  /** The authored storey number (integer; 0/negative legal). */
+  level: number;
+  /** The storey's name (`level 1 "Ground floor"`), when the source gave one. */
+  name?: string;
+}
+
+/** The semantic summary of a plan. `ok` is false when fatal errors prevented
+ *  resolution; inspect `diagnostics` in that case (the lists will be empty). */
+export interface SceneSummary {
+  ok: boolean;
+  plan: string;
+  /**
+   * One deterministic natural-language sentence describing the plan, composed
+   * purely from the fields below (plan name, room labels/areas, totals, entrance).
+   * Feeds the accessible-SVG `<desc>` (`compile(src, { accessible: true })`) and is
+   * useful as ready-made alt text. Empty string when the plan failed to resolve.
+   */
+  caption: string;
+  /**
+   * Explicit accessible metadata from the plan-level `accTitle "…"` / `accDescr "…"`
+   * keywords, when present. In accessible-SVG output these override the plan name in
+   * `<title>` and the derived {@link caption} in `<desc>` respectively; here they are
+   * surfaced as facts alongside the always-derived {@link caption}. Absent when the
+   * plan declares neither, so existing summaries are unchanged.
+   */
+  accTitle?: string;
+  accDescr?: string;
+  units: "mm";
+  /**
+   * The EFFECTIVE drawing scale, e.g. `"1:200"`. Annotation-only on its own; when
+   * {@link sheet} is present it is operative (every annotation size derives from it),
+   * and it is the scale auto-fit chose if the plan declared none.
+   */
+  scale?: string;
+  /**
+   * The sheet the drawing is issued on — present only when the plan declares `paper`.
+   * Absent (the default) means reference-dimension sizing: no paper, and `scale` is a
+   * title-block annotation. See [the sheet layer](../src/sheet.ts).
+   */
+  sheet?: SheetSummary;
+  /**
+   * Overall drawing extent in mm, measured on wall **centerlines** (the union of raw
+   * wall points and room rectangles). This is the coordinate space the source is
+   * written in — a room's `at`/`size`, a door's `at`, a wall point — so it is the
+   * number to reason with when placing elements. Normative and unchanged.
+   */
+  bbox: { w: number; h: number };
+  /**
+   * Overall extent in mm measured on the **outer wall faces** — the building as a
+   * builder or a GB/T overall dimension sees it: `bbox` plus half a wall thickness at
+   * each end (a 7000×6000 centerline plan inside a 200 shell is 7200×6200 outside).
+   * This is what `dims auto`'s outermost chain prints. Use `bbox` for authoring
+   * coordinates and `bbox_outer` when quoting the building's size.
+   */
+  bbox_outer: { w: number; h: number };
+  /**
+   * The plan's positioning axes (定位轴线) — the datum grid every GB/T dimension is read
+   * from, with the labels the drawing prints. Present only when the plan declares an
+   * `axes` block; read it to know which coordinates are structural datums (and, with
+   * `dims auto rooms|all`, what the middle dimension chain measures).
+   */
+  axes?: AxesSummary;
+  /**
+   * The direction NAMES the plan's `site` block licenses — `street`/`back` plus the three
+   * `_side` names — every one of them a true compass letter, so they read against the same
+   * `north` as `windows[].facing`. Present only when the plan declares `site`, so an
+   * existing summary is unchanged.
+   *
+   * **`equator_side` / `sunrise_side` / `sunset_side` are a drafting heuristic, not a
+   * measured daylight outcome.** They name an aspect, in closed form, from `street` and
+   * `hemisphere` alone; no sun model, latitude or date is involved anywhere. See
+   * [the site layer](../src/site.ts).
+   */
+  site?: SiteFacts;
+  /**
+   * The `place`d component instances this drawing is made of, in source order:
+   * where each one's local origin landed and the rigid transform it carries. Present only
+   * when the plan places at least one, so existing summaries are unchanged.
+   *
+   * This is the block that says WHICH degrees of freedom the plan really has: everything
+   * with a matching `instance` field is positioned by its component's own coordinates
+   * plus this frame, so moving a wing is one edit here, not N edits inside.
+   */
+  instances?: InstanceSummary[];
+  rooms: RoomSummary[];
+  doors: DoorSummary[];
+  windows: WindowSummary[];
+  /** Leaf-less cased openings and the spaces they connect. */
+  openings: OpeningSummary[];
+  furniture: FurnitureSummary[];
+  /**
+   * The vertical-circulation runs drawn on this storey — `stair`, `elevator`,
+   * `escalator`. Absent when the storey draws none, so existing summaries are unchanged.
+   */
+  verticals?: VerticalSummary[];
+  /**
+   * The holes in this storey's floor plate — `void`. Absent when the storey
+   * declares none, so existing summaries are unchanged. A void obstructs circulation and
+   * does NOT reduce the containing room's reported area.
+   */
+  voids?: VoidSummary[];
+  /**
+   * The ground surfaces outside the building (`outdoor`). Absent when the storey
+   * declares none, so existing summaries are unchanged.
+   *
+   * Ground is reported here and NOWHERE else: it is not in {@link rooms}, not in
+   * {@link input_graph}, not in {@link access}, not in {@link circulation}, and its area
+   * is not in `totals.floor_area_m2`.
+   */
+  outdoor?: OutdoorSummary[];
+  /** The fence runs. Absent when the storey declares none. A fence is not a
+   *  wall: it hosts nothing and joins no graph. */
+  fences?: FenceSummary[];
+  /**
+   * The walls `walls from rooms` derived (ADR 0028 §6): one row per derived wall, with its
+   * internal name (`exterior`, `exterior#2`, `A|B`, `A|B#2`; never an id an author can type) and
+   * every span an authored wall took over. Absent unless the storey derived a wall.
+   */
+  derived_walls?: DerivedWallRow[];
+  /**
+   * The storey's vertical datum — storey height, elevation, and every wall's
+   * height. **Absent unless the plan authored a height, sill or head somewhere**, which
+   * is what keeps every summary written before this layer byte-identical. See
+   * {@link HeightFacts}; the opening heights ride on `doors[]`/`windows[]`/`openings[]`
+   * under the same gate.
+   */
+  heights?: HeightFacts;
+  /**
+   * The walls' remodel status (preview-and-remodel B3a): how many walls of the storey are
+   * `existing`, `demolish` and `new`, and each wall's status in source order (a wall that writes
+   * none is `existing`). **Absent unless a wall on the storey writes `status`**, so every summary
+   * of a plan without the clause is byte-identical. Every wall is listed, the demolished ones
+   * included, though no other fact of the summary reads a demolished wall: it encloses nothing,
+   * hosts nothing and counts in no area, and where it stood between two rooms they are joined
+   * (`access.edges` carries the run, named by the wall's id).
+   */
+  wall_status?: WallStatusFacts;
+  /**
+   * The modeled access graph: entrances, room reachability/depth from the exterior,
+   * and connector edges (doors and cased openings) with estimated clear widths.
+   */
+  access: AccessGraph;
+  /**
+   * Circulation facts on a clearance-eroded navigation grid: how far, how wide and
+   * how direct the walk is from the entrance to each room, plus key functional
+   * routes. Null when the plan has no modeled exterior entrance and no stair, lift or
+   * escalator arrives on it from a reachable storey (such a storey is walked from the head
+   * of the arriving flight, `entranceId` = the run's id). Coarse & advisory —
+   * facts, never a generated layout (ADR 0008).
+   */
+  circulation: CirculationModel | null;
+  totals: {
+    rooms: number;
+    doors: number;
+    windows: number;
+    floor_area_m2: number;
+    /**
+     * GROSS INTERNAL AREA in m², 2 dp: the floor enclosed by the inner faces of the storey's
+     * `exterior` walls (authored, or the ring `walls from rooms` derives), joined as the drawing
+     * joins them, before any opening is cut. Exact from the shape: each loop's closed-form
+     * area, never a bbox. It counts the partitions and any floor no room covers inside the
+     * shell, and excludes the shell; a courtyard ring's court is excluded, a court bounded only
+     * by partitions is not. Several separate buildings on one storey sum. This, not the
+     * centreline `floor_area_m2`, is the "about N m²" a brief means.
+     * `src/analyze/gross-area.ts` holds the rule.
+     *
+     * ABSENT when the storey has no closed exterior ring or the figure cannot be trusted, and
+     * then {@link gross_internal_area_omitted} says why: every resolving summary carries exactly
+     * one of the two. Like every total here it is THIS storey's: the top level reports the
+     * lowest storey, and each `levels[i].totals` its own.
+     */
+    gross_internal_area_m2?: number;
+    /**
+     * Why {@link gross_internal_area_m2} is absent, present only then:
+     * `no-closed-exterior-ring` (no exterior wall encloses a region: a shell that does not
+     * close, a room-only sketch, an open site), `exterior-ring-subdivided` (an exterior wall
+     * divides the enclosure, so which side is the building is not stated),
+     * `nested-exterior-rings` (something enclosed inside a courtyard ring), `too-much-work` (a
+     * counted cap) or `inconsistent`. Never a guess (ADR 0005).
+     */
+    gross_internal_area_omitted?: GrossAreaReason;
+    /**
+     * What {@link gross_internal_area_m2} leaves out, present only when it does: the ids of the
+     * rooms with floor outside every exterior ring, in source order, on a storey where a ring closes
+     * and an open shell stands beside it or off it (`W_EXTERIOR_RING_OPEN`'s reading,
+     * `src/analyze/open-shell.ts`), so the figure is a closed porch's or one building's, not the
+     * storey's. A room a ring covers in part is listed, and the figure holds the covered part: the
+     * list names what is short, not how much. A room whose label says it is open to the sky is not
+     * listed. Absent on every other
+     * storey, a closed building's and one with no figure alike, and absent past that reading's
+     * counted cap. A second key, so the figure and {@link gross_internal_area_omitted} stay exactly one of two.
+     */
+    gross_internal_area_leaves_out?: string[];
+    /**
+     * The BUILDING's gross internal area in m², 2 dp: the sum of every storey's
+     * {@link gross_internal_area_m2} (each already rounded, the way `floor_area_m2` is summed),
+     * equal to it on a single-storey plan. Top-level `totals` only: never inside `levels[i]`,
+     * and a summary narrowed to one storey (`describe --level`) does not carry it. ABSENT when
+     * any storey's figure is, and then {@link gross_internal_area_all_levels_omitted} names the
+     * first such storey and its reason: every resolving whole-plan summary carries exactly one
+     * of the two. This is the figure a brief's whole-house "about N m²" binds to.
+     */
+    gross_internal_area_all_levels_m2?: number;
+    /**
+     * Why {@link gross_internal_area_all_levels_m2} is absent: the first storey (lowest first)
+     * whose figure is omitted, by its `level` number (absent on a plan with no `level`
+     * blocks), and that storey's {@link gross_internal_area_omitted} reason.
+     */
+    gross_internal_area_all_levels_omitted?: { level?: number; reason: GrossAreaReason };
+    /**
+     * What {@link gross_internal_area_all_levels_m2} leaves out, present only when it does: each
+     * storey with a {@link gross_internal_area_leaves_out}, lowest first, by its `level` number
+     * (absent on a plan with no `level` blocks). Top-level `totals` only, as that figure is.
+     */
+    gross_internal_area_all_levels_leaves_out?: Array<{ level?: number; rooms: string[] }>;
+    /**
+     * Sum of the rooms' {@link RoomSummary.net_area_m2}, rounded to 2 decimals — summed from
+     * the same rounded per-room figures, the way `floor_area_m2` is, so the total and the
+     * list never disagree by a rounding step. ABSENT when any room's net area is omitted:
+     * never a sum over a subset of the rooms.
+     */
+    net_floor_area_m2?: number;
+    /**
+     * Total `outdoor` area in m², 2 dp — present ONLY when the storey declares a
+     * ground surface, so every existing `totals` object is byte-identical.
+     *
+     * Deliberately a sibling of `floor_area_m2` rather than a component of it. See
+     * {@link OutdoorSummary}: floor area is floor area, and a consumer that wants a plot
+     * figure adds the two having decided that is what it means.
+     */
+    outdoor_area_m2?: number;
+  };
+  /**
+   * Interior-door adjacency dict: every room id → the ids of rooms it shares
+   * a door / cased opening with (exterior entrances excluded). Keys in room source
+   * order; each neighbour list sorted by room source order. Empty when the plan
+   * failed to resolve. The RPLAN-style `input_graph` an intent check compares against.
+   */
+  input_graph: Record<string, string[]>;
+  /**
+   * Degrees-of-freedom placement report: which elements were positioned
+   * absolutely vs derived by the resolver. Facts only — see {@link FreedomReport}.
+   */
+  freedom: FreedomReport;
+  /**
+   * The ROOM SCHEDULE exactly as the sheet draws it — `{ no, id, name, area_m2,
+   * net_area_m2 }` per room in source order, so an agent can read the numbered table it just
+   * rendered without OCR'ing the SVG. Present **only when the plan sets `schedule rooms`**;
+   * absent otherwise, so existing summaries are unchanged. `area_m2` and `net_area_m2` match
+   * {@link RoomSummary.area_m2} and {@link RoomSummary.net_area_m2}, and the drawn TOTALs
+   * match {@link totals}`.floor_area_m2` and `.net_floor_area_m2`.
+   * The `legend` setting has no counterpart here on purpose: it is pure rendering, and
+   * every fact it shows (wall materials, furniture categories) is already in `furniture`
+   * and the source.
+   */
+  schedule?: ScheduleRow[];
+  /**
+   * The plan's declared **zones** — wings, departments, phases — in
+   * first-declaration order, with the rooms each groups. Present **only** when the plan
+   * declares a `zone` block, so every existing summary is unchanged. See
+   * {@link ZoneSummary} for the nesting-rollup caveat.
+   */
+  zones?: ZoneSummary[];
+  /**
+   * The plan's **storeys**, ascending by level — present **only** when the plan declares
+   * `level` blocks (so every existing summary is unchanged).
+   *
+   * Every field ABOVE describes the LOWEST storey (page 1), because a storey is what a
+   * floor plan is: rooms, adjacency and circulation only mean something within one floor.
+   * Read `levels` to see the whole building — `levels[0]` repeats the top-level facts.
+   * Diagnostics stay whole-plan (aggregated across storeys, each tagged with its `level`).
+   */
+  levels?: LevelSummary[];
+  /**
+   * The BUILDING's vertical connections — which shafts join which storeys, and
+   * which storeys that makes reachable from outside. A whole-building fact, so it exists
+   * only at the top level (never inside `levels[i]`) and only when the plan is
+   * multi-storey AND a run appears on two or more of its storeys. See
+   * {@link VerticalReport}.
+   */
+  vertical?: VerticalReport;
+  /**
+   * The storey's symmetry group per layer (shell, rooms, full) and its repeated rooms.
+   * Present **only when requested** (`facts: ["symmetry"]`). See {@link SymmetryFacts}.
+   */
+  symmetry?: SymmetryFacts;
+  /**
+   * Space-syntax metrics on the access graph (depth, mean depth, RA, integration,
+   * control, cycle rank). Present **only when requested** (`facts: ["syntax"]`).
+   */
+  syntax?: SyntaxFacts;
+  /**
+   * What each element is derived from: the ids it reads (`on`) and the bound names its
+   * expressions read (`params`), sorted by element id; the derived walls in their own list.
+   * Present **only when requested** (`facts: ["depends"]`). See {@link DependsFacts}.
+   */
+  depends?: DependsFacts;
+  /**
+   * What each clearance rule measured on this storey, under the default ruleset: a WC's sides,
+   * a tall unit's and a hob's cover of a window, a hob's nearest tall unit, a doorway's clear
+   * width and approach, a stair's run and landings (plan-soundness PS2.72). Read through the
+   * rules' own measures, so a warning, or its absence, can be checked here. Present **only when
+   * requested** (`facts: ["clearances"]`). See {@link ClearanceFacts}.
+   */
+  clearances?: ClearanceFacts;
+  /**
+   * This storey's geometric quantities: wall lengths per category (centreline and face), room
+   * perimeters (centreline and net), the net floor area (and, with
+   * {@link DescribeOptions.wastePct}, that area with waste), door and window counts by kind and
+   * width, and wall face areas when the plan authors heights. Geometry only; the convention is in
+   * each field name. Present **only when requested** (`facts: ["quantities"]`). See
+   * {@link QuantityFacts}.
+   */
+  quantities?: QuantityFacts;
+  /** All problems from parse/link/resolve, with byte spans and codes. */
+  diagnostics: Diagnostic[];
+  /**
+   * The plan's `keep` invariants (ADR 0033), each measured against the resolved plan: one row
+   * per keep in source order, every storey's by level and then the plan's (`stacked`), with its
+   * signed residual in mm. Present **only when the plan declares a keep**, and last.
+   */
+  keeps?: KeepSummary[];
+}
+
+/**
+ * The lot's measured facts, or nothing when the plan declares no `boundary`.
+ *
+ * Area is the EXACT shoelace of the ring. The bbox is reported too, but it is a framing
+ * convenience only — an L-shaped or splayed lot's box is not its lot, and no number here
+ * is derived from it.
+ */
+function lotFacts(ring: readonly Point[] | undefined): Pick<SiteFacts, "lot_area_m2" | "lot_bbox"> {
+  if (!ring || ring.length < 3) return {};
+  const b = polygonBounds(ring);
+  return {
+    lot_area_m2: r2(polygonArea(ring) / 1_000_000),
+    lot_bbox: { x: b.x, y: b.y, w: b.w, h: b.h },
+  };
+}
+
+/** Round to 2 decimals, deterministically (avoids float drift in output). */
+const r2 = (n: number): number => Math.round(n * 100) / 100;
+
+/** Compass north as page quarter-turns — D4 arithmetic, so it lives in `src/algebra/d4.ts`;
+ *  re-exported here, its historical home, where `lint` and the tests import it from. */
+export { northQuarterTurns };
+
+/** How many rooms to name in a caption before collapsing the rest to "and N more". */
+const CAPTION_ROOM_CAP = 8;
+
+/** The minimal slice of a summary the caption is composed from. */
+interface CaptionInput {
+  plan: string;
+  rooms: Pick<RoomSummary, "id" | "label" | "area_m2">[];
+  totals: SceneSummary["totals"];
+  /** Door/opening ids that connect the exterior to a room (from the access graph). */
+  entrances: string[];
+}
+
+/**
+ * One deterministic caption sentence for a plan, e.g.
+ * `"Two-bed" — a 4-room floor plan, 42 m² total: Living / Kitchen (24 m²),
+ * Bedroom (12 m²); 3 doors, 3 windows, entrance via d_main.`
+ *
+ * Composed **only** from already-computed summary fields, in the summary's own
+ * (source) order, so it is byte-stable. Numbers route through {@link fmt2}. Long
+ * plans list the first {@link CAPTION_ROOM_CAP} rooms then "and N more" so the
+ * sentence stays bounded. Shared by {@link describe} (`summary.caption`) and the
+ * accessible-SVG `<desc>` so the two never diverge.
+ */
+export function buildCaption(s: CaptionInput): string {
+  const named = s.plan ? `"${s.plan}" — a` : "A";
+  let out = `${named} ${s.totals.rooms}-room floor plan, ${fmt2(s.totals.floor_area_m2)} m² total`;
+
+  if (s.rooms.length > 0) {
+    const shown = s.rooms.slice(0, CAPTION_ROOM_CAP);
+    const parts = shown.map((r) => `${r.label ?? r.id} (${fmt2(r.area_m2)} m²)`);
+    const more = s.rooms.length - shown.length;
+    out += `: ${parts.join(", ")}${more > 0 ? `, and ${more} more` : ""}`;
+  }
+
+  const counts: string[] = [];
+  if (s.totals.doors > 0) counts.push(`${s.totals.doors} door${s.totals.doors === 1 ? "" : "s"}`);
+  if (s.totals.windows > 0) counts.push(`${s.totals.windows} window${s.totals.windows === 1 ? "" : "s"}`);
+  if (counts.length > 0) out += `; ${counts.join(", ")}`;
+
+  if (s.entrances.length > 0) {
+    const sep = counts.length > 0 ? ", " : "; ";
+    if (s.entrances.length === 1) {
+      out += `${sep}entrance via ${s.entrances[0]}`;
+    } else {
+      const first = s.entrances.slice(0, 2);
+      const extra = s.entrances.length - first.length;
+      out += `${sep}entrances via ${first.join(", ")}${extra > 0 ? `, and ${extra} more` : ""}`;
+    }
+  }
+
+  return `${out}.`;
+}
+
+/**
+ * The caption for an already-resolved plan (the {@link compile} path, which has the
+ * IR but not a {@link SceneSummary}). Reuses the real {@link summarize} so it stays
+ * byte-identical to `describe(source).caption`; no re-parse. See ADR 0007's opt-in
+ * pattern — this only runs in accessible mode.
+ */
+export function captionForPlan(ir: ResolvedPlan, tol: number = DEFAULT_TOL): string {
+  const s = summarize(ir, tol, [], [], false, undefined, false);
+  return buildCaption({ plan: s.plan, rooms: s.rooms, totals: s.totals, entrances: s.access.entrances });
+}
+
+/** An all-zero {@link FreedomReport} (the failed-resolution path). */
+function emptyFreedom(): FreedomReport {
+  return {
+    rooms: { total: 0, absolute: 0, relational: 0, strip: 0 },
+    openings: { total: 0, attached: 0, absolute: 0 },
+    furniture: { total: 0, anchored: 0, againstWall: 0, absolute: 0 },
+    elements: [],
+  };
+}
+
+/**
+ * Build the {@link FreedomReport} from the resolved elements. Reads the internal
+ * `_placement` marker set during resolve (defaulting to `absolute` for the
+ * literal-`at` path). Pure tallying — one `elements` row per placed element in
+ * describe's own order (rooms, doors, windows, openings, furniture).
+ */
+/** The walls family of `freedom` (ADR 0028 §6): derived walls against walls typed as points. */
+function wallFreedom(walls: readonly RWallFact[]): {
+  total: number;
+  derived: number;
+  absolute: number;
+  relational?: number;
+} {
+  const derived = walls.filter((w) => w._derived !== undefined).length;
+  // An authored wall written `between`/`around` rooms (ADR 0028 §4): `relational`, present
+  // only when there is one, so a storey without one reports exactly what it did.
+  const relational = walls.filter((w) => w._relation !== undefined).length;
+  return {
+    total: walls.length,
+    derived,
+    absolute: walls.length - derived - relational,
+    ...(relational > 0 ? { relational } : {}),
+  };
+}
+
+function buildFreedom(
+  rooms: RRoom[],
+  doors: RDoor[],
+  windows: RWindow[],
+  openings: ROpening[],
+  furniture: RFurniture[],
+): FreedomReport {
+  const f = emptyFreedom();
+  const elements: FreedomElement[] = f.elements;
+
+  for (const r of rooms) {
+    const placement = r._placement ?? "absolute";
+    f.rooms.total++;
+    f.rooms[placement]++;
+    elements.push({ id: r.id, kind: "room", placement, ...inst(r._instance) });
+  }
+
+  const opening = (
+    id: string,
+    kind: "door" | "window" | "opening",
+    placement: OpeningPlacement,
+    instance: string | undefined,
+  ): void => {
+    f.openings.total++;
+    if (placement === "relational") f.openings.relational = (f.openings.relational ?? 0) + 1;
+    else f.openings[placement]++;
+    elements.push({ id, kind, placement, ...inst(instance) });
+  };
+  for (const d of doors) opening(d.id, "door", d._placement ?? "absolute", d._instance);
+  for (const w of windows) opening(w.id, "window", w._placement ?? "absolute", w._instance);
+  for (const o of openings) opening(o.id, "opening", o._placement ?? "absolute", o._instance);
+
+  for (const fu of furniture) {
+    const placement = fu._placement ?? "absolute";
+    f.furniture.total++;
+    if (placement === "relational") f.furniture.relational = (f.furniture.relational ?? 0) + 1;
+    else f.furniture[placement === "against-wall" ? "againstWall" : placement]++;
+    elements.push({ id: fu.id, kind: "furniture", placement, ...inst(fu._instance) });
+  }
+
+  return f;
+}
+
+/** Spreadable instance stamp for a resolved element — nothing at all at plan level. */
+/** What only a block stair reports (`VerticalSummary`): the pieces its `bbox` cannot say. */
+function blockStairFacts(v: RBlockStair): Pick<VerticalSummary, "flights" | "landings" | "turn"> {
+  const turns = stairTurns(v);
+  return {
+    flights: flightsOf(v).map((f) => ({ bbox: rectOf(f), run_mm: flightRun(f), entry: tailEdge(f) })),
+    landings: v.landings.map((l, i) =>
+      l.winders === undefined
+        ? { bbox: rectOf(l), turn: turns.landings[i]! }
+        : { bbox: rectOf(l), turn: turns.landings[i]!, winders: l.winders },
+    ),
+    turn: turns.whole,
+  };
+}
+
+function instanceOf(e: { _instance?: string; _component?: string }): { instance?: string; component?: string } {
+  return e._instance === undefined ? {} : { instance: e._instance, component: e._component };
+}
+
+/** Spreadable {@link DoorSummary.centreline_at}: the resolved point of an opening placed `between`. */
+function centrelineAt(o: RDoor | ROpening): { centreline_at?: Point } {
+  return o._relation?.between ? { centreline_at: { x: Number(fmt3(o.at.x)), y: Number(fmt3(o.at.y)) } } : {};
+}
+
+/** Spreadable instance stamp for a {@link FreedomElement}. */
+function inst(instance: string | undefined): { instance?: string } {
+  return instance === undefined ? {} : { instance };
+}
+
+/**
+ * Each room's `adjacent` list: the ids of the other rooms that {@link roomsAdjacent} says
+ * share an edge with it, in element order. The definition is the loop over every ordered
+ * pair ({@link adjacencyAllPairs}); this asks the same predicate of the same boxes, only of
+ * fewer pairs, so the lists are the same strings in the same order
+ * (`test/room-adjacency-oracle.test.ts`).
+ *
+ * A pair the predicate can accept is never skipped. Two rectangles touch only when one's
+ * edge coordinate (`x`, `x + w`, `y`, `y + h`) lies within `tol` of the facing edge of the
+ * other, so each rectangle asks four sorted key lists for the keys within `tol` of its own,
+ * widened by far more than the rounding of `|a − b| <= tol`. A pair with a polygon (or
+ * circle) side touches only along a shared run of edges, so their ring bounds, widened by
+ * `tol` and far more than the slope and rounding allowance of `ringsAdjacent`, intersect.
+ * 5,000 coincident rectangles share no edge, so they ask for no pair at all.
+ *
+ * A non-finite or negative `tol`, or a non-finite coordinate, takes the definition.
+ */
+export function roomAdjacency(
+  roomEls: readonly RRoom[],
+  roomRects: ReadonlyMap<string, RoomBox>,
+  tol: number,
+): string[][] {
+  const boxes = roomEls.map((r) => roomRects.get(r.id)!);
+  const n = boxes.length;
+  // Bounds of what `roomsAdjacent` reads: the ring of a polygon room, the four corners
+  // (`rectRing`) of a rectangle.
+  const minX = new Float64Array(n);
+  const minY = new Float64Array(n);
+  const maxX = new Float64Array(n);
+  const maxY = new Float64Array(n);
+  let finite = tol >= 0 && tol < Number.POSITIVE_INFINITY;
+  let reach = 0;
+  for (let i = 0; i < n && finite; i++) {
+    const b = boxes[i]!;
+    const pts = b.poly ?? [
+      { x: b.x, y: b.y },
+      { x: b.x + b.w, y: b.y + b.h },
+    ];
+    let x0 = Number.POSITIVE_INFINITY;
+    let y0 = Number.POSITIVE_INFINITY;
+    let x1 = Number.NEGATIVE_INFINITY;
+    let y1 = Number.NEGATIVE_INFINITY;
+    for (const p of pts) {
+      if (!Number.isFinite(p.x) || !Number.isFinite(p.y)) finite = false;
+      x0 = Math.min(x0, p.x);
+      y0 = Math.min(y0, p.y);
+      x1 = Math.max(x1, p.x);
+      y1 = Math.max(y1, p.y);
+    }
+    if (pts.length === 0) finite = false;
+    minX[i] = x0;
+    minY[i] = y0;
+    maxX[i] = x1;
+    maxY[i] = y1;
+    reach = Math.max(reach, Math.abs(x0), Math.abs(y0), Math.abs(x1), Math.abs(y1), x1 - x0 + (y1 - y0));
+  }
+  if (!finite) return adjacencyAllPairs(roomEls, roomRects, tol);
+
+  // A ring pair's margin: `tol`, plus `ringsAdjacent`'s parallel allowance (|sin| ≤ 1e-9
+  // over an edge no longer than `reach`) and its rounding, each covered a thousandfold.
+  const ringMargin = tol + 1e-6 * reach + 1e-6;
+  const near = (i: number, j: number): boolean =>
+    minX[j]! - ringMargin <= maxX[i]! &&
+    minX[i]! - ringMargin <= maxX[j]! &&
+    minY[j]! - ringMargin <= maxY[i]! &&
+    minY[i]! - ringMargin <= maxY[j]!;
+
+  const rects: number[] = [];
+  const rings: number[] = [];
+  for (let i = 0; i < n; i++) (boxes[i]!.poly ? rings : rects).push(i);
+  // The rectangles sorted by each edge coordinate, exactly as `roomsAdjacent` computes it.
+  const keyed = (key: (b: RoomBox) => number): { keys: Float64Array; ids: Int32Array } => {
+    const order = rects.map((i) => ({ i, k: key(boxes[i]!) })).sort((p, q) => p.k - q.k || p.i - q.i);
+    return { keys: Float64Array.from(order, (o) => o.k), ids: Int32Array.from(order, (o) => o.i) };
+  };
+  const left = keyed((b) => b.x);
+  const right = keyed((b) => b.x + b.w);
+  const top = keyed((b) => b.y);
+  const bottom = keyed((b) => b.y + b.h);
+
+  const seen = new Int32Array(n).fill(-1);
+  const out: string[][] = [];
+  for (let i = 0; i < n; i++) {
+    const cand: number[] = [];
+    const take = (j: number): void => {
+      if (seen[j] !== i) {
+        seen[j] = i;
+        cand.push(j);
+      }
+    };
+    const b = boxes[i]!;
+    if (b.poly) {
+      for (let j = 0; j < n; j++) if (near(i, j)) take(j);
+    } else {
+      // Every key k with |v − k| <= tol, widened by 2^-40 of the magnitudes: the rounding of
+      // that subtraction and of these bounds is below 2^-50 of them.
+      const within = (list: { keys: Float64Array; ids: Int32Array }, v: number): void => {
+        const w = tol + (Math.abs(v) + tol) * 2 ** -40;
+        const lo = v - w;
+        const hi = v + w;
+        let a = 0;
+        let z = list.keys.length;
+        while (a < z) {
+          const m = (a + z) >>> 1;
+          if (list.keys[m]! < lo) a = m + 1;
+          else z = m;
+        }
+        for (let k = a; k < list.keys.length && list.keys[k]! <= hi; k++) take(list.ids[k]!);
+      };
+      within(left, b.x + b.w);
+      within(right, b.x);
+      within(top, b.y + b.h);
+      within(bottom, b.y);
+      for (const j of rings) if (near(i, j)) take(j);
+    }
+    cand.sort((p, q) => p - q);
+    const id = roomEls[i]!.id;
+    const adjacent: string[] = [];
+    for (const j of cand) {
+      const other = roomEls[j]!;
+      if (other.id === id) continue;
+      if (roomsAdjacent(b, boxes[j]!, tol)) adjacent.push(other.id);
+    }
+    out.push(adjacent);
+  }
+  return out;
+}
+
+/** {@link roomAdjacency} by its definition: {@link roomsAdjacent} over every ordered pair. */
+function adjacencyAllPairs(
+  roomEls: readonly RRoom[],
+  roomRects: ReadonlyMap<string, RoomBox>,
+  tol: number,
+): string[][] {
+  return roomEls.map((r) => {
+    const rect = roomRects.get(r.id)!;
+    const adjacent: string[] = [];
+    for (const other of roomEls) {
+      if (other.id === r.id) continue;
+      if (roomsAdjacent(rect, roomRects.get(other.id)!, tol)) adjacent.push(other.id);
+    }
+    return adjacent;
+  });
+}
+
+/** A room's `net_area_m2` key: the rounded figure, or no key at all when it is omitted. */
+const netField = (mm2: number | undefined): { net_area_m2?: number } =>
+  mm2 === undefined ? {} : { net_area_m2: r2(mm2 / 1_000_000) };
+
+/** Build the summary from a fully resolved plan. */
+function summarize(
+  ir: ResolvedPlan,
+  tol: number,
+  facts: readonly DescribeFact[] = [],
+  /** The runs a shaft-reached storey is walked from — see `computeCirculation`. */
+  arrivals: readonly ArrivingRun[] = [],
+  /** A shaft arrives on this storey from below: it names no main entrance (PS0.10/PS0.3). */
+  upperStorey = false,
+  /** The linked plan's statements, built only when `depends` is requested. */
+  statements?: StatementIndex,
+  /** False on the caption path only: the gross internal area is not computed at all. */
+  withGrossArea = true,
+): Omit<SceneSummary, "ok" | "diagnostics"> {
+  const roomEls = ir.elements.filter((e): e is RRoom => e.kind === "room");
+  const doorEls = ir.elements.filter((e): e is RDoor => e.kind === "door");
+  const windowEls = ir.elements.filter((e): e is RWindow => e.kind === "window");
+  const openingEls = ir.elements.filter((e): e is ROpening => e.kind === "opening");
+  const furnEls = ir.elements.filter((e): e is RFurniture => e.kind === "furniture");
+  const verticalEls: RVertical[] = verticalsOf(ir);
+  // The walls `walls from rooms` derived, and the authored walls written `between`/`around`
+  // rooms (ADR 0028 §4), as facts (§6), in source order, copied so the IR is never shared. A
+  // `walls from rooms … status demolish` statement's walls are gone like an authored demolished
+  // wall (B3a): they are listed under `wall_status` only.
+  const derivedRows: DerivedWallRow[] = ir.elements.flatMap((e): DerivedWallRow[] => {
+    if (e.kind === "walls")
+      return (e as RWallsFromRooms).status === "demolish"
+        ? []
+        : (e as RWallsFromRooms)._derivedRows.map((r) => structuredClone(r));
+    if (e.kind !== "wall" || !(e as RWallFact)._relation || (e as RWallFact).points.length === 0) return [];
+    const rel = (e as RWallFact)._relation!;
+    return "between" in rel
+      ? [{ from: "between", name: e.id, between: [...rel.between] }]
+      : [{ from: "around", name: e.id, around: [...rel.around] }];
+  });
+  const voidEls = ir.elements.filter((e): e is RVoid => e.kind === "void");
+  const outdoorEls = ir.elements.filter((e): e is ROutdoor => e.kind === "outdoor");
+  const fenceEls = ir.elements.filter((e): e is RFence => e.kind === "fence");
+
+  const roomRects = new Map<string, RoomBox>(roomEls.map((r) => [r.id, roomBox(r)]));
+
+  const adjacency = roomAdjacency(roomEls, roomRects, tol);
+  // The storey's wall bands, once: every room's net area reads them.
+  const bands = storeyNetAreaBands(ir.walls);
+
+  const rooms: RoomSummary[] = roomEls.map((r, i) => {
+    const rect = roomRects.get(r.id)!;
+    const adjacent = adjacency[i]!;
+    const uses = roomUses(r);
+    return {
+      id: r.id,
+      ...(r.label !== undefined ? { label: r.label } : {}),
+      uses: [...uses],
+      room_type: roomTypeForUses(uses),
+      area_m2: r2(roomAreaMm2(r) / 1_000_000),
+      ...netField(memoRoomNetAreaMm2(r, bands)),
+      // `bbox` stays a plain {x,y,w,h} — never the RoomBox, whose `poly` would leak a
+      // fifth key into the JSON. A polygon room's true floor is `floor_polygon`.
+      bbox: { x: rect.x, y: rect.y, w: rect.w, h: rect.h },
+      // A CIRCULAR room reports its exact centre + radius (append-only) INSTEAD of a
+      // 48-vertex ring: the tessellation is an implementation detail of the grid layer,
+      // and dumping it would bloat an agent's context with numbers that are not the
+      // truth about the floor. `area_m2` above is πR², exact.
+      ...(r.circle ? { floor_circle: { cx: r.circle.c.x, cy: r.circle.c.y, r: r.circle.r } } : {}),
+      floor_polygon: r.circle
+        ? []
+        : r.poly
+          ? r.poly.map((p) => ({ x: p.x, y: p.y }))
+          : [
+              { x: rect.x, y: rect.y },
+              { x: rect.x + rect.w, y: rect.y },
+              { x: rect.x + rect.w, y: rect.y + rect.h },
+              { x: rect.x, y: rect.y + rect.h },
+            ],
+      adjacent,
+      ...instanceOf(r),
+    };
+  });
+
+  // Which rooms' perimeters does this opening sit on? (≤2 for a door, 1 for a window.)
+  // Shared with the lint connectivity rules — see analyze.ts.
+  // The vertical datum's gate. ONE boolean decides whether any height key appears
+  // anywhere in this summary — every `...(heights ? …)` below reads this and nothing else,
+  // so there is no second rule to disagree with the first. It is whole-PLAN (see
+  // `ResolvedPlan._heightsAuthored`), which is why a building whose upper floor alone
+  // declares a height reports heights on every page.
+  const heights = ir._heightsAuthored;
+  // The walls' remodel status (B3a): a per-storey block, absent unless a wall here writes one.
+  const wallStatus = wallStatusFacts(ir);
+
+  const doors: DoorSummary[] = doorEls.map((d) => {
+    const { between, straddles } = connectorConnection(d, roomRects, tol);
+    return {
+      id: d.id,
+      ...(d._instance !== undefined ? { instance: d._instance } : {}),
+      between,
+      ...(straddles ? { straddles } : {}),
+      width: d.width,
+      ...(d._relation ? { relation: relationText(d._relation) } : {}),
+      ...(d.doorKind !== undefined ? { kind: d.doorKind } : {}),
+      ...(heights ? { head: d.head } : {}),
+      ...centrelineAt(d),
+    };
+  });
+
+  // Plan centre (bounding-box midpoint of the union of room rectangles). Its ONLY reader
+  // is `windowFacingPage`, and only as the stated tie-break for when the outward-face
+  // probe cannot decide — it is NOT a datum for anything else: a courtyard plan's midpoint
+  // lies in the courtyard, i.e. outside the building. Cheap and deterministic to compute
+  // up front.
+  const planCenter: Point = planCenterOfRooms(roomRects);
+
+  // The plan's declared `north`, as clockwise quarter-turns off the page top. Zero for
+  // the default `north up`, in which case the compass answer IS the page answer and no
+  // `facingPage` key is emitted — so a plan that declares no `north` is byte-identical.
+  const northTurns = northQuarterTurns(ir.north);
+
+  // The storey's wall segments, built only when a window stands on an arc edge, the one case
+  // `arcWindowRoom` reads them in.
+  let segsMemo: WallSegment[] | null = null;
+  const segs = (): WallSegment[] => {
+    if (segsMemo === null) segsMemo = ir.walls.flatMap((x) => segmentsOfWall(x));
+    return segsMemo;
+  };
+  const windows: WindowSummary[] = windowEls.map((w) => {
+    const touching = roomsAtPoint(w.at, roomRects, tol);
+    const edgeRoom = touching[0] ?? null;
+    // A window on an arc edge no room touches is attributed from the shape (`windowRoom`'s rule
+    // in analyze.ts, PS0.12). Its facing is asked exactly as before, of the edge room only.
+    const room =
+      edgeRoom ??
+      (w.host?.arc ? arcWindowRoom({ at: w.at, width: w.width, host: w.host }, roomRects, tol, segs()) : null);
+    const box = edgeRoom ? (roomRects.get(edgeRoom) ?? null) : null;
+    // A POLYGON/CIRCLE room has no four sides to pick the nearest of, and its bounding box
+    // would answer for an edge the window is not on — `windowFacingPage` drops it and falls
+    // through to the outward-face probe, which is exact at any wall angle and reads the
+    // ring, not the box.
+    const facingPage = windowFacingPage(w.at, box, w.host, planCenter, roomRects);
+    return {
+      id: w.id,
+      room,
+      width: w.width,
+      ...(w._relation ? { relation: relationText(w._relation) } : {}),
+      ...(w.windowKind !== undefined ? { kind: w.windowKind } : {}),
+      ...(w._corner?.with !== undefined ? { corner_with: w._corner.with } : {}),
+      facing: toCompass(facingPage, northTurns),
+      ...(northTurns !== 0 ? { facingPage } : {}),
+      ...(heights ? { sill: w.sill, head: w.head } : {}),
+    };
+  });
+
+  const openings: OpeningSummary[] = openingEls.map((o) => {
+    const { between, straddles } = connectorConnection(o, roomRects, tol);
+    return {
+      id: o.id,
+      between,
+      ...(straddles ? { straddles } : {}),
+      width: o.width,
+      ...(o._relation ? { relation: relationText(o._relation) } : {}),
+      ...(heights ? { head: o.head } : {}),
+      ...centrelineAt(o),
+    };
+  });
+
+  // The `clear` measure's obstacle world, built only when a piece declares a zone, so a plan
+  // without one does no new work.
+  const clearWorld = furnEls.some((f) => f._clear) ? clearWorldOf(furnEls, ir.walls, doorEls) : undefined;
+  const furniture: FurnitureSummary[] = furnEls.map((f) => ({
+    id: f.id,
+    category: f.category,
+    ...(f.label !== undefined ? { label: f.label } : {}),
+    ...(f.room !== undefined ? { room: f.room } : {}),
+    ...(f.rotate ? { rotate: f.rotate } : {}),
+    ...instanceOf(f),
+    ...(f._relation !== undefined ? { relation: f._relation } : {}),
+    ...(f._facing !== undefined ? { facing: f._facing } : {}),
+    ...(f._clear && clearWorld ? { clear: clearFacts(f, f._clear, clearWorld) } : {}),
+  }));
+
+  const verticals: VerticalSummary[] = verticalEls.map((v) => ({
+    id: v.id,
+    kind: v.kind as VerticalKind,
+    ...(v.kind === "elevator" ? {} : { dir: v.dir }),
+    room: roomOfVertical(v, roomEls),
+    bbox: rectOf(v),
+    ...(v.kind === "stair" ? { flight_width: v.width } : {}),
+    ...(isBlockStair(v) ? blockStairFacts(v) : {}),
+  }));
+
+  // A void's owning room is the room whose FLOOR holds the opening's CENTRE — through the
+  // poly-aware `pointInRoomBox`, never the bounding box. The box is the wrong datum for a
+  // concave room (its notch is inside the box and outside the floor).
+  // A `polygon` void belongs to the room that holds most of it: each grid cell of its ring
+  // votes its area for the room whose floor holds the cell's centre, and the largest total wins
+  // (the first room written on a tie). The cells are a set the frame carries onto itself, so the
+  // answer is the same however the void is placed, which a single probe point chosen in page
+  // order (`polygonLabelPoint`'s scan, or "the largest piece") is not.
+  const ownerOfRing = (v: RVoid): RRoom | undefined => {
+    const votes = new Map<string, number>();
+    for (const p of voidPieces(v)) {
+      const c = { x: p.at.x + p.size.w / 2, y: p.at.y + p.size.h / 2 };
+      const r = roomEls.find((room) => pointInRoomBox(c, roomRects.get(room.id)!));
+      if (r) votes.set(r.id, (votes.get(r.id) ?? 0) + p.size.w * p.size.h);
+    }
+    let best: RRoom | undefined;
+    for (const r of roomEls) if ((votes.get(r.id) ?? 0) > (best ? votes.get(best.id)! : 0)) best = r;
+    return best;
+  };
+  const voids: VoidSummary[] = voidEls.map((v) => {
+    const centre = { x: v.at.x + v.size.w / 2, y: v.at.y + v.size.h / 2 };
+    const owner = v.parts ? ownerOfRing(v) : roomEls.find((r) => pointInRoomBox(centre, roomRects.get(r.id)!));
+    return {
+      id: v.id,
+      at: { ...v.at },
+      size: { ...v.size },
+      room: owner ? owner.id : null,
+      ...(v.poly ? { polygon: v.poly.map((p) => ({ ...p })), area_m2: r2(polygonArea(v.poly) / 1_000_000) } : {}),
+      ...(v.rail ? { rail: [...v.rail] } : v.railEdges ? { rail: [...v.railEdges] } : {}),
+    };
+  });
+
+  // Ground surfaces. The area is the EXACT shoelace for a ring and w x h for a
+  // rectangle — never the bounding box, which for a garden edge would be wildly wrong and
+  // is exactly the derived-position defect class the project closed six instances of.
+  const outdoor: OutdoorSummary[] = outdoorEls.map((o) => ({
+    id: o.id,
+    kind: o.surface,
+    ...(o.label !== undefined ? { label: o.label } : {}),
+    area_m2: r2((o.poly ? polygonArea(o.poly) : o.size.w * o.size.h) / 1_000_000),
+    bbox: { x: o.at.x, y: o.at.y, w: o.size.w, h: o.size.h },
+    // Present on a balcony and absent on every other kind, INCLUDING when the list is
+    // empty: `rail: []` on a balcony means "no railing", which is a different fact from
+    // "railings do not apply to this thing".
+    ...(o.rail ? { rail: [...o.rail] } : {}),
+  }));
+
+  const fences: FenceSummary[] = fenceEls.map((f) => {
+    let len = 0;
+    for (let i = 0; i + 1 < f.points.length; i++) {
+      len += Math.hypot(f.points[i + 1]!.x - f.points[i]!.x, f.points[i + 1]!.y - f.points[i]!.y);
+    }
+    if (f.closed && f.points.length > 2) {
+      const a = f.points[f.points.length - 1]!;
+      const b = f.points[0]!;
+      len += Math.hypot(b.x - a.x, b.y - a.y);
+    }
+    return { id: f.id, style: f.style, length_mm: r2(len), closed: f.closed };
+  });
+
+  // The main entrance (PS0.10) rides on the access graph, appended, only on a storey with more
+  // than one entrance. Circulation keeps measuring each room from its nearest entrance.
+  const access = withMainEntrance(
+    buildDoorAccessGraph(roomEls, doorEls, tol, undefined, openingEls, openRunsOf(ir, tol)),
+    entranceInputs(ir, roomRects, upperStorey),
+  );
+  const circulation = computeCirculation(
+    roomEls,
+    ir.walls,
+    doorEls,
+    openingEls,
+    furnEls,
+    access,
+    tol,
+    undefined,
+    verticalEls,
+    voidEls.flatMap(voidPieces),
+    arrivals,
+  );
+
+  // Drawing extent: union of wall points and sized-element rectangles.
+  let minX = Infinity,
+    minY = Infinity,
+    maxX = -Infinity,
+    maxY = -Infinity;
+  const ext = (x: number, y: number): void => {
+    if (x < minX) minX = x;
+    if (y < minY) minY = y;
+    if (x > maxX) maxX = x;
+    if (y > maxY) maxY = y;
+  };
+  for (const w of ir.walls) for (const p of w.points) ext(p.x, p.y);
+  for (const rect of roomRects.values()) {
+    ext(rect.x, rect.y);
+    ext(rect.x + rect.w, rect.y + rect.h);
+  }
+  const bbox = minX === Infinity ? { w: 0, h: 0 } : { w: maxX - minX, h: maxY - minY };
+  // Outer-face extent: the same union taken over each wall's OFFSET rectangle, so the
+  // box lands on the wall faces rather than their centerlines (the shared helper the
+  // `dims auto` overall chain measures with).
+  const ob = outerFaceBounds(ir.walls, [...roomRects.values()]);
+  const bbox_outer = Number.isFinite(ob.minX) ? { w: ob.maxX - ob.minX, h: ob.maxY - ob.minY } : { w: 0, h: 0 };
+
+  const floorArea = r2(rooms.reduce((s, r) => s + r.area_m2, 0));
+  // Skipped on the accessible-caption path (`captionForPlan`, inside `compile()`): the caption
+  // never reads it, so `compile()` does none of this unbudgeted work.
+  const gia = withGrossArea ? grossInternalArea(ir.walls) : null;
+  // Past its counted cap this says nothing: the figure stands, and no list is guessed at.
+  const shells = gia?.ok
+    ? openShells({
+        walls: ir.walls,
+        segs: segs(),
+        rooms: roomEls,
+        rects: roomRects,
+      })
+    : null;
+  const leavesOut = shells && !("refused" in shells) ? shells.rooms.map((r) => r.id) : [];
+  const totals = {
+    rooms: rooms.length,
+    doors: doors.length,
+    windows: windows.length,
+    floor_area_m2: floorArea,
+    // The shell's enclosure, beside the centreline sum: every resolving summary carries exactly
+    // one of the two keys.
+    ...(gia === null
+      ? {}
+      : gia.ok
+        ? { gross_internal_area_m2: r2(gia.mm2 / 1_000_000) }
+        : { gross_internal_area_omitted: gia.reason }),
+    ...(leavesOut.length > 0 ? { gross_internal_area_leaves_out: leavesOut } : {}),
+    // Never a sum over a subset: one omitted room omits the total.
+    ...(rooms.every((r) => r.net_area_m2 !== undefined)
+      ? { net_floor_area_m2: r2(rooms.reduce((s, r) => s + (r.net_area_m2 ?? 0), 0)) }
+      : {}),
+    // Summed from the same already-rounded per-surface numbers the rows report, the way
+    // `floor_area_m2` is summed from the rooms — so the total and the list can never
+    // disagree by a rounding step. Spread, so a plan with no ground has no key at all.
+    ...(outdoor.length > 0 ? { outdoor_area_m2: r2(outdoor.reduce((s, o) => s + o.area_m2, 0)) } : {}),
+  };
+
+  // Declared zones. Membership ROLLS UP through nesting (`west` contains everything in
+  // `west.galleries`), and each area is summed from the same rounded per-room number
+  // `totals.floor_area_m2` uses, so a zone's figure and the room list can never disagree.
+  const areaOf = new Map<string, number>(rooms.map((r) => [r.id, r.area_m2]));
+  const zones: ZoneSummary[] | undefined =
+    ir.zones && ir.zones.length > 0
+      ? ir.zones.map((z) => {
+          const members = roomEls.filter((r) => inZone(r._zone, z.path)).map((r) => r.id);
+          return {
+            id: z.id,
+            ...(z.label !== undefined ? { label: z.label } : {}),
+            path: z.path,
+            ...(ir.level !== undefined ? { level: ir.level } : {}),
+            rooms: members,
+            room_count: members.length,
+            floor_area_m2: r2(members.reduce((s, id) => s + (areaOf.get(id) ?? 0), 0)),
+          };
+        })
+      : undefined;
+
+  return {
+    plan: ir.name,
+    caption: buildCaption({ plan: ir.name, rooms, totals, entrances: access.entrances }),
+    ...(ir.accTitle !== undefined ? { accTitle: ir.accTitle } : {}),
+    ...(ir.accDescr !== undefined ? { accDescr: ir.accDescr } : {}),
+    units: ir.units,
+    ...(ir.scale !== undefined ? { scale: ir.scale } : {}),
+    // Append-only: present only for a plan that declares `paper`, so every existing
+    // summary is unchanged. Read straight off the IR — `resolve()` already picked the
+    // operative scale, so describe() and the drawing can never disagree.
+    ...(ir.sheet
+      ? {
+          sheet: {
+            paper: ir.sheet.size,
+            orientation: ir.sheet.orientation,
+            scale_denominator: ir.sheet.denom,
+            scale_auto: ir.sheet.auto,
+            fits: ir.sheet.fits,
+            // Conditional, so a sheet whose whole drawing fits describes byte-identically
+            // to every payload before this key existed. See `SheetSummary.drawing_fits`.
+            ...(ir.sheet.drawingFits ? {} : { drawing_fits: false as const }),
+          },
+        }
+      : {}),
+    bbox,
+    bbox_outer,
+    ...(ir.axes && ir.axes.length > 0
+      ? {
+          axes: {
+            x: ir.axes.filter((a) => a.axis === "x").map((a) => ({ pos: a.pos, label: a.label })),
+            y: ir.axes.filter((a) => a.axis === "y").map((a) => ({ pos: a.pos, label: a.label })),
+          },
+        }
+      : {}),
+    // Append-only: present only for a plan that declares `site`, so every existing summary
+    // is unchanged. Five names, derived in closed form (`src/site.ts`) — nothing measured.
+    // The two LOT facts are appended to the five direction names rather than
+    // living beside them, because they come from a different half of the block: the
+    // directions are a closed-form table lookup on two words, the lot is measured
+    // geometry. Both absent unless the plan declares a `boundary`, so the `site` law — a
+    // `site` with only `street`/`hemisphere` describes exactly as before — still holds.
+    ...(ir.site ? { site: { ...deriveSite(ir.site), ...lotFacts(ir.siteBoundary) } } : {}),
+    // Append-only: present only for a plan that `place`s a component, so every existing
+    // summary is unchanged. Copied straight off the IR — the frames the resolver actually
+    // applied, never re-derived from the elements.
+    ...(ir.instances ? { instances: ir.instances.map((i) => ({ ...i })) } : {}),
+    rooms,
+    doors,
+    windows,
+    openings,
+    furniture,
+    ...(verticals.length > 0 ? { verticals } : {}),
+    ...(voids.length > 0 ? { voids } : {}),
+    ...(outdoor.length > 0 ? { outdoor } : {}),
+    ...(fences.length > 0 ? { fences } : {}),
+    // Append-only: present only on a storey that `walls from rooms` derived walls for.
+    ...(derivedRows.length > 0 ? { derived_walls: derivedRows } : {}),
+    // The vertical datum, under the one gate. `walls` is present even when empty,
+    // unlike the lists above: an empty `voids` means "this storey has no holes in it", but
+    // an empty `walls` here would be indistinguishable from "heights are not reported",
+    // and the block's presence is already the answer to that question.
+    ...(heights
+      ? {
+          heights: {
+            storey_height: ir.storeyHeight,
+            elevation: ir.elevation,
+            // Every wall as drawn: a demolished wall (B3a) still has a height.
+            walls: drawnView(ir).walls.map((w) => ({ id: w.id, height: w.height })),
+          },
+        }
+      : {}),
+    ...(wallStatus ? { wall_status: wallStatus } : {}),
+    access,
+    circulation,
+    totals,
+    input_graph: buildInputGraph(roomEls, doorEls, openingEls, tol, access),
+    freedom: {
+      ...buildFreedom(roomEls, doorEls, windowEls, openingEls, furnEls),
+      ...(derivedRows.length > 0 ? { walls: wallFreedom(ir.walls) } : {}),
+    },
+    // The drawn schedule, from the same pure derivation the renderer uses — so the table
+    // in the SVG and this JSON can never disagree. Opt-in only. `ir.zones` is passed for
+    // exactly the same reason: the rows here must be the rows drawn, grouping included.
+    ...(ir.schedule === "rooms" ? { schedule: roomSchedule(roomEls, ir.zones, ir.walls).rows } : {}),
+    ...(zones ? { zones } : {}),
+    // Opt-in derived facts: computed and present ONLY when requested, so the default
+    // summary is byte-identical. The logic lives in `analyze/symmetry.ts`/`analyze/syntax.ts`.
+    ...(facts.includes("symmetry") ? { symmetry: symmetryFacts(ir) } : {}),
+    ...(facts.includes("syntax") ? { syntax: syntaxFacts(access) } : {}),
+    ...(facts.includes("depends") && statements ? { depends: dependsFacts(ir, statements) } : {}),
+  };
+}
+
+/**
+ * Does an element declared in zone `member` belong to the zone at `path`? True for the
+ * zone itself and for anything nested inside it — membership rolls up, and the test is on
+ * whole dotted segments, so `west` never captures `westwing`.
+ */
+function inZone(member: string | undefined, path: string): boolean {
+  return member !== undefined && (member === path || member.startsWith(`${path}.`));
+}
+
+/**
+ * The building-level vertical report for a multi-storey plan, or `undefined` when no run
+ * spans two storeys. A storey is *grounded* when it has its own exterior entrance that is
+ * a real arrival point — {@link storeyGrounded}, the same predicate `lint` builds its
+ * `grounded()` callback from, discounting a door that opens onto an `outdoor balcony`.
+ * Reachability then spreads along the shafts — room-aware: a shaft carries you on only
+ * from a stop whose room is walkable on its storey ({@link buildingRoomReach}, the same
+ * probe access graph `access` reports), so a stair in a door-less store reaches nothing.
+ * This is deliberately NOT the same thing as this storey's own `access.hasEntrance`
+ * below, which stays the honest, undiscounted fact that the floor has an exterior door.
+ */
+function buildVerticalReport(
+  levels: readonly ResolvedLevel[],
+  tol: number,
+):
+  | {
+      report: VerticalReport;
+      arrivals: ReadonlyMap<number, readonly ArrivingRun[]>;
+      fromBelow: ReadonlySet<number>;
+    }
+  | undefined {
+  const inputs = levels.map((l) => ({ level: l.level, ir: l.ir }));
+  const connections = verticalConnections(inputs);
+  if (connections.length === 0) return undefined;
+  const grounded = (n: number): boolean => {
+    const l = levels.find((x) => x.level === n);
+    return l ? storeyGrounded(l.ir, tol) : false;
+  };
+  const roomReach = buildingRoomReach(inputs, tol);
+  const reach = verticalReach(inputs, grounded, roomReach);
+  return {
+    report: { connections, reachable_levels: [...reach.reachable].sort((a, b) => a - b) },
+    arrivals: arrivalRuns(inputs, grounded, roomReach),
+    fromBelow: levelsEnteredFromBelow(connections, (n) => {
+      const l = levels.find((x) => x.level === n);
+      return l ? storeyHasEntranceCandidate(l.ir, tol) : false;
+    }),
+  };
+}
+
+/**
+ * Produce a {@link SceneSummary} for ArchLang `source`. Never throws on a
+ * user-source problem: on fatal errors it returns `{ ok: false, …empty…,
+ * diagnostics }`; otherwise `{ ok: true, … }` with the full summary.
+ *
+ * @example
+ * const s = describe(`plan "X" { room at (0,0) size 4000x3000 label "R" }`);
+ * s.totals.floor_area_m2; // 12
+ */
+export function describe(source: string, opts: DescribeOptions = {}): SceneSummary {
+  const w = opts.wastePct;
+  if (w !== undefined && !(Number.isFinite(w) && w >= 0 && w <= MAX_WASTE_PCT))
+    throw new RangeError(`describe: wastePct must be a number from 0 to ${MAX_WASTE_PCT}, got ${String(w)}`);
+  return describeWithAutoIds(source, opts).summary;
+}
+
+/**
+ * @internal {@link describe}, plus the ids of the summary's top-level `rooms[]` whose id was
+ * an assigned positional auto-id (`room_<n>`) rather than author-declared — read from the
+ * SAME resolve, so `diffPlans` needs no second resolve and no guess from the id's spelling.
+ * Not public API: `describe()`'s own output is exactly what it was (the flag never reaches
+ * a `RoomSummary`), and the set is a side channel for the diff alone.
+ */
+export function describeWithAutoIds(
+  source: string,
+  opts: DescribeOptions = {},
+): { summary: SceneSummary; autoRoomIds: ReadonlySet<string>; fabric: DiffFabric } {
+  const { ir, diagnostics, levels, plan } = resolvePlan(source, opts);
+  const autoRoomIds = new Set<string>();
+  if (ir)
+    for (const e of ir.elements) if (e.kind === "room" && (e as RRoom)._idAuthored !== true) autoRoomIds.add(e.id);
+  const statements = plan && opts.facts?.includes("depends") ? indexStatements(plan) : undefined;
+  return {
+    summary: summarizeResolved(ir, diagnostics, levels, opts, statements, plan),
+    autoRoomIds,
+    fabric: diffFabricOf(ir),
+  };
+}
+
+/**
+ * @internal One wall as `diffPlans` compares it, read from the same resolve as the summary
+ * (the lowest storey, like `describe()`'s top-level arrays). Not public API and never part of
+ * `describe()`'s output. `key` pairs it with the other side: its resolved id, with `@<n>` on
+ * the n-th wall sharing an id. `name` is what a person reads: `wall "<authored id>"`, or the
+ * room relation of a derived wall (`wallPhraseOf`), never its internal name.
+ */
+export interface DiffWallFact {
+  key: string;
+  name: string;
+  /** The wall's id when it is an authored statement; absent on a derived wall. */
+  id?: string;
+  category: string;
+  thickness: number;
+  closed: boolean;
+  points: Point[];
+  /** Per segment index: the arc's radius and signed sweep, absent for a straight run. */
+  arcs: Array<{ r: number; sweep: number } | undefined>;
+  /** The rooms the wall stands by, by relation: a derived partition's or a pairwise wall's
+   *  pair, an `around` list, or `"rooms"` for a derived ring (it follows the room union). */
+  follows?: string[] | "rooms";
+}
+
+/** @internal An opening's host as `diffPlans` compares it. */
+export interface DiffHostFact {
+  /** The {@link DiffWallFact.key} of the wall it stands in, or null when it stands in none. */
+  wall: string | null;
+  /** The host part of a relational placement as written (`between a and b`, `on r.top`). */
+  relation?: string;
+  /** How a person names the opening when its id cannot be typed (a derived `open between`). */
+  name?: string;
+}
+
+/** @internal The fabric `describe()` does not report, carried beside it for `diffPlans`. */
+export interface DiffFabric {
+  walls: DiffWallFact[];
+  hosts: Map<string, DiffHostFact>;
+}
+
+function sameSegment(w: RWallFact, a: Point, b: Point): boolean {
+  const n = w.points.length;
+  const last = w.closed ? n : n - 1;
+  for (let k = 0; k < last; k++) {
+    const p = w.points[k]!;
+    const q = w.points[(k + 1) % n]!;
+    if (
+      (p.x === a.x && p.y === a.y && q.x === b.x && q.y === b.y) ||
+      (p.x === b.x && p.y === b.y && q.x === a.x && q.y === a.y)
+    )
+      return true;
+  }
+  return false;
+}
+
+/** Linear in walls + openings: one pass each, walls grouped by id once (an opening scans only
+ *  the walls sharing its host's id, as `wallOf` picks among them). */
+function diffFabricOf(ir: ReturnType<typeof resolvePlan>["ir"]): DiffFabric {
+  const walls: DiffWallFact[] = [];
+  const hosts = new Map<string, DiffHostFact>();
+  if (!ir) return { walls, hosts };
+  const byId = new Map<string, Array<{ w: RWallFact; key: string }>>();
+  for (const w of ir.walls) {
+    const group = byId.get(w.id) ?? [];
+    if (group.length === 0) byId.set(w.id, group);
+    const key = group.length === 0 ? w.id : `${w.id}@${group.length + 1}`;
+    group.push({ w, key });
+    // A run an authored wall split off a derived wall is `<name>~<k>`: same relation, run k.
+    const run = w._derived ? /~(\d+)$/.exec(w.id) : null;
+    const rel = w._relation;
+    const follows: DiffWallFact["follows"] = w._derived
+      ? w._derived.between
+        ? [...w._derived.between]
+        : "rooms"
+      : rel && "between" in rel
+        ? [...rel.between]
+        : rel && "around" in rel
+          ? [...rel.around]
+          : undefined;
+    walls.push({
+      key,
+      name: `${wallPhraseOf(w)}${run ? ` (run ${run[1]})` : ""}`,
+      ...(w._derived ? {} : { id: w.id }),
+      category: w.category,
+      thickness: w.thickness,
+      closed: w.closed,
+      points: w.points.map((p) => ({ x: p.x, y: p.y })),
+      arcs: (w.arcs ?? []).map((a) => (a ? { r: a.r, sweep: a.sweep } : undefined)),
+      ...(follows !== undefined ? { follows } : {}),
+    });
+  }
+  for (const e of ir.elements) {
+    if (e.kind !== "door" && e.kind !== "window" && e.kind !== "opening") continue;
+    const o = e as RDoor | RWindow | ROpening;
+    let wall: string | null = null;
+    if (o.host) {
+      const group = byId.get(o.host.wallId) ?? [];
+      const hit =
+        group.length <= 1 ? group[0] : (group.find((g) => sameSegment(g.w, o.host!.a, o.host!.b)) ?? group[0]);
+      wall = hit ? hit.key : o.host.wallId;
+    }
+    const r = o._relation;
+    const relation = r ? (r.between ? `between ${r.between[0]} and ${r.between[1]}` : `on ${r.edge}`) : undefined;
+    // An `open between` opening derived with no `id=` has an id no one can type (`A|B:open`).
+    const d = o.kind === "opening" ? (o as ROpening)._derived : undefined;
+    const name = d && !d.idAuthored ? `opening between ${d.between[0]} and ${d.between[1]}` : undefined;
+    hosts.set(o.id, { wall, ...(relation !== undefined ? { relation } : {}), ...(name !== undefined ? { name } : {}) });
+  }
+  return { walls, hosts };
+}
+
+function summarizeResolved(
+  ir: ReturnType<typeof resolvePlan>["ir"],
+  diagnostics: Diagnostic[],
+  levels: ReturnType<typeof resolvePlan>["levels"],
+  opts: DescribeOptions,
+  statements?: StatementIndex,
+  plan?: PlanNode,
+): SceneSummary {
+  const tol = opts.adjacencyTolMm ?? DEFAULT_TOL;
+  const keeps = ir ? keepResultsOf(ir, levels) : undefined;
+
+  if (!ir) {
+    return {
+      ok: false,
+      plan: "",
+      caption: "",
+      units: "mm",
+      bbox: { w: 0, h: 0 },
+      bbox_outer: { w: 0, h: 0 },
+      rooms: [],
+      doors: [],
+      windows: [],
+      openings: [],
+      furniture: [],
+      access: { entrances: [], hasEntrance: false, edges: [], rooms: [] },
+      circulation: null,
+      totals: { rooms: 0, doors: 0, windows: 0, floor_area_m2: 0, net_floor_area_m2: 0 },
+      input_graph: {},
+      freedom: emptyFreedom(),
+      diagnostics,
+    };
+  }
+
+  // Vertical connections are a BUILDING fact: they only exist across storeys, so they
+  // are computed once from the whole level set and never per level — and BEFORE the
+  // storeys are summarised, because a storey reached only by a shaft is walked from the
+  // runs that arrive on it (its `circulation`).
+  const building = levels.length > 0 ? buildVerticalReport(levels, tol) : undefined;
+  const vertical = building?.report;
+  const arrivalsOn = (level: number): readonly ArrivingRun[] => building?.arrivals.get(level) ?? [];
+
+  // Multi-storey: the top-level facts are the LOWEST storey (`levels[0].ir === ir`), and
+  // `levels` adds one same-shaped summary per storey. `summarize` is reused verbatim per
+  // level, so a storey's facts can never be computed a second, different way.
+  const perLevel: LevelSummary[] | undefined =
+    levels.length > 0
+      ? levels.map((l) => ({
+          level: l.level,
+          ...(l.name !== undefined ? { name: l.name } : {}),
+          ...summarize(
+            l.ir,
+            tol,
+            opts.facts,
+            arrivalsOn(l.level),
+            building?.fromBelow.has(l.level) ?? false,
+            statements,
+          ),
+        }))
+      : undefined;
+
+  // The lowest storey's arrivals, so the top level still repeats `levels[0]` exactly.
+  const top = summarize(
+    ir,
+    tol,
+    opts.facts,
+    levels.length > 0 ? arrivalsOn(levels[0]!.level) : [],
+    levels.length > 0 ? (building?.fromBelow.has(levels[0]!.level) ?? false) : false,
+    statements,
+  );
+  // ADR 0033 / PS4.3b: the keeps as static facts, under `depends` (the plan's every keep on the
+  // top-level object, a storey's own on its `levels[]` entry), only when the plan declares one.
+  if (keeps && plan && top.depends) {
+    const facts = keepFacts(plan, ir, levels, keeps, (level) =>
+      level === undefined ? top.depends : perLevel?.find((l) => l.level === level)?.depends,
+    );
+    top.depends = { ...top.depends, keeps: facts };
+    for (const l of perLevel ?? []) {
+      const own = facts.filter((f) => f.level === l.level);
+      if (l.depends && own.length > 0) l.depends = { ...l.depends, keeps: own };
+    }
+  }
+  // PS2.72: the clearance measures, last among the opt-in facts, on each storey and the top.
+  if (opts.facts?.includes("clearances")) {
+    const c = clearanceFacts(ir, levels);
+    top.clearances = c.top;
+    for (const l of perLevel ?? []) l.clearances = c.byLevel.get(l.level)!;
+  }
+  // B4: the geometric quantities, after the clearances, on each storey and the top (the lowest
+  // storey's, as every top-level fact is).
+  if (opts.facts?.includes("quantities")) {
+    top.quantities = quantityFacts(ir, opts.wastePct);
+    for (const l of perLevel ?? [])
+      l.quantities = quantityFacts(levels.find((x) => x.level === l.level)!.ir, opts.wastePct);
+  }
+  return {
+    ok: true,
+    ...top,
+    totals: withAllLevelsGrossArea(top.totals, perLevel),
+    ...(perLevel ? { levels: perLevel } : {}),
+    ...(vertical ? { vertical } : {}),
+    diagnostics,
+    // ADR 0033: the plan's keeps, measured, LAST and only when it declares one, so every byte
+    // before it is what it was (PS4.3 design §3.3).
+    ...(keeps ? { keeps: keeps.map(keepSummary) } : {}),
+  };
+}
+
+/**
+ * The top-level totals with the building's gross internal area inserted right after the
+ * storey's own (so the key order reads storey figure, building figure): the sum over every
+ * storey, or the first storey whose figure is omitted. A single-storey plan's building is its
+ * one storey.
+ */
+function withAllLevelsGrossArea(
+  totals: SceneSummary["totals"],
+  perLevel: LevelSummary[] | undefined,
+): SceneSummary["totals"] {
+  const storeys = perLevel ? perLevel.map((l) => ({ level: l.level, t: l.totals })) : [{ level: undefined, t: totals }];
+  const missing = storeys.find((s) => s.t.gross_internal_area_m2 === undefined);
+  const left = storeys.flatMap((s) =>
+    s.t.gross_internal_area_leaves_out
+      ? [{ ...(s.level !== undefined ? { level: s.level } : {}), rooms: s.t.gross_internal_area_leaves_out }]
+      : [],
+  );
+  const building = missing
+    ? {
+        gross_internal_area_all_levels_omitted: {
+          ...(missing.level !== undefined ? { level: missing.level } : {}),
+          reason: missing.t.gross_internal_area_omitted ?? ("no-closed-exterior-ring" as const),
+        },
+      }
+    : {
+        gross_internal_area_all_levels_m2: r2(storeys.reduce((n, s) => n + (s.t.gross_internal_area_m2 ?? 0), 0)),
+        ...(left.length > 0 ? { gross_internal_area_all_levels_leaves_out: left } : {}),
+      };
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(totals)) {
+    out[k] = v;
+    if (k === "gross_internal_area_m2" || k === "gross_internal_area_omitted") Object.assign(out, building);
+  }
+  return out as SceneSummary["totals"];
+}
+
+/**
+ * Top-level {@link SceneSummary} keys that are OPTIONAL and vary from storey to storey.
+ *
+ * {@link describeLevel} spreads that storey's facts over the whole-plan ones, so a key
+ * this storey does not have must be DELETED rather than left standing from the previous
+ * spread — otherwise the narrowed read reports another floor's facts under its own name.
+ * Exported so a test can hold each one to that rule.
+ *
+ * `heights` is deliberately NOT here: its gate is whole-PLAN (`_heightsAuthored`), so
+ * when the block exists at all it exists on every storey.
+ */
+export const PER_STOREY_OPTIONAL_KEYS = [
+  "verticals",
+  "voids",
+  "derived_walls",
+  // B3a: a storey's walls' remodel status, present only on a storey that writes one.
+  "wall_status",
+] as const satisfies readonly (keyof SceneSummary)[];
+
+/**
+ * Narrow a whole-plan summary to ONE storey: that level's facts become the top-level
+ * ones (they are the same shape — see {@link LevelSummary}) and `levels` narrows to it
+ * alone. A plan that declares no such level is returned unchanged.
+ *
+ * This is a DISPLAY filter, and the law it carries is that a display filter never
+ * changes a verdict: `ok` and `diagnostics` still come from the whole plan, so reading
+ * one floor can never make a broken building look sound. Callers that report an exit
+ * code or a status must take it from the UNFILTERED summary.
+ *
+ * Pure and deterministic like everything else here — it reshapes an existing summary
+ * and never re-resolves the plan. Behind `arch describe --level N` and the playground's
+ * storey switcher, which is why it lives in the core rather than in one of them: a
+ * second copy is a second place to forget a per-storey key.
+ */
+export function describeLevel(summary: SceneSummary, level: number): SceneSummary {
+  const want = summary.levels?.find((l) => l.level === level);
+  if (!want) return summary;
+  const { level: _l, name: _n, ...facts } = want;
+  const out: SceneSummary = { ...summary, ...facts, levels: [want] };
+  // Optional per-storey keys are absent from `facts` when THIS storey has none, so the
+  // spread would leave the previous top-level value (page 1's) standing and the narrowed
+  // read would lie. Whole-BUILDING keys (`vertical`) legitimately survive; per-storey
+  // ones must not. A LIST rather than one `if`, because there are two of these now
+  // (`voids` too) and the failure mode of forgetting the next one is silent:
+  // the narrowed read reports the wrong storey's facts and says nothing.
+  for (const k of PER_STOREY_OPTIONAL_KEYS) {
+    if (facts[k] === undefined) delete out[k];
+  }
+  return out;
+}
+
+/** The declared clear zones of one piece, each with its measured free depth (ADR 0029 §4). */
+function clearFacts(
+  f: RFurniture,
+  c: { front?: number; sides?: number },
+  world: ClearWorld,
+): { front?: ClearFact; sides?: ClearFact } {
+  const out: { front?: ClearFact; sides?: ClearFact } = {};
+  if (c.front !== undefined)
+    out.front = { declared: c.front, measured: measureClear(f, "front", c.front, world).measured };
+  if (c.sides !== undefined)
+    out.sides = { declared: c.sides, measured: measureClear(f, "sides", c.sides, world).measured };
+  return out;
+}

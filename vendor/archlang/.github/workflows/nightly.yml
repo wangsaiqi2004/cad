@@ -1,0 +1,512 @@
+name: Nightly
+
+# Slow / redundant / external-facing checks that don't belong on the PR path.
+#
+# CI (ci.yml) gates every PR and push and must stay fast. These are the checks that either
+# talk to the outside world (production smoke, advisory feeds), take too long to run
+# per-PR (the full OS × Node matrix, instrumented coverage), or would be pure noise as a merge gate
+# (dependency advisories nobody can fix in the PR that tripped them).
+#
+# Reporting: dependency advisories are REPORT-ONLY — they never turn this workflow red,
+# they land in a single pinned issue (marker `<!-- archlang-nightly -->`, the same
+# create-or-update mechanic as the bench PR comment in ci.yml). A genuinely broken job
+# (`npm ci` failing, a test failing, production down, a leaked secret) DOES fail the
+# workflow, and the same issue records which jobs failed.
+
+on:
+  schedule:
+    # 03:00 UTC — off the deploy path and after any same-day release settles.
+    - cron: "0 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nightly
+  cancel-in-progress: false
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Is production actually serving what it promises — right now, not at deploy time?
+  # A deploy can go green and the site rot later (a domain/DNS change, an expired
+  # cert, a Worker route/custom-domain change, a Cloudflare zone setting that starts
+  # rewriting bytes or challenging clients). Same script the deploy uses.
+  # ---------------------------------------------------------------------------
+  prod-smoke:
+    name: Production smoke
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+          check-latest: true
+
+      # No `npm ci`: scripts/smoke.mjs is deliberately zero-dependency plain Node.
+      - name: Docs site
+        run: node scripts/smoke.mjs --site docs --base https://archlang.uk
+
+      - name: Playground
+        run: node scripts/smoke.mjs --site playground --base https://playground.archlang.uk
+
+  # ---------------------------------------------------------------------------
+  # Dependency advisories + registry signatures. Report-only by design: an advisory
+  # published overnight is not a regression in this repo, and a red X nobody can
+  # clear teaches people to ignore red X's. `npm ci` breaking IS a real failure.
+  # ---------------------------------------------------------------------------
+  audit:
+    name: Dependency audit (report-only)
+    runs-on: ubuntu-latest
+    outputs:
+      status: ${{ steps.audit.outputs.status }}
+      report: ${{ steps.audit.outputs.report }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+          check-latest: true
+          cache: npm
+
+      # NOT swallowed — a lockfile that no longer installs is a real, actionable break.
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Audit
+        id: audit
+        shell: bash
+        run: |
+          set +e
+          npm audit --omit=dev --audit-level=high > audit-deps.txt 2>&1
+          deps=$?
+          npm audit signatures > audit-signatures.txt 2>&1
+          sigs=$?
+          status=clean
+          if [ "$deps" -ne 0 ] || [ "$sigs" -ne 0 ]; then status=advisories; fi
+          echo "status=$status" >> "$GITHUB_OUTPUT"
+          {
+            echo "report<<NIGHTLY_REPORT_EOF"
+            echo "\`npm audit --omit=dev --audit-level=high\` — exit $deps"
+            echo ""
+            echo '```'
+            head -c 3000 audit-deps.txt
+            echo ""
+            echo '```'
+            echo ""
+            echo "\`npm audit signatures\` — exit $sigs"
+            echo ""
+            echo '```'
+            head -c 2000 audit-signatures.txt
+            echo ""
+            echo '```'
+            echo "NIGHTLY_REPORT_EOF"
+          } >> "$GITHUB_OUTPUT"
+          {
+            echo "## Dependency audit — $status"
+            echo '```'
+            cat audit-deps.txt audit-signatures.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit 0
+
+  # ---------------------------------------------------------------------------
+  # Secret scanning over the WHOLE history (fetch-depth: 0) — a credential committed
+  # and later removed is still leaked, and only a full-history scan sees it.
+  # ---------------------------------------------------------------------------
+  secrets:
+    name: Secret scan (gitleaks)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - uses: gitleaks/gitleaks-action@e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e # v3.0.0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Free for individual accounts and public repos; a GITLEAKS_LICENSE is only
+          # required for repos owned by a GitHub *organization*. Left unset on purpose.
+          #
+          # There is deliberately NO config file: verified false positives are excluded one
+          # fingerprint at a time in `.gitleaksignore`, which gitleaks reads by default, so a
+          # bare `gitleaks detect` on a laptop and this job see exactly the same exclusions.
+          # Read that file's header before adding to it.
+
+  # ---------------------------------------------------------------------------
+  # Deliberately redundant with ci.yml's push run on `main`. Node 18, Node 20 and Windows
+  # do not run on PRs, so this is where a break on one of them reaches the pinned issue.
+  # Path handling and line endings are where an isomorphic, byte-exact compiler gets
+  # bitten. Same steps as those legs minus typecheck, lint and the eval, which do not vary
+  # by Node version or OS and run on Node 22 on every PR.
+  # ---------------------------------------------------------------------------
+  full-matrix:
+    name: Test ${{ matrix.os }} / Node ${{ matrix.node }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            node: 18
+          - os: ubuntu-latest
+            node: 20
+          - os: ubuntu-latest
+            node: 22
+          - os: windows-latest
+            node: 22
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: ${{ matrix.node }}
+          check-latest: true
+          cache: npm
+
+      - run: npm ci
+
+      - run: npm test
+
+      - name: Generated artifacts are in sync
+        run: npm run check:drift
+
+  # ---------------------------------------------------------------------------
+  # Coverage of `src/` (REPORT-ONLY). It used to run on ci.yml's Node 22 leg, where the
+  # instrumented suite (≈ 43 min) was every PR's long pole; the uninstrumented `npm test`
+  # there and in `full-matrix` above stays the pass/fail signal. Nothing here gates:
+  # there are no thresholds, the zero-coverage script always exits 0, and the job is
+  # `continue-on-error` and NOT among `report`'s needs, so even a red step (an
+  # instrumentation timeout, a missing summary file) can neither turn the night red nor
+  # write the pinned issue. Read it in the run's job summary and the `coverage-summary`
+  # artifact. See `docs/testing.md` §1.
+  # ---------------------------------------------------------------------------
+  coverage:
+    name: Coverage (report-only)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+          check-latest: true
+          cache: npm
+
+      - run: npm ci
+
+      - name: Test (+ coverage, report-only)
+        run: npm run test:coverage
+
+      - name: Coverage summary
+        run: |
+          node --input-type=commonjs -e '
+          const t = JSON.parse(require("node:fs").readFileSync("coverage/coverage-summary.json", "utf8")).total;
+          const rows = ["lines", "statements", "functions", "branches"].map(
+            (k) => "| " + k + " | " + t[k].pct + "% | " + t[k].covered + " / " + t[k].total + " |",
+          );
+          console.log(
+            [
+              "## Coverage — `src/` (report-only, never gates)",
+              "",
+              "| Metric | % | Covered / Total |",
+              "| --- | --- | --- |",
+              ...rows,
+            ].join("\n"),
+          );
+          ' >> "$GITHUB_STEP_SUMMARY"
+
+      # The totals above cannot show a module that fell to ZERO — it is one row among 111
+      # in the `text` reporter and invisible in a four-line total. This names them. It is
+      # ADVISORY in the strongest sense: the script always exits 0 (it catches its own
+      # errors, including a missing coverage file). No thresholds are added — see
+      # `docs/testing.md` §1 (coverage is report-only).
+      - name: Zero-coverage modules (advisory)
+        run: node scripts/coverage-zero-report.mjs >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload coverage summary
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: coverage-summary
+          path: coverage/coverage-summary.json
+          if-no-files-found: error
+
+  # ---------------------------------------------------------------------------
+  # Read-only end-to-end checks against PRODUCTION (Playwright).
+  #
+  # `prod-smoke` above proves the routes answer; this proves the sites still WORK —
+  # the playground boots and compiles a plan in a real browser, the embed page draws
+  # from a `#z=` link, the docs site's machine artifacts are byte-identical to this
+  # checkout, and `<ArchLive>` hydrates into a live compiler rather than a dead
+  # `<pre>`. ci.yml runs the same specs against a locally BUILT site before merge;
+  # this runs a subset against what visitors actually get.
+  #
+  # Two rules govern this job, and neither is negotiable:
+  #
+  #   1. READ-ONLY. It drives production, so the run is restricted to `--grep @prod`
+  #      — a tag each spec file carries a comment explaining. Tagged cases navigate,
+  #      read and assert; nothing downloads, writes the clipboard, submits a form or
+  #      depends on persisted state. Never widen this to the full suite.
+  #   2. NO BUILD. `E2E_BASE_URL` makes each config drop its `webServer` and point at
+  #      the live origin, so there is nothing to build and no preview server — which
+  #      is also what makes the docs byte-equality cases meaningful here: they compare
+  #      PRODUCTION's bytes against THIS checkout of `main`, i.e. they fail when a
+  #      deploy has silently gone stale.
+  #
+  # A red night here means production is broken or stale, not that a PR is bad — it
+  # lands in the same pinned issue the `report` job writes.
+  # ---------------------------------------------------------------------------
+  e2e-prod:
+    name: E2E against production (read-only)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          # Node 22, matching ci.yml's e2e-docs leg: archlive.spec.ts imports the
+          # playground's `#z=` decoder, which needs `DecompressionStream("deflate-raw")`
+          # (Node ≥ 21.2) at module scope even when the tagged subset never calls it.
+          node-version: 22
+          check-latest: true
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      # NB: no `npm run build`, no site build. With E2E_BASE_URL set, neither config
+      # starts a preview server — the specs drive the live origins directly.
+
+      # Keyed on the RESOLVED @playwright/test version: a browser build is pinned
+      # to its driver, so a version bump must miss the cache rather than reuse an
+      # incompatible download. (Same key as ci.yml's e2e jobs, so a nightly can hit
+      # a cache a PR run populated.)
+      - name: Resolve Playwright version
+        id: pw
+        run: |
+          version=$(node -p "require('@playwright/test/package.json').version")
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Cache Playwright browsers
+        id: pw-cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ steps.pw.outputs.version }}
+
+      # On a cache hit the browser binary is already there but the OS packages it
+      # links against are not (they live outside the cached path), so the two
+      # cases install different things.
+      - name: Install Chromium (browser + system deps)
+        if: steps.pw-cache.outputs.cache-hit != 'true'
+        run: npx playwright install --with-deps chromium
+
+      - name: Install Chromium system deps only (cached browser)
+        if: steps.pw-cache.outputs.cache-hit == 'true'
+        run: npx playwright install-deps chromium
+
+      - name: Playground — https://playground.archlang.uk
+        run: npx playwright test -c playground --grep @prod
+        env:
+          E2E_BASE_URL: https://playground.archlang.uk
+
+      # `!cancelled()`, not the default: if the playground is down, the docs site's
+      # verdict is still worth having tonight. Both still fail the job.
+      - name: Docs site — https://archlang.uk
+        if: ${{ !cancelled() }}
+        run: npx playwright test -c docs-site --grep @prod
+        env:
+          E2E_BASE_URL: https://archlang.uk
+          # Opts in the one case that loads the REAL jsDelivr core (docs-site/e2e/arch-plan.spec.ts):
+          # it catches a published core that jsDelivr re-bundles badly, and an unpublished pin.
+          E2E_PROD: "1"
+
+      - name: Upload Playwright report
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: playwright-report-prod
+          path: |
+            playground/playwright-report
+            playground/test-results
+            docs-site/playwright-report
+            docs-site/test-results
+          retention-days: 7
+          if-no-files-found: ignore
+
+  # ---------------------------------------------------------------------------
+  # Cross-engine determinism (ADVISORY). ECMA-262 pins + - * / and Math.sqrt but only
+  # approximates sin/cos/atan2/hypot/log2, and the playground runs the core in Firefox
+  # (SpiderMonkey) and Safari (JavaScriptCore) — engines no other job ever compares.
+  # `npm run digest:engines` runs the built core in Playwright chromium/firefox/webkit and
+  # compares digests with Node's. It MEASURES: it always exits 0 and prints
+  # `status=clean|diverged|incomplete`. continue-on-error keeps even an install hiccup from
+  # turning the night red; a divergence is a finding for the owner (it updates the pinned issue), not a regression to gate.
+  # ---------------------------------------------------------------------------
+  cross-engine:
+    name: Cross-engine digests (advisory)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    timeout-minutes: 30
+    outputs:
+      status: ${{ steps.digest.outputs.status }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+          check-latest: true
+          cache: npm
+
+      - run: npm ci
+
+      # Same mechanism as e2e-prod's cache, keyed on the resolved Playwright version, but a
+      # DIFFERENT key (`-all`): that one holds chromium only, and a hit on it would leave
+      # firefox and webkit missing.
+      - name: Resolve Playwright version
+        id: pw
+        run: |
+          version=$(node -p "require('@playwright/test/package.json').version")
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Cache Playwright browsers
+        id: pw-cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-all-${{ runner.os }}-${{ steps.pw.outputs.version }}
+
+      - name: Install browsers (browser + system deps)
+        if: steps.pw-cache.outputs.cache-hit != 'true'
+        run: npx playwright install --with-deps chromium firefox webkit
+
+      - name: Install system deps only (cached browsers)
+        if: steps.pw-cache.outputs.cache-hit == 'true'
+        run: npx playwright install-deps chromium firefox webkit
+
+      - run: npm run build
+
+      - name: Digest every engine
+        id: digest
+        shell: bash
+        run: |
+          npm run digest:engines -- --out engine-digests-report.md | tee engine-digests.log
+          status=$(grep -E '^status=' engine-digests.log | tail -n 1 | cut -d= -f2)
+          echo "status=${status:-incomplete}" >> "$GITHUB_OUTPUT"
+          {
+            echo "## Cross-engine digests — ${status:-incomplete}"
+            head -c 60000 engine-digests-report.md
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload report
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: engine-digests-report
+          path: engine-digests-report.md
+          retention-days: 14
+          if-no-files-found: ignore
+
+  # ---------------------------------------------------------------------------
+  # One writer for the pinned issue. Folding "advisories found" and "a job failed"
+  # into a single always()-job keeps both out of each other's way: two jobs racing to
+  # create-or-update the same issue can create it twice. A fully green night comments
+  # on the open issue and closes it.
+  # ---------------------------------------------------------------------------
+  report:
+    name: Report
+    needs: [prod-smoke, audit, secrets, full-matrix, e2e-prod, cross-engine]
+    if: always()
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - name: Create or update the pinned nightly issue
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+        with:
+          script: |
+            const marker = '<!-- archlang-nightly -->';
+            const title = 'Nightly checks need attention';
+            const needs = JSON.parse(process.env.NEEDS);
+            const { owner, repo } = context.repo;
+
+            const failed = Object.entries(needs)
+              .filter(([name, job]) => name !== 'cross-engine' && job.result !== 'success' && job.result !== 'skipped')
+              .map(([name, job]) => `- \`${name}\` — **${job.result}**`);
+            const advisories = needs.audit?.outputs?.status === 'advisories';
+            // ADVISORY signal, treated like the audit's: a divergence writes/updates the issue but
+            // never fails the run. `incomplete` / `baseline-stale` stay out of the gate (an
+            // infrastructure hiccup or a stale pin is not a finding about the engines); they only
+            // show in the body when the issue is written anyway.
+            const engines = needs['cross-engine']?.outputs?.status || 'unknown';
+            const diverged = engines === 'diverged';
+            const run = `${context.serverUrl}/${owner}/${repo}/actions/runs/${context.runId}`;
+
+            // A fully green night (no failed job, no advisory, no divergence) closes the open
+            // issue, so it never outlives the problem it reported. The next bad night opens a
+            // fresh one through the path below, which this branch never reaches.
+            if (failed.length === 0 && !advisories && !diverged) {
+              const open = (
+                await github.paginate(github.rest.issues.listForRepo, { owner, repo, state: 'open', per_page: 100 })
+              ).find((i) => !i.pull_request && (i.body ?? '').includes(marker));
+              if (!open) {
+                core.info('nightly: all jobs green and no advisories — nothing to report');
+                return;
+              }
+              const date = new Date().toISOString().slice(0, 10);
+              await github.rest.issues.createComment({
+                owner,
+                repo,
+                issue_number: open.number,
+                body: `All nightly jobs green on ${date} (run ${run}).`,
+              });
+              await github.rest.issues.update({
+                owner,
+                repo,
+                issue_number: open.number,
+                state: 'closed',
+                state_reason: 'completed',
+              });
+              core.info(`nightly: all jobs green — closed #${open.number}`);
+              return;
+            }
+
+            const body = [
+              marker,
+              `_Updated by the [nightly workflow](${run}) — ${new Date().toISOString()}._`,
+              '',
+              failed.length > 0 ? `## Failed jobs\n\n${failed.join('\n')}` : '## Failed jobs\n\nNone — every job passed.',
+              '',
+              advisories
+                ? `## Dependency advisories\n\n${needs.audit.outputs.report}`
+                : '## Dependency advisories\n\nNone at `--audit-level=high` for production dependencies.',
+              '',
+              '## Cross-engine determinism (advisory)\n\n`' + engines + '` — see the `engine-digests-report` artifact of [this run](' + run + '). A divergence (not `incomplete`) opens or updates this issue; it never fails the night.',
+              '',
+              'Advisories alone never fail the workflow; a failed job does. Close this issue once triaged — the next bad night opens a fresh one.',
+            ].join('\n');
+
+            const issues = await github.paginate(github.rest.issues.listForRepo, {
+              owner,
+              repo,
+              state: 'open',
+              per_page: 100,
+            });
+            const existing = issues.find((i) => !i.pull_request && (i.body ?? '').includes(marker));
+
+            if (existing) {
+              await github.rest.issues.update({ owner, repo, issue_number: existing.number, title, body });
+              core.info(`updated #${existing.number}`);
+            } else {
+              const { data } = await github.rest.issues.create({ owner, repo, title, body });
+              core.info(`created #${data.number}`);
+            }

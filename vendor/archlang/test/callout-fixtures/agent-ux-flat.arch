@@ -1,0 +1,63 @@
+# The agent-UX audit plan (a two-bed flat an agent wrote from the spec alone), kept verbatim
+# below this header as the regression fixture for the `dims auto` thickness call-outs. Before
+# the fix the "100" call-out sat in doorway d_bed2 (4600-5400 along w_hall_w) and the "200"
+# call-out sat on the kitchen sink. Read by test/dim-thickness-callout.test.ts only.
+
+plan "2-Bed Flat, 65 m2" {
+  units mm
+  grid 50
+  north up
+  dims auto all
+  paper A3 landscape
+  scale 1:50
+  schedule rooms
+  legend
+
+  # Exterior shell, 10.0 x 6.5 m on centrelines
+  wall id=w_north exterior thickness 200 { (0,0) (10000,0) }
+  wall id=w_south exterior thickness 200 { (0,6500) (10000,6500) }
+  wall id=w_west  exterior thickness 200 { (0,0) (0,6500) }
+  wall id=w_east  exterior thickness 200 { (10000,0) (10000,6500) }
+
+  # Partitions
+  wall id=w_hall_w partition thickness 100 { (3600,0) (3600,6500) }
+  wall id=w_hall_e partition thickness 100 { (5600,0) (5600,6500) }
+  wall id=w_beds   partition thickness 100 { (0,3500) (3600,3500) }
+  wall id=w_bath   partition thickness 100 { (3600,2200) (5600,2200) }
+
+  room id=r_bed1 at (0,0)       size 3600x3500 label "Bedroom 1" uses bedroom
+  room id=r_bed2 at (0,3500)    size 3600x3000 label "Bedroom 2" uses bedroom
+  room id=r_bath at (3600,0)    size 2000x2200 label "Bathroom"  uses bath
+  room id=r_hall at (3600,2200) size 2000x4300 label "Entrance Hall" uses hall entry
+  room id=r_live at (5600,0)    size 4400x6500 label "Kitchen / Living" uses living kitchen
+
+  outdoor id=o_balc balcony at (10100,1500) size 1400x3000 label "Balcony"
+
+  door id=d_front on w_south  at 4600 width 900 swing into r_hall
+  door id=d_bed1  on w_hall_w at 2850 width 800 swing into r_bed1
+  door id=d_bed2  on w_hall_w at 5000 width 800 swing into r_bed2
+  door id=d_bath  on w_bath   at 1000 width 800 hinge near end swing into r_bath
+  opening id=op_live on w_hall_e at 4300 width 1200
+  door id=d_balc sliding on w_east at 3000 width 1800 slide left
+
+  window on w_north at 1800 width 1400
+  window on w_south at 1800 width 1400
+  window on w_north at 4600 width 600
+  window on w_south at 7800 width 2000
+  window on w_north at 8800 width 1200
+
+  furniture fridge       against wall w_north offset 6100 in r_live
+  furniture stove        against wall w_north offset 6900 in r_live
+  furniture kitchen_sink against wall w_north offset 7700 in r_live
+  furniture wc     in r_bath anchor right flush size 400x700 rotate 90
+  furniture basin  in r_bath anchor top-right flush size 600x450
+  furniture shower in r_bath anchor top-left flush size 900x900
+  furniture bed in r_bed1 anchor bottom-left flush size 1500x2000 rotate 180
+  furniture wardrobe in r_bed1 anchor top-right flush size 600x1800 rotate 90
+  furniture bed in r_bed2 anchor top-left flush size 1500x2000 rotate 0
+  furniture wardrobe in r_bed2 anchor top-right flush size 1800x600 rotate 0
+  furniture sofa  in r_live anchor bottom-left flush inset 150 size 2000x900 label "Sofa"
+  furniture table in r_live centered size 1400x900 label "Dining"
+
+  title { project "2-Bedroom Flat" drawn_by "agent" date "2026-10-13" }
+}

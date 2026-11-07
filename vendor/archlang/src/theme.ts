@@ -1,0 +1,486 @@
+/**
+ * Theme: colours, line-weight, and font for the rendered drawing.
+ *
+ * Resolution order (later wins): {@link DEFAULT_THEME} → the plan's `theme { … }`
+ * directive → `CompileOptions.theme`. Merging is a shallow override, so any
+ * subset of keys may be supplied at either layer.
+ */
+
+import { xmlText } from "./text-safe.js";
+import type { FixtureMaterial } from "./elements/fixtures-glyphs.js";
+
+export interface Theme {
+  bg: string;
+  pocheBase: string;
+  pocheHatch: string;
+  wallStroke: string;
+  roomFill: string;
+  roomLabel: string;
+  areaLabel: string;
+  furnitureStroke: string;
+  furnitureFill: string;
+  furnitureLabel: string;
+  opening: string;
+  doorLeaf: string;
+  windowPane: string;
+  dim: string;
+  annotation: string;
+  annotationMuted: string;
+  column: string;
+  /**
+   * The ground tints — the flat colour an `outdoor` surface is filled with,
+   * UNDER its hatch. Three, not nine: the nine `OUTDOOR_KINDS` map onto them
+   * (`src/elements/outdoor.ts`'s `GROUND` table) because a palette entry per kind would
+   * be nine numbers to keep consistent across four themes for a distinction the eye
+   * reads from the hatch anyway. `lawn` covers the planted surfaces, `water` open water,
+   * `paving` every hard and timber surface (and a balcony, which takes no hatch).
+   */
+  lawn: string;
+  water: string;
+  paving: string;
+  /** Outline + label ink for an `outdoor` surface and a `fence`. Muted on purpose: a
+   *  ground edge is site information and must not compete with the building's fabric. */
+  outdoorStroke: string;
+  /** Multiplier on all stroke widths (1 = default). */
+  lineWeight: number;
+  /** SVG `font-family`. */
+  font: string;
+  /**
+   * A soft fill per material, which a fixture symbol paints its body (and, where its family names
+   * a secondary material, its inner part) with in place of `furnitureFill`/`opening`
+   * (`GlyphCtx.fillFor`, `src/elements/glyph-lib.ts`; the family table is
+   * `FIXTURE_FAMILY_MATERIALS`, `src/elements/fixtures-glyphs.ts`).
+   *
+   * Only the `rendered` theme has it (ADR 0023, the 2026-11-04 amendment): every other theme,
+   * and the default, leaves it absent, so their symbols draw exactly as before. It is not a
+   * directive key (`theme { … }` cannot set it); a layer that sets `furnitureFill` without it —
+   * `theme rendered { furniture … }`, `style furniture { fill … }` — drops it, so an author's
+   * one furniture colour still wins ({@link mergeTheme}).
+   */
+  materialTints?: Readonly<Partial<Record<FixtureMaterial, string>>>;
+}
+
+export const DEFAULT_THEME: Theme = {
+  bg: "#ffffff",
+  pocheBase: "#e9e4db",
+  pocheHatch: "#b9b1a4",
+  wallStroke: "#1b1b1b",
+  roomFill: "#fbfaf7",
+  roomLabel: "#222222",
+  areaLabel: "#7a7a7a",
+  furnitureStroke: "#a8a29a",
+  furnitureFill: "#f4f2ee",
+  furnitureLabel: "#9a948c",
+  opening: "#ffffff",
+  doorLeaf: "#555555",
+  windowPane: "#3a6ea5",
+  dim: "#0E5484",
+  annotation: "#333333",
+  annotationMuted: "#888888",
+  column: "#4a4a4a",
+  lawn: "#eef3e7",
+  water: "#e6eff5",
+  paving: "#f1efeb",
+  outdoorStroke: "#9a9488",
+  lineWeight: 1,
+  font: "Helvetica, Arial, sans-serif",
+};
+
+/** Friendly directive aliases → canonical {@link Theme} keys. */
+const ALIASES: Record<string, keyof Theme> = {
+  background: "bg",
+  wall: "wallStroke",
+  wallFill: "pocheBase",
+  wallHatch: "pocheHatch",
+  room: "roomFill",
+  furniture: "furnitureFill",
+  door: "doorLeaf",
+  window: "windowPane",
+};
+
+/** Resolve a directive key (canonical or alias) to a Theme key, or null. Uses
+ *  own-property checks so prototype keys (`__proto__`, `constructor`) resolve to
+ *  null (rejected as unknown) rather than slipping through `in`. */
+export function resolveThemeKey(key: string): keyof Theme | null {
+  const owns = (o: object, k: string): boolean => Object.hasOwn(o, k);
+  if (owns(DEFAULT_THEME, key)) return key as keyof Theme;
+  if (owns(ALIASES, key)) return ALIASES[key]!;
+  return null;
+}
+
+/**
+ * Named theme bases. `theme <name> { … }` merges the named base over the default
+ * (and the block's overrides over that). These are *additions* over
+ * {@link DEFAULT_THEME}; the default — and therefore default output — is
+ * untouched. A one-liner `theme blueprint` looks finished with no block.
+ */
+export const THEMES: Record<string, Partial<Theme>> = {
+  // Classic cyanotype: white linework on blueprint blue.
+  blueprint: {
+    bg: "#0b3d6b",
+    wallStroke: "#ffffff",
+    pocheBase: "#0e4a82",
+    pocheHatch: "#3b6ea5",
+    roomFill: "#0b3d6b",
+    roomLabel: "#eaf2fb",
+    areaLabel: "#a9c6e8",
+    furnitureStroke: "#9fc0e6",
+    furnitureFill: "#0e4a82",
+    furnitureLabel: "#cfe0f5",
+    opening: "#0b3d6b",
+    doorLeaf: "#cfe0f5",
+    windowPane: "#bcd6f2",
+    dim: "#eaf2fb",
+    annotation: "#eaf2fb",
+    annotationMuted: "#9fc0e6",
+    column: "#ffffff",
+    // Ground tints on a cyanotype are shifts of the blueprint blue, not the paper tints
+    // above: on this theme the ground must sit BETWEEN the page and the room fill, so a
+    // lawn does not read as a hole in the drawing.
+    lawn: "#0d4270",
+    water: "#0f4f88",
+    paving: "#0c4074",
+    outdoorStroke: "#7fa8d4",
+  },
+  // Pure black & white, for crisp print / line drawings.
+  mono: {
+    bg: "#ffffff",
+    wallStroke: "#000000",
+    pocheBase: "#ffffff",
+    pocheHatch: "#000000",
+    roomFill: "#ffffff",
+    roomLabel: "#000000",
+    areaLabel: "#444444",
+    furnitureStroke: "#000000",
+    furnitureFill: "#ffffff",
+    furnitureLabel: "#333333",
+    opening: "#ffffff",
+    doorLeaf: "#000000",
+    windowPane: "#000000",
+    dim: "#000000",
+    annotation: "#000000",
+    annotationMuted: "#555555",
+    column: "#000000",
+    // `mono` is pure black on white by definition, so the ground carries NO tint at all
+    // and reads entirely from its hatch — which is exactly how a monochrome print sheet
+    // distinguishes surfaces. A grey here would be the one thing this theme forbids.
+    lawn: "#ffffff",
+    water: "#ffffff",
+    paving: "#ffffff",
+    outdoorStroke: "#000000",
+  },
+  // Dark UI / screen presentation.
+  dark: {
+    bg: "#1e2127",
+    wallStroke: "#e8e8e8",
+    pocheBase: "#3a3f4b",
+    pocheHatch: "#5a6172",
+    roomFill: "#272b33",
+    roomLabel: "#f0f0f0",
+    areaLabel: "#9aa0aa",
+    furnitureStroke: "#6b7280",
+    furnitureFill: "#2f343d",
+    furnitureLabel: "#c9ced8",
+    opening: "#1e2127",
+    doorLeaf: "#c9ced8",
+    windowPane: "#6cb6ff",
+    dim: "#6cb6ff",
+    annotation: "#cfd3da",
+    annotationMuted: "#888f99",
+    column: "#cbd1db",
+    lawn: "#232a26",
+    water: "#1f2833",
+    paving: "#24272d",
+    outdoorStroke: "#6b7280",
+  },
+  // Warm, soft, finished-looking — for slides and client decks.
+  presentation: {
+    bg: "#faf7f2",
+    wallStroke: "#2b2b2b",
+    pocheBase: "#e7ded0",
+    pocheHatch: "#b9a98f",
+    roomFill: "#fffdf9",
+    roomLabel: "#2b2b2b",
+    areaLabel: "#8a7f70",
+    furnitureStroke: "#b7a98f",
+    furnitureFill: "#f3ece0",
+    furnitureLabel: "#9a8d78",
+    opening: "#faf7f2",
+    doorLeaf: "#6b5d49",
+    windowPane: "#7fa8c9",
+    dim: "#3c6b8a",
+    annotation: "#3a3a3a",
+    annotationMuted: "#9a8d78",
+    column: "#5a5044",
+    lawn: "#eef1e4",
+    water: "#e4edf3",
+    paving: "#f2ece2",
+    outdoorStroke: "#a2947c",
+    font: "Georgia, 'Times New Roman', serif",
+    lineWeight: 1.1,
+  },
+  // A presentation board: `presentation`'s warm paper, in the default's clean sans, with every
+  // fixture symbol filled in a soft tint of what it is made of (`materialTints`; ADR 0023, the
+  // 2026-11-04 amendment). The tints are pale and desaturated on purpose — the line work still
+  // leads, and the symbol ink keeps at least 3:1 on every one (`test/rendered-theme.test.ts`).
+  rendered: {
+    bg: "#faf8f4",
+    wallStroke: "#2b2b2b",
+    pocheBase: "#e6ded1",
+    pocheHatch: "#b9a98f",
+    roomFill: "#fffefb",
+    roomLabel: "#2b2b2b",
+    areaLabel: "#8a7f70",
+    furnitureStroke: "#a89a80",
+    furnitureFill: "#f3ece0",
+    furnitureLabel: "#9a8d78",
+    opening: "#faf8f4",
+    doorLeaf: "#6b5d49",
+    windowPane: "#7fa8c9",
+    dim: "#3c6b8a",
+    annotation: "#3a3a3a",
+    annotationMuted: "#9a8d78",
+    column: "#5a5044",
+    lawn: "#e9eedf",
+    water: "#dde9ee",
+    paving: "#f0ebe3",
+    outdoorStroke: "#a2947c",
+    materialTints: {
+      wood: "#ead9c0",
+      wood_dark: "#dfcdb6",
+      fabric: "#dedad3",
+      cushion: "#ece8e1",
+      linen: "#f2ebdf",
+      wool: "#efe7da",
+      ceramic: "#f8f7f4",
+      stone: "#e6e3dd",
+      metal: "#e1e4e5",
+      glass: "#e3eef1",
+      appliance: "#ebebe8",
+      screen: "#d9dce0",
+      paint: "#e2e6dc",
+      rubber: "#e2e0dc",
+      foliage: "#d4ddc4",
+      bark: "#dccfbd",
+      soil: "#ddd1c0",
+      water: "#d5e6ed",
+    },
+  },
+};
+
+/**
+ * Per-element style override keys: a friendly attribute (`fill`/`stroke`/`label`)
+ * maps, per element kind, to a concrete {@link Theme} key. Drives
+ * `style <kind> { fill … }` (T4.4); resolution is element → theme → default.
+ *
+ * Exported (read-only) so the two directions of the mapping — {@link resolveStyleKey} and
+ * {@link styleKeyFor} — can be tested against the table itself rather than against a
+ * retyped copy of it: a new kind or attribute joins the round-trip law for free.
+ */
+export const STYLE_KEYS: Readonly<Record<string, Readonly<Record<string, keyof Theme>>>> = {
+  room: { fill: "roomFill", label: "roomLabel", area: "areaLabel" },
+  furniture: { fill: "furnitureFill", stroke: "furnitureStroke", label: "furnitureLabel" },
+  wall: { stroke: "wallStroke", fill: "pocheBase", hatch: "pocheHatch" },
+  door: { leaf: "doorLeaf", opening: "opening" },
+  window: { pane: "windowPane", opening: "opening" },
+  dim: { stroke: "dim", label: "dim" },
+  column: { fill: "column", stroke: "wallStroke" },
+  // Vertical circulation shares the furniture palette (it draws on the same pass); the
+  // UP/DN word is an annotation, so `label` points at the annotation ink.
+  stair: { fill: "furnitureFill", stroke: "furnitureStroke", label: "annotation" },
+  elevator: { fill: "furnitureFill", stroke: "furnitureStroke" },
+  escalator: { fill: "furnitureFill", stroke: "furnitureStroke", label: "annotation" },
+  // Both draw an unfilled dashed outline and nothing else, so `stroke` is the whole
+  // palette either has. They are still listed: `STYLE_KINDS` is `KEYWORDS.element` minus
+  // `opening` (which is a hole and has no ink), and `gen-llm-spec.ts` throws when that
+  // exception stops being exactly one word.
+  roof: { stroke: "annotationMuted" },
+  void: { stroke: "annotation" },
+  // Ground surfaces. `fill` names the TINT under the hatch; the hatch's own ink rides `pocheHatch`
+  // (the SVG backend builds every pattern from one base/line pair — see `src/hatches.ts`),
+  // so it is deliberately not offered here: a per-kind hatch colour would need a second
+  // pattern set per style block, and `style wall { hatch … }` already moves that ink for
+  // the whole drawing. `outdoor.fill` points at `paving` because that is the tint the
+  // majority of the kinds take; overriding it recolours all of them, which is the honest
+  // granularity a single `style outdoor { … }` block can offer.
+  outdoor: { fill: "paving", stroke: "outdoorStroke", label: "outdoorStroke" },
+  fence: { stroke: "outdoorStroke" },
+};
+
+/** Every element kind `style <kind> { … }` accepts, derived from {@link STYLE_KEYS} so
+ *  the list cannot be retyped anywhere. It is `KEYWORDS.element` minus `opening` (which
+ *  has no ink of its own — it is a hole). Read by `scripts/gen-llm-spec.ts`. */
+export const STYLE_KINDS: readonly string[] = Object.keys(STYLE_KEYS);
+
+/** Resolve a `style <kind> { <key> … }` attribute to a Theme key, or null.
+ *  Own-property checks keep prototype keys from resolving. */
+export function resolveStyleKey(kind: string, key: string): keyof Theme | null {
+  const owns = (o: object, k: string): boolean => Object.hasOwn(o, k);
+  if (!owns(STYLE_KEYS, kind)) return null;
+  const m = STYLE_KEYS[kind]!;
+  return owns(m, key) ? m[key]! : null;
+}
+
+/**
+ * The INVERSE of {@link resolveStyleKey}, derived from {@link STYLE_KEYS} so it cannot
+ * drift from it: Theme key → the friendly attribute a reader (and the parser) knows.
+ *
+ * It exists because `plan.styles` stores the *canonical* Theme key, while the grammar only
+ * accepts the friendly one — so anything re-emitting a `style` block (`arch fmt`) must map
+ * back or it prints source the next parse rejects with `W_UNKNOWN_STYLE_KEY`, silently
+ * dropping the whole block.
+ *
+ * Not injective: `dim: { stroke: "dim", label: "dim" }` sends two attributes to one Theme
+ * key, so the mapping back is many-to-one and **first-declared wins** (`stroke`). That is
+ * lossless in effect — both spellings set the same ink — and `Object.keys` order makes the
+ * choice deterministic.
+ */
+const STYLE_KEYS_INVERSE: Record<string, Partial<Record<keyof Theme, string>>> = (() => {
+  const out: Record<string, Partial<Record<keyof Theme, string>>> = {};
+  for (const [kind, attrs] of Object.entries(STYLE_KEYS)) {
+    const inv: Partial<Record<keyof Theme, string>> = {};
+    for (const [attr, themeKey] of Object.entries(attrs)) {
+      if (inv[themeKey] === undefined) inv[themeKey] = attr; // first declared wins
+    }
+    out[kind] = inv;
+  }
+  return out;
+})();
+
+/** The friendly `style <kind> { … }` attribute for a resolved Theme key, or null if this
+ *  kind exposes no attribute for it. Inverse of {@link resolveStyleKey}; see
+ *  {@link STYLE_KEYS_INVERSE} for the many-to-one tie-break. */
+export function styleKeyFor(kind: string, themeKey: keyof Theme): string | null {
+  if (!Object.hasOwn(STYLE_KEYS_INVERSE, kind)) return null;
+  return STYLE_KEYS_INVERSE[kind]![themeKey] ?? null;
+}
+
+/** Per-element style overrides, by element kind, as resolved Theme partials. */
+export type StyleMap = Record<string, Partial<Theme>>;
+
+// ---- Deterministic, zero-dependency HSL for one-colour poché derivation ----
+
+/** Parse `#rrggbb` (or `rrggbb`) to HSL in [0,1]; null if not a 6-digit hex. */
+export function hexToHsl(hex: string): { h: number; s: number; l: number } | null {
+  const m = /^#?([0-9a-f]{6})$/i.exec(hex.trim());
+  if (!m) return null;
+  const n = parseInt(m[1]!, 16);
+  const r = ((n >> 16) & 255) / 255;
+  const g = ((n >> 8) & 255) / 255;
+  const b = (n & 255) / 255;
+  const max = Math.max(r, g, b);
+  const min = Math.min(r, g, b);
+  const l = (max + min) / 2;
+  const d = max - min;
+  if (d === 0) return { h: 0, s: 0, l };
+  const s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+  let h: number;
+  if (max === r) h = (g - b) / d + (g < b ? 6 : 0);
+  else if (max === g) h = (b - r) / d + 2;
+  else h = (r - g) / d + 4;
+  return { h: h / 6, s, l };
+}
+
+/** HSL in [0,1] → `#rrggbb` (deterministic rounding). */
+export function hslToHex(h: number, s: number, l: number): string {
+  const hue2rgb = (p: number, q: number, t: number): number => {
+    if (t < 0) t += 1;
+    if (t > 1) t -= 1;
+    if (t < 1 / 6) return p + (q - p) * 6 * t;
+    if (t < 1 / 2) return q;
+    if (t < 2 / 3) return p + (q - p) * (2 / 3 - t) * 6;
+    return p;
+  };
+  let r: number;
+  let g: number;
+  let b: number;
+  if (s === 0) {
+    r = g = b = l;
+  } else {
+    const q = l < 0.5 ? l * (1 + s) : l + s - l * s;
+    const p = 2 * l - q;
+    r = hue2rgb(p, q, h + 1 / 3);
+    g = hue2rgb(p, q, h);
+    b = hue2rgb(p, q, h - 1 / 3);
+  }
+  const to = (x: number): string =>
+    Math.round(x * 255)
+      .toString(16)
+      .padStart(2, "0");
+  return `#${to(r)}${to(g)}${to(b)}`;
+}
+
+/**
+ * Derive a finished poché from a single wall colour (`theme from "#color"`):
+ * the wall keeps its colour; the fill is a light tint of that hue and the hatch
+ * a mid tint. Opt-in only — never fires unless `theme from` is written — so
+ * existing plans (which carry the default poché) stay byte-identical.
+ */
+export function derivePoche(wall: string): Partial<Theme> {
+  const hsl = hexToHsl(wall);
+  if (!hsl) return { wallStroke: wall };
+  const clamp = (v: number): number => (v < 0 ? 0 : v > 1 ? 1 : v);
+  return {
+    wallStroke: wall,
+    pocheBase: hslToHex(hsl.h, clamp(hsl.s * 0.3), 0.92),
+    pocheHatch: hslToHex(hsl.h, clamp(hsl.s * 0.55), 0.72),
+  };
+}
+
+/** Keys whose values are numbers (everything else is a string). */
+export function isNumericThemeKey(key: keyof Theme): boolean {
+  return key === "lineWeight";
+}
+
+/**
+ * Shallow-merge theme layers (later overrides earlier); ignores undefined.
+ *
+ * One rule beyond "later wins": a layer that sets `furnitureFill` and not `materialTints` drops
+ * the tints an earlier layer brought. The tints are the theme's own furniture fills, so an
+ * author's single furniture colour (`theme rendered { furniture … }`, `style furniture { fill … }`,
+ * a `CompileOptions.theme` naming another base) replaces them rather than losing to them. A
+ * theme without tints has nothing to drop, so for it this is the plain merge it always was.
+ */
+export function mergeTheme(...layers: (Partial<Theme> | undefined)[]): Theme {
+  const out: Theme = { ...DEFAULT_THEME };
+  for (const layer of layers) {
+    if (!layer) continue;
+    for (const k of Object.keys(layer) as (keyof Theme)[]) {
+      const v = layer[k];
+      if (v !== undefined) (out as unknown as Record<string, unknown>)[k] = v;
+    }
+    if (layer.furnitureFill !== undefined && layer.materialTints === undefined) delete out.materialTints;
+  }
+  return out;
+}
+
+/**
+ * XML-escape every string theme value (colours, font). Theme strings come from
+ * untrusted `.arch` source (the `theme { … }` directive / `CompileOptions.theme`)
+ * and are interpolated into SVG *attributes*; escaping `& < > "` here, once,
+ * makes attribute breakout impossible regardless of how each render site emits
+ * them — and `xmlText` additionally drops the characters XML forbids outright, so
+ * a control character in a theme value cannot make the document ill-formed.
+ * Numeric values (lineWeight) pass through. Valid colours/fonts contain no
+ * escapable characters, so output is unchanged for well-formed themes.
+ */
+export function sanitizeTheme(theme: Theme): Theme {
+  const out: Theme = { ...theme };
+  for (const k of Object.keys(out) as (keyof Theme)[]) {
+    const v = out[k];
+    if (typeof v === "string") (out as unknown as Record<string, unknown>)[k] = xmlText(v);
+  }
+  // The tints are colours like any other (a registered theme or `CompileOptions.theme` can carry
+  // them), so they are escaped the same way; only a theme that has them gets the key. A
+  // non-object (`null` from an untyped caller) is no tint table at all, and is dropped.
+  const tints: unknown = out.materialTints;
+  if (typeof tints !== "object" || tints === null) delete out.materialTints;
+  else {
+    const clean: Partial<Record<FixtureMaterial, string>> = {};
+    for (const [m, c] of Object.entries(tints) as [FixtureMaterial, unknown][]) {
+      if (typeof c === "string") clean[m] = xmlText(c);
+    }
+    out.materialTints = clean;
+  }
+  return out;
+}

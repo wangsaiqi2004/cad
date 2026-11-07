@@ -1,0 +1,21 @@
+# class: clearances
+# origin: audits/2026-10-18-first-contact.md A8 (first-contact-plans/1-apartment.arch: WC centreline y 3500, basin to
+#   y 3200)
+# expect: W_WC_SIDE_CLEARANCE
+# status: done
+# fact: the wc spans x 1100-1500 (centreline x 1300) and the basin beside it ends at x 1000: 300 mm from the WC
+#   centreline to the basin
+plan "WC too close to the basin" {
+  units mm
+  grid 50
+  wall id=shell exterior thickness 200 { (0,0) (6000,0) (6000,2500) (0,2500) close }
+  wall id=w_mid partition thickness 100 { (2400,0) (2400,2500) }
+  room id=r_bath at (0,0) size 2400x2500 label "Bathroom" uses bath
+  room id=r_living at (2400,0) size 3600x2500 label "Living Room" uses living
+  door id=d_entry at (4200,2500) width 900 wall shell
+  door id=d_bath at (2400,1700) width 800 wall w_mid swing into r_bath
+  window at (4200,0) width 1500 wall shell
+  furniture shower against wall shell segment 2 offset 5450 in r_bath
+  furniture wc against wall shell segment 0 offset 1300 in r_bath
+  furniture basin against wall shell segment 0 offset 700 in r_bath
+}

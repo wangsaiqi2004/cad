@@ -1,0 +1,21 @@
+# class: missing-defining-contents
+# twin-of: kitchen-no-worktop
+# origin: audits/archcanvas-public-examples.md CB2 with a counter added to the run
+# expect: none
+# fact: r_kitchen holds a kitchen_sink, a stove, a fridge and a counter (x 1500-2100, between the stove and the fridge)
+plan "Kitchen with a worktop" {
+  units mm
+  grid 50
+  wall id=shell exterior thickness 200 { (0,0) (6000,0) (6000,4000) (0,4000) close }
+  wall id=w_mid partition thickness 100 { (3000,0) (3000,4000) }
+  room id=r_kitchen at (0,0) size 3000x4000 label "Kitchen" uses kitchen
+  room id=r_living at (3000,0) size 3000x4000 label "Living Room" uses living
+  door id=d_entry at (1500,4000) width 900 wall shell
+  door id=d_mid at (3000,2000) width 800 wall w_mid
+  window at (0,2000) width 1200 wall shell
+  window at (4500,0) width 1500 wall shell
+  furniture kitchen_sink against wall shell segment 0 offset 500 in r_kitchen
+  furniture stove against wall shell segment 0 offset 1200 in r_kitchen
+  furniture fridge against wall shell segment 0 offset 2400 in r_kitchen
+  furniture counter against wall shell segment 0 offset 1800 in r_kitchen
+}

@@ -1,0 +1,23 @@
+# Resolve-order corpus (ADR 0028 §1, ADR 0016): a component whose rooms are placed
+# relationally and whose walls and rooms both diagnose, placed three times (plain, turned,
+# mirrored). An instance resolves in its own frame; its buffered diagnostics commit in
+# group order.
+plan "Instance relational" {
+  units mm
+  grid 50
+
+  component pair(w) {
+    wall id=back partition thickness 100 material felt { (0,0) (w * 2,0) }
+    room id=left at (0,0) size w x 3000 label "Left"
+    room id=right right-of left align top gap 0 size w x 3000 label "Right"
+    room id=lost right-of nowhere size w x 3000 label "Lost"
+    wall id=bad partition thickness -1 { (0,3000) (w * 2,3000) }
+    room id=flat below left size w x 0 label "Flat"
+  }
+
+  wall id=shell exterior thickness 200 { (0,0) (20000,0) (20000,12000) (0,12000) close }
+  place pair(3000) as west at (1000,1000)
+  room id=core at (8000,1000) size 3000x3000 label "Core" at (0,0)
+  place pair(2500) as east at (14000,1000) rotate 90
+  place pair(2000) as south at (1000,8000) mirror x
+}

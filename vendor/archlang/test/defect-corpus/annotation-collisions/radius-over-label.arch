@@ -1,0 +1,22 @@
+# class: annotation-collisions
+# origin: audits/showcase-and-examples.md BE1 (bag-end: the `R1800` radius call-out overprints the "Entrance Hall"
+#   label); examples/aquarium.arch's "Ocean Rotunda" label, pinned on the `R8000` leader until PS2.12
+# expect: W_ANNOTATION_OVERLAP
+# status: done
+# fact: `dims auto` letters the R3000 call-out halfway along its leader from the centre (3000,3000) to the arc's
+#   midpoint, at (3000,1500); the name pinned at (3000,1500) is drawn there too
+plan "Radius call-out over the label" {
+  units mm
+  grid 50
+  paper A4 landscape
+  scale 1:50
+  dims auto overall
+  wall id=drum exterior thickness 200 {
+    (6000,3000)
+    arc (0,3000) radius 3000
+    arc (6000,3000) radius 3000
+  }
+  room id=r_pav circle at (3000,3000) radius 3000 label "Pavilion" at (3000,1500) uses living
+  door on drum at 75% width 900
+  window on drum at 25% width 1200
+}

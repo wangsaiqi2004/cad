@@ -1,0 +1,272 @@
+{
+  "ok": true,
+  "mode": "真实行为调用·产品公开模块接口（QA 独立构造输入）",
+  "startedAt": "2026-11-07T08:38:51.760Z",
+  "errors": [],
+  "boundary": {
+    "sandbox": "C:\\Users\\wang\\Documents\\ChatGPT\\cad制图skills+网站\\qa\\.work\\run\\probe\\boundary-sandbox",
+    "auditFile": "C:\\Users\\wang\\Documents\\ChatGPT\\cad制图skills+网站\\qa\\.work\\run\\probe\\boundary-sandbox\\audit.ndjson",
+    "symlink": {
+      "created": true,
+      "reason": "junction 创建成功"
+    },
+    "vectors": [
+      {
+        "id": "V01",
+        "kind": "项目路径外读",
+        "tool": "read_file_any",
+        "denied": true,
+        "code": "E_PERMISSION_DENIED",
+        "message": "已拒绝 read_file_any：工具不在允许清单内（明确禁止的命令 / 脚本 / 越权通道）",
+        "chinese": true
+      },
+      {
+        "id": "V02",
+        "kind": "项目路径外写",
+        "tool": "export_dxf",
+        "denied": true,
+        "code": "E_PERMISSION_DENIED",
+        "message": "已拒绝 export_dxf：路径越界：C:\\Windows\\System32\\qa-evil.dxf 不在 C:\\Users\\wang\\Documents\\ChatGPT\\cad制图skills+网站\\qa\\.work\\run\\probe\\boundary-sandbox 内",
+        "chinese": true
+      },
+      {
+        "id": "V03",
+        "kind": "任意系统命令",
+        "tool": "system_run_command",
+        "denied": true,
+        "code": "E_PERMISSION_DENIED",
+        "message": "已拒绝 system_run_command：工具不在允许清单内（明确禁止的命令 / 脚本 / 越权通道）",
+        "chinese": true
+      },
+      {
+        "id": "V04",
+        "kind": "任意脚本",
+        "tool": "run_script",
+        "denied": true,
+        "code": "E_PERMISSION_DENIED",
+        "message": "已拒绝 run_script：工具不在允许清单内（明确禁止的命令 / 脚本 / 越权通道）",
+        "chinese": true
+      },
+      {
+        "id": "V05",
+        "kind": "任意 Lisp 脚本",
+        "tool": "system_run_lisp",
+        "denied": true,
+        "code": "E_PERMISSION_DENIED",
+        "message": "已拒绝 system_run_lisp：工具不在允许清单内（明确禁止的命令 / 脚本 / 越权通道）",
+        "chinese": true
+      },
+      {
+        "id": "V06",
+        "kind": "未受控绝对路径",
+        "tool": "export_svg",
+        "denied": true,
+        "code": "E_PERMISSION_DENIED",
+        "message": "已拒绝 export_svg：路径越界：D:\\qa-absolute.svg 不在 C:\\Users\\wang\\Documents\\ChatGPT\\cad制图skills+网站\\qa\\.work\\run\\probe\\boundary-sandbox 内",
+        "chinese": true
+      },
+      {
+        "id": "V07",
+        "kind": ".. 目录逃逸",
+        "tool": "export_dxf",
+        "denied": true,
+        "code": "E_PERMISSION_DENIED",
+        "message": "已拒绝 export_dxf：路径越界：C:\\Users\\wang\\Documents\\ChatGPT\\cad制图skills+网站\\qa\\qa-escape.dxf 不在 C:\\Users\\wang\\Documents\\ChatGPT\\cad制图skills+网站\\qa\\.work\\run\\probe\\boundary-sandbox 内",
+        "chinese": true
+      },
+      {
+        "id": "V08",
+        "kind": "UNC 路径",
+        "tool": "import_dxf",
+        "denied": true,
+        "code": "E_PERMISSION_DENIED",
+        "message": "已拒绝 import_dxf：拒绝 UNC / 设备路径：path",
+        "chinese": true
+      },
+      {
+        "id": "V09",
+        "kind": "ADS 备用数据流",
+        "tool": "import_dxf",
+        "denied": true,
+        "code": "E_PERMISSION_DENIED",
+        "message": "已拒绝 import_dxf：文件名不安全或后缀不在允许范围：path=plan.dxf:hidden",
+        "chinese": true
+      },
+      {
+        "id": "V10",
+        "kind": "符号链接逃逸",
+        "tool": "export_dxf",
+        "denied": true,
+        "code": "E_PERMISSION_DENIED",
+        "message": "已拒绝 export_dxf：用户未确认本次操作（默认需确认）",
+        "chinese": true
+      },
+      {
+        "id": "V11",
+        "kind": "未登记工具",
+        "tool": "qa_totally_unregistered_tool",
+        "denied": true,
+        "code": "E_PERMISSION_DENIED",
+        "message": "已拒绝 qa_totally_unregistered_tool：工具不在允许清单内",
+        "chinese": true
+      },
+      {
+        "id": "V12",
+        "kind": "危险参数键",
+        "tool": "apply_operations",
+        "denied": true,
+        "code": "E_PERMISSION_DENIED",
+        "message": "已拒绝 apply_operations：参数 params.ops[0].command 属于被禁止的命令 / 脚本通道",
+        "chinese": true
+      },
+      {
+        "id": "V13",
+        "kind": "危险后缀",
+        "tool": "export_dxf",
+        "denied": true,
+        "code": "E_PERMISSION_DENIED",
+        "message": "已拒绝 export_dxf：文件名不安全或后缀不在允许范围：out=qa-evil.exe",
+        "chinese": true
+      },
+      {
+        "id": "V14",
+        "kind": "非 mm 单位",
+        "tool": "write_structured_plan",
+        "denied": true,
+        "code": "E_PERMISSION_DENIED",
+        "message": "已拒绝 write_structured_plan：单位必须为 mm，收到 cm",
+        "chinese": true
+      }
+    ],
+    "total": 14,
+    "deniedCount": 14,
+    "chineseHintCount": 14,
+    "auditDeniedRecords": 14,
+    "auditChineseReasons": 14,
+    "noConfirmDenied": true,
+    "explicitConfirmAllowed": true,
+    "allowlistSize": 25,
+    "leaksInAllowlist": [],
+    "explicitlyForbidden": [
+      "system_run_command",
+      "system_run_lisp",
+      "run_script",
+      "exec",
+      "spawn",
+      "shell",
+      "eval",
+      "read_file_any",
+      "write_file_any",
+      "delete_any",
+      "set_env",
+      "drawing_open_any",
+      "drawing_export_dwg",
+      "xref_attach_any",
+      "app_load"
+    ],
+    "readOnlyTools": [
+      "read_guide",
+      "describe_drawing",
+      "check_drawing",
+      "measure_drawing",
+      "view_drawing",
+      "open_drawing",
+      "list_versions",
+      "read_task_log",
+      "list_capabilities",
+      "read_settings_public",
+      "check_result",
+      "read_audit_log"
+    ],
+    "controlledTools": [
+      "apply_operations",
+      "compile_arch",
+      "export_dxf",
+      "export_svg",
+      "export_package",
+      "generate_image",
+      "edit_image",
+      "import_dxf",
+      "write_structured_plan",
+      "write_calibration",
+      "write_requirements",
+      "save_image_record",
+      "mark_done"
+    ]
+  },
+  "idempotency": {
+    "fileAfterReserve": true,
+    "persistedBeforeHttpState": "submitted",
+    "reservedState": "submitted",
+    "reservedOutcome": "pending",
+    "hasSubmittedAt": true,
+    "canSubmitAllowedAfterUnknown": false,
+    "canSubmitReasonAfterUnknown": "上次请求超时、结果未知，禁止直接重提；请先检查结果或放弃并新建任务（可能已产生费用）",
+    "retryPromptCanRetry": false,
+    "retryPromptLastOutcome": "结果未知",
+    "retryPromptMayHaveBeenCharged": true,
+    "explicitRetryBlocked": true,
+    "explicitRetryMessage": "上次结果未知，禁止直接重提；请先检查结果或放弃并新建任务",
+    "explicitRetryChinese": true,
+    "summaryAfterUnknown": {
+      "total": 1,
+      "submitted": 0,
+      "success": 0,
+      "failed": 0,
+      "unknown": 1,
+      "autoRetries": 0
+    },
+    "recordCountAfter": 1,
+    "duplicateBlocked": true,
+    "newKeyOnExplicitRetry": true,
+    "retryKeyPrefix": "idem_retry_"
+  },
+  "stateMachine": {
+    "finalState": "DONE",
+    "eventCount": 11,
+    "stateTransitionsInLog": 11,
+    "expectedTransitions": 11,
+    "blockingStates": [
+      "AWAITING_CALIBRATION",
+      "IMAGE_AWAITING_CONFIRM"
+    ],
+    "publicBlocking": {
+      "taskId": "task_c1a59e4e75bd4613",
+      "versionId": "v002",
+      "state": "AWAITING_CALIBRATION",
+      "stateLabel": "等待尺寸确认",
+      "subProgress": {
+        "done": 0,
+        "total": 0,
+        "unit": "待确认项"
+      },
+      "showPercent": false,
+      "showEta": false,
+      "waitingForUser": true,
+      "displayText": "等待你操作：等待尺寸确认（0 项待确认）",
+      "errorCode": null,
+      "chargeSubmittedCount": 0,
+      "eventCount": 3
+    },
+    "illegalJumpBlocked": true,
+    "redoNewTaskIdDiffers": true,
+    "redoVersionId": "v002",
+    "oldTaskStillExists": true,
+    "oldTaskVersionId": "v001",
+    "taskCount": 2,
+    "statesDefined": 14,
+    "transitionTableKeys": 14
+  },
+  "calibration": {
+    "pendingAtStart": 6,
+    "completeAtStart": false,
+    "finalizeBlocked": true,
+    "finalizeMessage": "校准未完成，仍有 6 项待确认：比例未知、关键尺寸缺失、薄内墙待补、门窗洞口待核对、结构墙判断待确认、关键尺寸缺失",
+    "finalizeChinese": true,
+    "completeAfterOne": false,
+    "stillBlocked": true,
+    "completeAfterAll": true,
+    "finalizeOk": true
+  },
+  "finishedAt": "2026-11-07T08:38:52.501Z"
+}

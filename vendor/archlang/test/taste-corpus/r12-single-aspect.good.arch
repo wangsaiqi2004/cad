@@ -1,0 +1,17 @@
+# criterion: R12
+# twin-of: r12-single-aspect
+# origin: the same plan with the bedroom's window moved from its north wall to its east wall
+# fact: the habitable windows face N and E: two facings, R12 = 1
+plan "R12 dual aspect" {
+  units mm
+  grid 100
+  room id=r_living at (0,0) size 4000x4000 label "Living Room" uses living
+  room id=r_bed at (4000,0) size 4000x4000 label "Bedroom" uses bedroom
+  room id=r_hall at (0,4000) size 8000x1500 label "Hall" uses hall
+  walls from rooms exterior 200 partition 100
+  door id=d_front on r_hall.left at center width 900 swing into r_hall
+  door id=d_living between r_hall and r_living at center width 900 swing into r_living
+  door id=d_bed between r_hall and r_bed at center width 900 swing into r_bed
+  window id=w_living on r_living.top at center width 1800
+  window id=w_bed on r_bed.right at center width 1500
+}

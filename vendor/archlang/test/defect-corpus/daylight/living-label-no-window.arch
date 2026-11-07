@@ -1,0 +1,16 @@
+# class: daylight
+# origin: audits/showcase-and-examples.md T1 (tweet-house: the 16 m2 "Living" has no window; the label is not classified); README PS0.7
+# expect: W_HABITABLE_NO_WINDOW
+# status: done
+# fact: "Living" (4 x 4 m, describe uses []) has no window; the plan's one window (east wall, y 1500-2500) lights the bed room
+plan "Living without a window" {
+  units mm
+  grid 50
+  wall id=shell exterior thickness 200 { (0,0) (6000,0) (6000,4000) (0,4000) close }
+  wall id=w_mid partition thickness 100 { (4000,0) (4000,4000) }
+  room id=r_living at (0,0) size 4000x4000 label "Living"
+  room id=r_bed at (4000,0) size 2000x4000 label "Bed"
+  door id=d_entry at (2000,4000) width 900 wall shell
+  door id=d_bed at (4000,2000) width 800 wall w_mid
+  window at (6000,2000) width 1000 wall shell
+}

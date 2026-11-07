@@ -1,0 +1,112 @@
+# ArchLang
+
+> A deterministic DSL and compiler for floor plans: write (or have an LLM write) `.arch` source and it compiles to SVG/DXF/PDF with linting and geometric validation — diffable, version-controllable, reproducible.
+
+This file follows the [llms.txt](https://llmstxt.org/) convention: a concise, machine-readable map
+of the project for large language models and AI agents.
+
+## About
+
+- Repository: https://github.com/chanmeng666/archlang
+- Primary stack: Node.js / JavaScript
+- License: MIT
+- 3D preview: the separate archlang-3d package extrudes the compiled plan; https://archlang.uk/3d
+
+<!-- doors:start -->
+## Try it
+
+Floor plans as code. Your AI writes ArchLang; the compiler draws a precise, dimensioned plan and tells it what's wrong.
+
+- **ChatGPT, no install:** [ArchLang app in ChatGPT](https://chatgpt.com/plugins/plugin_asdk_app_6acf8381cca08191bfb3eb7305fb6970)
+- **claude.ai, no install:** add `https://mcp.archlang.uk/mcp` as a custom connector
+- **Coding agent:** `claude mcp add --transport http archlang https://mcp.archlang.uk/mcp`, or `npx -y skills add ChanMeng666/archlang --yes`
+- **VS Code:** [Marketplace](https://marketplace.visualstudio.com/items?itemName=ChanMeng.archlang) or [Open VSX](https://open-vsx.org/extension/ChanMeng/archlang)
+- **Playground, in the browser:** https://playground.archlang.uk
+<!-- doors:end -->
+
+## Key documents
+
+- [README](https://github.com/chanmeng666/archlang/blob/main/README.md): overview, features, installation, usage
+- [spec.llm.md](https://github.com/chanmeng666/archlang/blob/main/spec.llm.md): the WHOLE language in one page — read this to author `.arch`
+- [llms-full.txt](https://archlang.uk/llms-full.txt): the full agent context in one document — the spec, the workflow skill, the CLI reference, and every diagnostic code (also at `/llms-full.txt`)
+- [SKILL.md](https://github.com/chanmeng666/archlang/blob/main/skills/archlang/SKILL.md): the agent skill — how to drive ArchLang via the CLI
+- [AGENTS.md](https://github.com/chanmeng666/archlang/blob/main/AGENTS.md): how AI agents should work in this repo
+- [CONTRIBUTING](https://github.com/chanmeng666/archlang/blob/main/CONTRIBUTING.md): development setup and contribution workflow
+- Agent-facing docs pages: [the MCP server](https://archlang.uk/mcp) (install it in each MCP host, local or hosted at `https://mcp.archlang.uk/mcp`) and [the JavaScript library](https://archlang.uk/javascript) (`compile`/`describe`/`lint` from Node or the browser); each also serves its raw markdown at `<route>.md`
+- [CHANGELOG](https://github.com/chanmeng666/archlang/blob/main/CHANGELOG.md): version history and release notes, read before a version bump; also shipped inside the npm package as `CHANGELOG.md`
+
+## Machine-native artifacts (served at the docs-site root)
+
+- [/plan.schema.json](https://archlang.uk/plan.schema.json): JSON Schema (2020-12) for **Plan JSON** — the structured compile input (`archlang compile --from-json`)
+- [/intent.schema.json](https://archlang.uk/intent.schema.json): JSON Schema (2020-12) for an **Intent** — a brief's checkable expectations as data (`archlang validate --intent` / `archlang score --brief`)
+- [/archlang.gbnf](https://archlang.uk/archlang.gbnf): **GBNF** constrained-decoding grammar — force a local model to emit only parseable ArchLang
+- **Append `.md` to any top-level docs route for raw markdown** (the home page's copy is `/index.md`; the `/adr/…` pages have none): e.g. [/spec.md](https://archlang.uk/spec.md), [/guide.md](https://archlang.uk/guide.md), [/agents.md](https://archlang.uk/agents.md), `/reference.md`, `/errors.md`, `/analysis.md`, `/furniture.md`
+- [/arch-plan.js](https://archlang.uk/arch-plan.js): the `<arch-plan>` web component, which compiles and draws a plan in the browser (`<arch-plan src="https://archlang.uk/examples/studio.arch">`); to compile from your own page script, e.g. in a Claude Code artifact, import `compile` from `https://cdn.jsdelivr.net/npm/@chanmeng666/archlang@<version>/+esm`. Both on [/embed](https://archlang.uk/embed)
+- **MCP server** — [`@chanmeng666/archlang-mcp`](https://www.npmjs.com/package/@chanmeng666/archlang-mcp): an optional stdio MCP shim over the library (tools: compile/describe/lint/validate/score/repair/fix/suggest/complete; resources: spec/context/schema/intent-schema/grammar). The CLI stays the primary, token-cheaper interface — see the README's agent section
+- **Dataset** — [`ChanMeng666/archlang-repair-trajectories`](https://huggingface.co/datasets/ChanMeng666/archlang-repair-trajectories): a fully synthetic, self-verifying corpus — `repair` trajectories (broken source + diagnostics → deterministically healed source) + `authoring` pairs (brief → golden + intent), CC0-1.0; generator + seed open source in `dataset/`
+
+## To USE ArchLang (author floor plans)
+
+ArchLang is agent-native via its CLI — no server required, nothing to configure (an optional MCP shim exists for MCP-native clients; the CLI stays primary).
+Write `npx -y @chanmeng666/archlang <cmd>`, or `archlang <cmd>` after `npm i -g @chanmeng666/archlang`.
+The unscoped npm name `archlang` is someone else's package, and a bare `arch` runs coreutils on
+Linux, macOS and Git Bash.
+
+```bash
+npx -y @chanmeng666/archlang context              # cold start: the whole bundled agent context (spec + skill + CLI + errors) in one call
+npx -y @chanmeng666/archlang context --section spec   # ...or one section only: spec | workflow | cli | errors (about 160 KB in all; the catalog alone is about 67 KB)
+npx -y @chanmeng666/archlang spec                 # learn the whole language (read this first)
+npx -y @chanmeng666/archlang help compile         # per-command help + worked examples, rendered from the manifest (`archlang <cmd> --help` works too)
+npx -y @chanmeng666/archlang manifest --json      # the whole CLI API as data: commands, flags, formats, lint rules, error codes
+npx -y @chanmeng666/archlang --version            # the core version, for a bug report or a capability check
+npx -y @chanmeng666/archlang compile plan.arch -o out.svg --json   # render; JSON: { ok, diagnostics, summary }
+npx -y @chanmeng666/archlang preview plan.arch -o out.png --json   # render a PNG to SHOW the user (zero-install where resvg is present; --install fetches it)
+npx -y @chanmeng666/archlang describe plan.arch --json             # verify: rooms, areas, adjacency, door connections, circulation
+npx -y @chanmeng666/archlang describe plan.arch --select rooms,totals --room kitchen,bath --json   # bounded read: only those keys / those rooms
+npx -y @chanmeng666/archlang lint plan.arch --json                 # architectural soundness warnings
+npx -y @chanmeng666/archlang lint plan.arch --code W_ROOM_UNREACHABLE --json   # bounded read: one code (or --severity error) — a DISPLAY filter; the exit code still weighs every diagnostic
+npx -y @chanmeng666/archlang validate plan.arch --strict --json    # parse + lint, no render; --strict fails on warnings (the ship gate)
+npx -y @chanmeng666/archlang fix plan.arch --dry-run --json        # preview the machine-applicable diagnostic fixes AND the exact unified diff they produce
+npx -y @chanmeng666/archlang fix plan.arch --backup --json         # apply them in place, keeping the original bytes as plan.arch.bak (fix rewrites your SOURCE)
+npx -y @chanmeng666/archlang suggest plan.arch --json              # advisory door/window topology statements for unreachable rooms / windowless bedrooms
+npx -y @chanmeng666/archlang score plan.arch --brief intent.json --json   # continuous intent-satisfaction meter against a brief (satisfied/total; exit 0)
+npx -y @chanmeng666/archlang repair plan.arch -o fixed.arch        # explicit corrector: furniture out of walls/doorways/swings + change log
+npx -y @chanmeng666/archlang compile plan.arch -o walk.svg --overlay circulation   # opt-in: draw the walkability routes on top
+npx -y @chanmeng666/archlang batch a.arch b.arch -f svg --json     # render many plans/variants at once → results[]
+npx -y @chanmeng666/archlang md notes.md -o out.md -f svg          # render fenced arch blocks in Markdown → image links
+```
+
+Loop: `spec` → write `.arch` → `compile --json` → if `ok:false` (exit 2) fix via each
+`diagnostics[].fix` → `describe --json` to confirm intent → `preview` to show the user a raster →
+`lint --json` to confirm soundness. `archlang <cmd> --help` is the cheap way to learn one command;
+`manifest --json` is the whole API map in one call, and the help, the flag parser and the CLI
+reference are all rendered from it, so none of them can claim a flag a command doesn't take.
+`batch`/`md` cover variant exploration and embedding plans in Markdown. See
+[SKILL.md](https://github.com/chanmeng666/archlang/blob/main/skills/archlang/SKILL.md).
+
+Exit codes: `0` ok · `2` user-source error (deterministic — fix it, don't retry) · `1` IO/internal ·
+`3` bad usage. Misuse is loud, never silent: an unknown flag or verb exits 3 with a did-you-mean —
+a typo'd `--jsn` on `lint` answers `error: unknown flag "--jsn" for \`archlang lint\` — did you mean
+\`--json\`?` plus a `usage:` echo — so a hallucinated flag fails fast instead of being read as a
+filename. Source can come from stdin (`-`) on every command that takes a file.
+
+In CI, the in-repo composite Action `ChanMeng666/archlang/.github/actions/arch-render@<tag>` renders
+every ```` ```arch ```` fence in a repo's Markdown to images in one step (see
+[.github/actions/arch-render/README.md](https://github.com/chanmeng666/archlang/blob/main/.github/actions/arch-render/README.md)).
+
+`lint` catches tacit architectural mistakes, not just syntax: a bathroom reached only through a
+bedroom, a wet room that isn't fully walled in, a door swing hitting furniture, a bath/kitchen with
+no fixtures, a windowless bedroom, an unenterable room, a too-narrow door, a room use only inferred
+from an indirect label alias (`W_ALIAS_MATCH`, with a fix that pins the explicit `uses`), plus **human-circulation**
+checks — a walk that squeezes below a passable width (`W_PATH_TOO_NARROW`) or wanders far from a
+straight line (`W_CIRCUITOUS_PATH`), measured on a clearance-eroded nav grid and also readable as
+facts from `describe().circulation` (per-room walk distance / bottleneck width / detour) or drawn with
+`compile --overlay circulation`. Every catalogued `furniture <kind>` draws a real plan symbol and
+ignores its `label` (the catalogue is `archlang manifest --json` → `fixtureCategories`; the escape hatch
+for anything else is the labelled rectangle), most take their footprint from `against wall <id> in
+<room>` with no `size`, and `dims auto` places dimension strings for you.
+
+## To CONTRIBUTE (work on the repo)
+
+Read the README and AGENTS.md first, then follow the commands and conventions they describe. Prefer
+the project's own scripts over ad-hoc commands.

@@ -1,0 +1,13 @@
+# class: openings-ignore-walls
+# twin-of: door-near-l-corner
+# origin: audits/showcase-and-examples.md R1 with the door moved away from the corner
+# expect: none
+# fact: d_front spans x 1950-2850: 550 mm to the east wall's centreline, 400 mm to its inner face
+plan "Door clear of an L-corner" {
+  units mm
+  grid 50
+  wall id=shell exterior thickness 300 { (0,0) (3400,0) (3400,8000) (0,8000) close }
+  room id=a at (0,0) size 3400x8000 label "Front room" uses living
+  door id=d_front at (2400,8000) width 900 wall shell
+  window on shell at 1700 width 1200
+}

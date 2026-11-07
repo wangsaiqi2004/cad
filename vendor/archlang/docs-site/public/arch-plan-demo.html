@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>The arch-plan element, live — ArchLang</title>
+    <meta name="description" content="Three arch-plan elements on a plain HTML page: a plan loaded by URL, a plan written inline, and a plan with an error." />
+    <!-- A working sample for the /embed page, not a page of its own: the documentation lives at
+         /embed, so this one is noindex and names that page as canonical. -->
+    <meta name="robots" content="noindex, follow" />
+    <link rel="canonical" href="https://archlang.uk/embed" />
+    <link rel="icon" type="image/svg+xml" href="/brand/archlang-icon-plum.svg" />
+    <meta name="color-scheme" content="only light" />
+    <style>
+      :root {
+        color-scheme: only light;
+      }
+      body {
+        margin: 0;
+        background: #ffffff;
+        color: #1a1d23;
+        font: 16px/1.55 system-ui, -apple-system, "Segoe UI", sans-serif;
+      }
+      main {
+        max-width: 880px;
+        margin: 0 auto;
+        padding: 24px 16px 48px;
+      }
+      h1 {
+        font-size: 1.6rem;
+        margin: 0 0 8px;
+      }
+      h2 {
+        font-size: 1.1rem;
+        margin: 32px 0 8px;
+      }
+      code {
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        font-size: 0.92em;
+      }
+      a {
+        color: #0b57d0;
+      }
+      /* Inline source is plain text until the module upgrades the element; if the script never
+         loads, the animation shows it again after 3 s instead of leaving a blank (see /embed). */
+      arch-plan:not(:defined) {
+        visibility: hidden;
+        animation: arch-plan-reveal 0s 3s forwards;
+      }
+      @keyframes arch-plan-reveal {
+        to {
+          visibility: visible;
+        }
+      }
+      arch-plan {
+        border: 1px solid #d9dce2;
+        border-radius: 4px;
+        padding: 8px;
+      }
+    </style>
+    <script type="module" src="/arch-plan.js"></script>
+  </head>
+  <body>
+    <main>
+      <h1>The <code>&lt;arch-plan&gt;</code> element</h1>
+      <p>
+        One <code>&lt;script type="module" src="https://archlang.uk/arch-plan.js"&gt;</code> tag, then one element per
+        drawing. Each plan below is compiled in this browser. How to use it:
+        <a href="/embed">Embed a floor plan in a web page</a>.
+      </p>
+
+      <h2>From a URL: <code>src="/examples/studio.arch"</code></h2>
+      <arch-plan id="by-url" src="/examples/studio.arch"></arch-plan>
+
+      <h2>Written inline</h2>
+      <arch-plan id="inline">
+plan "Garden studio" {
+  units mm
+  wall exterior thickness 200 { (0,0) (5000,0) (5000,3600) (0,3600) close }
+  room id=r_studio at (0,0) size 5000x3600 label "Studio" uses living
+  door at (2500,3600) width 900 wall exterior hinge left swing in
+  window at (2500,0) width 2000 wall exterior
+  window at (5000,1800) width 1200 wall exterior
+}
+      </arch-plan>
+
+      <h2>A plan with an error</h2>
+      <arch-plan id="broken">
+plan "Broken" {
+  room id=r at (0,0) size
+}
+      </arch-plan>
+    </main>
+  </body>
+</html>

@@ -1,0 +1,19 @@
+# class: clearances
+# twin-of: wc-centre-to-basin
+# origin: audits/2026-10-18-first-contact.md A8 with the wc 200 mm further along the wall
+# expect: none
+# fact: the wc's centreline is x 1500 and the basin ends at x 1000: 500 mm
+plan "WC too close to the basin" {
+  units mm
+  grid 50
+  wall id=shell exterior thickness 200 { (0,0) (6000,0) (6000,2500) (0,2500) close }
+  wall id=w_mid partition thickness 100 { (2400,0) (2400,2500) }
+  room id=r_bath at (0,0) size 2400x2500 label "Bathroom" uses bath
+  room id=r_living at (2400,0) size 3600x2500 label "Living Room" uses living
+  door id=d_entry at (4200,2500) width 900 wall shell
+  door id=d_bath at (2400,1700) width 800 wall w_mid swing into r_bath
+  window at (4200,0) width 1500 wall shell
+  furniture shower against wall shell segment 2 offset 5450 in r_bath
+  furniture wc against wall shell segment 0 offset 1500 in r_bath
+  furniture basin against wall shell segment 0 offset 700 in r_bath
+}

@@ -1,0 +1,71 @@
+# The hand-typed twin of examples/relational.arch (the swap-back law, ADR 0028 §3): the
+# same rooms, every wall the example derives typed as points in the order `walls from
+# rooms` emits them, every opening hosted `on <wall> at <mm>` along that wall's own
+# direction, and each `open between` written as the cased opening it derives (listed after
+# the authored openings, where a derived child enters). SVG and lint() are byte-identical
+# to the example (test/walls-from-rooms.test.ts).
+plan "Relational 1BR" {
+  units mm
+  # The example's `grid 50`, halved: the two open pairs derive their openings centred on the
+  # clear span between a 200 ring's face (100) and a 100 partition's (50), which lands on a
+  # half-grid (2025, 2525). A typed position snaps to the grid and a derived one does not, so
+  # at `grid 50` the twin's openings would move 25 mm. Every other coordinate here is a
+  # multiple of 50, so the finer grid moves nothing else.
+  grid 25
+  scale 1:100
+  north up
+
+  room id=living  at (0,0)                          size 5000x4000 label "Living"
+  room id=kitchen right-of living align top  gap 0  size 3000x4000 label "Kitchen"
+  room id=hall    below living    align left gap 0  size 8000x1200 label "Hall" uses hall
+  room id=bed     below hall      align left gap 0  size 5000x2300 label "Bedroom"
+  room id=bath    right-of bed    align top  gap 0  size 3000x2300 label "Bath"
+
+  wall id=w_ring exterior  thickness 200 { (0,0) (8000,0) (8000,7500) (0,7500) close }
+  wall id=w_lk   partition thickness 100 { (5000,0) (5000,4000) }
+  wall id=w_lh   partition thickness 100 { (0,4000) (5000,4000) }
+  wall id=w_kh   partition thickness 100 { (5000,4000) (8000,4000) }
+  wall id=w_hb   partition thickness 100 { (0,5200) (5000,5200) }
+  wall id=w_hba  partition thickness 100 { (5000,5200) (8000,5200) }
+  wall id=w_bba  partition thickness 100 { (5000,5200) (5000,7500) }
+
+  # Ring positions run along the ring: the east edge starts at 8000, the south at 15500,
+  # the west at 23500.
+  door on w_ring at 26400 width 900 hinge right swing into hall
+  door on w_hb   at 1000  width 800 swing into bed
+  door on w_hba  at 600   width 800 swing into bath
+
+  window on w_ring at 2500  width 1800
+  window on w_ring at 6500  width 1800
+  window on w_ring at 21000 width 1600
+
+  # The open pairs: living|kitchen across its clear span (the ring's face at 100, the
+  # hall partitions' face at 3950); living|hall 1200 wide, centred on its clear span.
+  opening on w_lk at 2025 width 3850
+  opening on w_lh at 2525 width 1200
+
+  furniture bed in bed anchor bottom-right flush size 1500x2000 label "Bed"
+
+  furniture sofa         in living anchor bottom-left flush inset 300 size 1800x800 label "Sofa"
+  furniture coffee_table in living anchor left inset 300 size 900x500
+  furniture dining_table in kitchen anchor left inset 300 size 1400x800 label "Table"
+
+  furniture counter against wall w_ring segment 1 offset 1500 size 600x600 in kitchen
+  furniture sink    against wall w_ring segment 1 offset 2300 size 800x600 in kitchen
+  furniture stove   against wall w_ring segment 1 offset 3100 size 600x600 in kitchen
+
+  furniture basin  against wall w_ring segment 1 offset 5800 size 600x450 in bath
+  furniture wc     against wall w_ring segment 1 offset 6800 size 400x700 in bath
+  furniture shower in bath anchor bottom-left flush size 900x900
+
+  dim faces (0,7500)->(8000,7500) offset 600
+
+  # The fridge closes the kitchen's work triangle (sink, stove, fridge on the east run).
+  furniture id=fridge fridge against wall w_ring segment 1 offset 700 size 600x650 in kitchen
+
+  title {
+    project "Relational Layout Demo"
+    drawn_by "ArchCanvas"
+    date "2026-06-26"
+  }
+}

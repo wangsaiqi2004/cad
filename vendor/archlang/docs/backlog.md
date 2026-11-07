@@ -1,0 +1,3158 @@
+# Backlog
+
+Forward-looking work queue. **`CHANGELOG.md` remains the only record of what shipped** — this file
+records what has not, and is deleted from as items land. Item numbers are stable identifiers, so a
+gap in the sequence means that item shipped; the commit that closed it is cited by whatever
+referenced it. Closed entries are archived verbatim outside this repository.
+
+It is also the state file for the `/loop` burn-down driver:
+
+```
+/loop Read docs/backlog.md. Take the topmost item whose status is `todo`, dispatch one Opus
+subagent with isolation:"worktree" to implement it, run that item's stated verification gate,
+then report the diff and the gate output to me and STOP for approval. Do not commit, do not
+push, do not start a second item in the same tick.
+```
+
+**Floor gate for every item:** `npm run check:quick` locally (plus `npm run docs:build` for any
+`docs/*.md` edit), then the PR's CI green: `check`, `check:drift`, `typecheck:all` and the E2E run
+there, never on the owner's machine (`docs/agents/iron-laws.md`). Items list only what they add on top.
+
+**Merge protocol** (a clean auto-merge is not evidence of correctness — one branch once *moved* a
+function another had *modified*, and taking "theirs" would have silently reverted the fix with a
+green suite): one worktree per item, never two concurrent items on the same file; diff moved or
+renamed bodies against the newer version, not just the conflict set; run both branches' fixtures
+together before merging; `npm run typecheck:all` after **every** merge.
+
+**Read an entry's observations as evidence and its diagnosis as a hypothesis.** Symptoms here have
+been reliable; stated causes have been wrong about as often as right. Check the arithmetic of a
+stated cause before building on it, re-measure any number an entry quotes, and when an entry leaves
+open which of two components is wrong, settle that first. Correct the entry in place when you close
+it.
+
+---
+
+## Awaiting an owner decision
+
+Each of these changes shipped output or tooling in a way the code cannot choose for itself. None
+is to be started until its question is answered; the entry named holds the evidence.
+
+| Item | The question |
+|---|---|
+| 3.1 (b) | Take the `vitest` 2 → 5 major now, or keep waiting on the entry's triggers? |
+| M.8 | Should `format()` keep more than three decimals, and should `arch fmt` say so (stderr, exit code) when it refuses a file with parse errors? |
+| M.9 | Should grid snap and `fmt2` round half away from zero, so a mirror image snaps alike? It moves output. |
+| M.14 | Should a roof's acute corner be bevelled or miter-limited, and at what limit? |
+| D.7 | One hairline for the whole sheet? The title block's rules would move in every example. |
+| CI throughput | Which of `docs/plans/ci-throughput.md`'s options (repo auto-merge and branch protection, a concurrency group, path-filtered legs, coverage off the PR path, a merge queue, changelog fragments) to take? Repo settings are the owner's. |
+
+---
+
+## Programmes with their own card list
+
+A programme keeps its cards, decisions and evidence in its own folder, and this file only points
+at it. Its cards follow the same rules as entries here: stable ids, deleted when they land.
+
+| Programme | Folder | What it is for |
+|---|---|---|
+| Plan soundness (`PS*` cards) | `docs/plans/plan-soundness/` | Professional rules and taste: relation-first authoring, validity checks that read existing facts, a change model (`impact`, `keep`), a taste score. Takes over G.12 as card PS3 |
+| Preview and remodel (A–F cards) | `docs/plans/preview-and-remodel/` | The downstream `packages/archlang-3d` reader of a resolved plan (ADR 0030, plan `docs/plans/archlang-3d/`) and the renovation wedge (wall status, a lock check, quantities, imperial input) |
+| Drawing set (`DS*` cards) | `docs/plans/drawing-set/` | A scheme-stage drawing set from one model: derived indicators, a site layer, sections and elevations in `packages/archlang-3d`, analysis diagrams, a sheet pack |
+| Checker reach (`CR*` cards, follow-ups `CRF*`) | `docs/plans/checker-reach/` | Interop (OpenPlan3D import, later OAS), short share links and preview cards, free 3D orbit, a write guard (`--expected-hash`), a public check suite and a versioned language spec before and after Show HN |
+
+---
+
+## Wave 3 — hygiene, freshness, and the missing example
+
+### 3.1 · Nightly is red — and NOT for the reason this entry said (issue #66) — `todo`
+
+**Corrected 2026-09-04 by reading the job list, and the entry was wrong twice over.**
+
+**Wrong about WHICH job.** The failing job is **`Secret scan (gitleaks)`**. `Dependency audit
+(report-only)` **passes** — it is report-only by design and cannot fail the night. So every night
+this entry has been blamed for was a secret-scan failure.
+
+**The gitleaks half is now fixed** (`.gitleaksignore`): three findings, all in
+`paper/experiments/ecosystem/results-2026-08-22.json` at commit `ba3bbc4c`, all matched by the
+`sourcegraph-access-token` rule, which fires on a bare 40-character hex run — and a git commit SHA
+is one. Two are SHA-pinned GitHub Action references in a third party's workflow diff, the third is a
+public npm package's `revision`. All three are other people's public commit SHAs; none is a
+credential. They cannot be deleted, because `paper/` moved to a separate repository on 2026-08-26 and
+gitleaks scans the FULL HISTORY. Allowlisted by commit-pinned fingerprint, so nothing else in that
+file — or anywhere else — is suppressed. Verified locally: 648 commits, 0 findings; removing one
+fingerprint makes exactly that one reappear.
+
+**Wrong about the ADVISORY COUNT, which has quadrupled.** The entry says six advisories tracing to
+exactly two roots. Measured 2026-09-04:
+
+```
+npm audit → 19 vulnerabilities: 2 critical, 9 high, 8 moderate
+```
+
+across a dozen roots — `brace-expansion`, `fast-uri`, `ip-address`, `js-yaml`, `linkify-it`,
+`nanoid`, `postcss`, `undici`, `qs`, `hono`, `@hono/node-server`, `dompurify`, `esbuild`, `vite`,
+`vite-node`, `vitest`, `@vitest/mocker`, `@vitest/coverage-v8`, `vitepress`. **Re-measure before
+working from any of this.** It splits into three jobs that must not be one PR:
+
+- **(a)** the leaf/transitive bumps with `fixAvailable: true` — the bulk, lockfile-only where possible.
+- **(b) `vitest` 5.0.0, a MAJOR**, dragging `vite`, `esbuild`, `vite-node`, `@vitest/mocker` and
+  `@vitest/coverage-v8`. The only route past both criticals. Its own worktree, its own PR, with the
+  full four-workspace suite plus both E2E legs as the gate.
+- **(c) `vitepress`, `fixAvailable: false`** — record it as accepted with a reason; do not force it.
+
+**(b) IS DEFERRED, and the reason is a measurement rather than a preference (owner call,
+2026-09-04).** After (a), **`npm audit --omit=dev` reports 0 vulnerabilities** — every one of the
+seven residuals is a DEV dependency. That is not an aside: `nightly.yml`'s dependency job runs
+exactly `npm audit --omit=dev --audit-level=high`, which now exits 0, so the residuals do not appear
+in this project's own security gate at all. Neither critical ships: `vitest` and
+`@vitest/coverage-v8` are the test runner, absent from every published artifact, and the `vitest`
+advisory itself is against the **UI server** (`--ui`), which nothing here starts — CI runs
+`vitest run`.
+
+Against that, (b) costs more than it first looked: it is `vitest` **2.1.9 → 5.0.0, three majors**,
+across 281 test files (re-measured 2026-10-03; 203 when written) and four workspaces, with the snapshot-format risk that carries in a repository
+that treats a moved golden as a finding to explain rather than a diff to bless. It does **not** clear
+`esbuild` (tsup's node, see above), and it **splits** the `vite` tree that `vitepress@1.6.4` currently
+shares, so (c) gets no better either. Five of seven advisories clear, all of them dev-only.
+
+**Take (b) when one of these fires — not before:**
+1. `npm audit --omit=dev` stops reporting 0, i.e. an advisory reaches a shipped dependency.
+2. `vitepress` ships a release that wants `vite` 8, so (b) and (c) stop pulling apart.
+3. Something else needs `vitest` 3+ on its own merits (a feature, a Node version, a plugin).
+4. `tsup` ships a major that can reach `esbuild` 0.28, making a single pass clear all four groups.
+
+Do **not** treat "two criticals outstanding" as a trigger on its own — that number is `npm audit`'s
+default all-dependency reading, and the honest one for this repo is the `--omit=dev` figure, which
+is 0.
+
+**(a) is DONE (2026-09-04), and it was lockfile-only — no manifest moved.** All twelve
+`fixAvailable: true` roots cleared with a plain `npm audit fix` (never `--force`), a 45-line
+`package-lock.json` diff and nothing else:
+
+```
+before:  19 vulnerabilities (2 critical, 9 high, 8 moderate)
+after:    7 vulnerabilities (2 critical, 1 high, 4 moderate)
+```
+
+Every move was a patch or minor: `@hono/node-server` 1.19.14→1.19.17, `brace-expansion`
+2.1.1→2.1.4 and 5.0.6→5.0.9, `dompurify` 3.4.11→3.4.14, `fast-uri` 3.1.2→3.1.7, `hono`
+4.12.29→4.13.5, `ip-address` 10.2.0→10.7.0, `js-yaml` 4.2.0→4.3.2, `linkify-it` 5.0.1→5.0.2,
+`nanoid` 3.3.15→3.3.18, `postcss` 8.5.15→8.5.28, `qs` 6.15.3→6.16.0, `undici` 7.28.0→7.29.0.
+**Not one output byte moved** — a 95-artifact SHA-256 sweep (`describe()` + `lint()` + every
+storey's SVG across all 30 examples) is identical before and after, proved non-vacuous in both
+directions first. `hono`/`@hono/node-server` are `@modelcontextprotocol/sdk`'s, i.e. `packages/mcp`'s
+transitive tree; **the shim needs no version bump for this**, because its own `package.json` is
+byte-unchanged and a consumer resolves its own transitive tree from the published manifest, not from
+this lockfile.
+
+**(a) was re-run 2026-10-03, again lockfile-only.** Trigger 1 above had fired in between —
+`npm audit --omit=dev` reported 4 (1 low, 3 moderate: `dompurify`, `fast-uri`, `hono`,
+`ip-address`) — and every one of them cleared with a plain `npm audit fix` (npm 11.18.0, the
+version `release.yml` pins, so the diff carries no lockfile-format churn), a 64-line
+`package-lock.json` diff, every manifest byte-unchanged:
+
+```
+before:  20 vulnerabilities (2 critical, 9 high, 8 moderate, 1 low)   --omit=dev: 4
+after:   13 vulnerabilities (2 critical, 7 high, 4 moderate)          --omit=dev: 0
+```
+
+Moves, all patch or minor: `brace-expansion` 2.1.4→2.1.7 and 5.0.9→5.0.12 (three nodes),
+`dompurify` 3.4.14→3.4.16, `fast-uri` 3.1.7→3.1.8, `hono` 4.13.5→4.13.12, `ip-address`
+10.7.0→10.7.3, `markdown-it` 14.2.0→14.3.2, `undici` 7.29.0→7.30.0. No output byte moved: the
+byte-identity suites in `npm run check` pass unchanged. The vsce chain in the table below is new and
+is **not** (a) despite npm's `fixAvailable: true`: `braces` has no fixed release (`<=3.0.3` is every
+version), and the only route around it is `@vscode/vsce` 4.0.0, outside the manifest's `^3.2.1` —
+3.9.2 is the newest stable 3.x.
+
+**A correction to (b) that the next agent needs: `vitest` 5 will NOT clear the `esbuild` advisory.**
+npm 10 reports `esbuild`'s `fixAvailable` as `vitest@5.0.0` (`5.0.3` on 2026-10-03; npm 11.18.0
+reports `false` for `esbuild` and `vite`), but that only reaches
+`node_modules/vite/node_modules/esbuild@0.21.5`. The **other** node in the advisory,
+`node_modules/esbuild@0.27.7`, is **tsup's** — and `tsup@8.5.1`, the latest 8, pins `esbuild ^0.27.0`,
+which cannot reach the fixed `0.28.1`. So that one has **no fix at any version of tsup 8** and is a
+fourth group, not part of (b). Exposure is nil either way: both `esbuild` advisories
+(GHSA-67mh-4wv8-2f99, GHSA-g7r4-m6w7-qqqr) are against `esbuild serve`, a dev server tsup never
+starts. Note also that the root is on **`vitest` ^2.1.8** (resolved 2.1.9), so (b) is a *three*-major
+jump, and `vitepress@1.6.4` pins `vite ^5.4.14` — it shares the one hoisted `vite@5.4.21` with
+vitest 2 today, but `vitest` 5 wants `vite` 8, so (b) will **split** that tree rather than fix
+`vitepress`. (c) clears only on a `vitepress` release.
+
+**Residual after (a), grouped by why — 13 advisories (re-measured 2026-10-03; 7 on 2026-09-04),
+all dev-only:**
+
+| root | sev | why it stays |
+|---|---|---|
+| `@vscode/vsce`, `secretlint`, `globby`, `fast-glob`, `micromatch`, `braces` | high | `braces` has no fixed release; clears only via the `@vscode/vsce` 4 MAJOR (`editors/vscode` packaging) |
+| `vitest`, `@vitest/coverage-v8` | critical | needs the `vitest` 5 MAJOR — job (b) |
+| `vite` | high | ditto (via `vitest` 2's `vite ^5.0.0`) |
+| `@vitest/mocker`, `vite-node` | moderate | ditto |
+| `esbuild` | moderate | **two nodes, only one fixable by (b)** — tsup's `0.27.7` has no fix in tsup 8 |
+| `vitepress` | moderate | `fixAvailable: false`; accepted — its only `via` is `vite`, and it pins `vite ^5.4.14` |
+
+**A separate finding, not a vulnerability — RESOLVED 2026-09 by the hosting migration:**
+`docs-site/.vercel/.env.production.local` held a JWT. It was gitignored (by a `.vercel` line in
+`docs-site/.gitignore`), never tracked, and appears nowhere in history — a local Vercel CLI
+artifact, no exposure. Both `.vercel/` directories were **deleted** when the sites moved to
+Cloudflare Workers, along with the two gitignore lines that covered them (`playground/.gitignore`
+held nothing else and went with them), so the file no longer exists on any machine that pulls this
+branch. Kept here rather than removed because a directory-mode scan of an older checkout, or of a
+working copy that never cleaned up, will still surface it — and the answer is still "a local CLI
+artifact, no exposure". **The Cloudflare equivalent is `.wrangler/`** — local state and caches that
+`wrangler` writes beside each `wrangler.jsonc`. It holds no credential (`wrangler` reads
+`CLOUDFLARE_API_TOKEN` from the environment; in CI that is a repository secret, never a file), but
+unlike `.vercel/` it is **not currently gitignored anywhere**. Add it before someone commits one.
+
+**The lesson this entry is now an instance of:** a permanently red gate is a disabled gate that still
+costs CI minutes. Left alone, the secret scan would have failed every night forever over three public
+SHAs, training every reader to scroll past the job where a real finding would eventually appear.
+
+**One framing from the original entry survives and still matters:** the shim is **stdio-only**, so
+the `hono` and rate-limit code paths are unreachable at runtime — record that in the issue rather
+than implying exposure. And a shim bump drags the pack-time resource law with it: the version must
+land in `packages/mcp/package.json` **and both** of `server.json`'s version fields, or the release
+workflow `npm view`-skips it and nothing reaches either registry.
+
+### 3.2 · One playground origin constant — `todo`
+
+Re-export `PLAYGROUND_ORIGIN` (`src/cli/share-codec.mjs`) from `scripts/gen-permalink.mjs` and use it
+for the hard-coded copies at `docs-site/sync-docs.mjs:25` and `playground/scripts/gen-static.mjs:73`,
+after C6 merges (it edits those build scripts).
+
+## Found while redrawing the showcase
+
+Five things the twelve new examples ran into. None is a regression and none blocked an example from
+shipping — each was worked around in the source, and the workaround is what makes it worth
+recording: an author had to give something up. Every claim below was **reproduced**, and the
+reproduction is quoted.
+
+### S.3 · `strip` cannot nest inside `zone`, so strip rooms fall out of the schedule — `todo`
+
+```
+E_STRIP_NEST: "strip" is only allowed at plan level, not inside a block, component, or another strip
+```
+
+A `strip` is the cheapest way to lay out a run of rooms and a `zone` is the only way to group them
+for `schedule rooms`, and the two cannot be combined — so strip-laid rooms land in the schedule's
+`(no zone)` group. `examples/transit-hall.arch` hits both halves of this. The restriction is
+deliberate (a strip resolves positions and a zone must not), but the two are orthogonal in principle:
+a zone has **zero geometric semantics**, so there is no resolution-order reason a strip cannot sit
+inside one.
+
+## Found while burning down the gallery items (2026-09-02)
+
+Five things the G.2/G.3/5.8 work turned up. None was in scope for the item that found it, and each
+was deliberately NOT widened into — recorded here rather than half-fixed.
+
+### G.5 · Circulation measures every walk from `entrances[0]` only — closed by W3b
+
+Owner decision: nearest entrance per room. The walk is one multi-source search seeded at every
+entrance (`bfsNearest`, ties to the lowest entrance index); the bottleneck is the widest route from
+any entrance, each seeded at its own clear width; the detour is taken from the room's own entrance.
+`rooms[].entranceId` appears only on a plan with several entrances. The 16 `other_entrance` rooms
+are measured and the reason is retired (ADR 0008 addendum; `test/circulation-entrances.test.ts`).
+
+### G.10 · A `place`d plan does not round-trip through Plan JSON — `todo` (the projection half is done)
+
+**Landed: the projection carries the reflection.** `planToJson` now emits `mirror: true` on every
+fixture inside a reflecting `place` frame (the IR's `_mirror`), beside the quarter-turn it already
+carried as `rotate` — the `Fx` in `M · R(l) = R(m − l) · Fx` that `rotate` cannot say. The key rides
+the frame's fact, not the glyph's: symmetric families carry it too, though only a handed one draws
+differently. A reflection-free plan's payload is byte-identical (no key).
+
+**Landed: the way back refuses rather than approximates.** Source has no per-furniture `mirror` — only
+a `place … mirror x|y` frame reflects a symbol — so `planJsonToArch`/`planFromJson` answer a
+`mirror: true` piece with `E_JSON_MIRROR` instead of emitting the unmirrored symbol. `mirror: false`
+is accepted as the absent key.
+
+**Still open: a placed plan does not round-trip at all.** `planFromJson` refuses the namespaced ids
+with `E_DOTTED_DECL` (×3 on the minimal fixture). The tripwire stays armed (`test/plan-json.test.ts`,
+"G.10"): its second test pins `E_DOTTED_DECL` on an UNMIRRORED placement (a mirrored one is now
+refused earlier, by `E_JSON_MIRROR`) and goes red when a placed plan starts round-tripping. Whoever
+fixes that still has to decide what a mirrored fixture becomes on the way back, since source has no
+word for it outside a `place`.
+
+**Landed for one case: a placed component that derives its walls (PS3.9).** On that storey alone
+the payload carries `components`/`instances` and marks the flattened rows `instance`, and the way
+back prints `component` + `place`, so the frame carries the reflection. Widening the record to every
+placed plan (which moves their Plan JSON) is plan-soundness card PS3.12.
+
+**Note (PR #232's red team): `door on <authored wall>` comes back absolute.** A door, window or
+opening written `on <wall> at <pos>` is exported by its `x`/`y` and host category, never the `on`
+clause, so after a round trip `describe().freedom` reports it absolute instead of attached (the
+"bar `freedom`" exception below). It holds at the root and inside a PS3.9 component body alike.
+
+**The CLI round-trip and its gap list.** `archlang compile -f json` writes the Plan JSON that
+`compile --from-json` reads back, and `test/cli-plan-json-roundtrip.test.ts` holds every example
+to byte-identical SVG, equal `describe()` facts (bar `freedom`, which flattens to absolute by
+design) and equal `lint()` codes through that pipe, except exactly the list `CANNOT_ROUND_TRIP`
+in `test/plan-json-gaps.ts`, minus `imports.arch`, which the CLI's file World flattens:
+
+- refused with `E_JSON_MIRROR` (a reflecting `place`): `clinic`, `museum-wings`, `terrace-row`, and
+  `hillside-villa`'s level 2;
+- storeys (each storey projects alone and draws differently from its sheet): `two-storey`,
+  `townhouse`, `garden-house`, `hillside-villa`;
+- the sheet layer (`schedule`, `legend`, `zone`): `furnished-flat`, `transit-hall`;
+- `column` written before `furniture`: `museum`, the same shapes in another order;
+- the style layer (`theme`, `style`): `themed`, `gallery-l`, `materials`;
+- curves (`room circle`; a wall's `arc` travels): `aquarium`, `hexagon-pavilion`, `library`;
+- `roof`: `tiny-house`, `bungalow`, `courtyard-house`, `two-bed`;
+- accessibility metadata (`accTitle`, `accDescr`): `accessible` — the default SVG survives, so
+  only the `describe()` comparison sees it.
+
+**Open: carry `accTitle`/`accDescr` in Plan JSON — `todo`.** Unlike the gaps above this one is not
+a whole layer the projection leaves out by design: it is two optional plan-level strings, which
+`astToJson` already emits and `planToJson` drops. Add both to `PlanJson` and the schema (emitted
+only when declared, so every other payload stays byte-identical), re-emit them in `emitArch`; the CLI round-trip
+test's exact gap list then goes red until `accessible.arch` is taken off it.
+
+The neighbouring rule, from [ADR 0016](adr/0016-component-instances-and-frames.md) and now stated in
+`AGENTS.md`: when a fact crosses a frame, ask **can this be re-expressed in plan coordinates?** A
+placement clause cannot (plan space has no word for a local corner) so it is dropped; a symbol's
+handedness can, exactly, as one reflection about the footprint's own centre line — so it is flipped.
+This item is the third case, and the answer is the same as the handedness one.
+
+
+### G.8 · A per-category `style` — `todo`
+
+Also deferred by name in v1.32.0 and previously untracked. `style <kind> { … }` reaches the fixture
+layer as ONE kind, so there is no way to give `tree` a different pen from `sofa`. The symbols are
+drawn with named line weights already, so the seam exists — the syntax does not. Any design has to
+say how a per-category rule composes with the existing per-kind one.
+
+---
+
+## Equivariance findings
+
+`place … rotate r mirror m` must carry every fact through the frame's D4 ⋉ Z² action. The oracle
+(`test/d4-oracle.ts`; suites `test/equivariance-{corpus,scene,fuzz}.test.ts`) measures that law, and
+every violation it finds is pinned in `test/equivariance-known.ts`, per element and, for the raster,
+with a size bound: a new one fails as `NEW`, a closed one as `FIXED` until its pin and its `STILL …`
+witness are deleted, and each pin's class predicate must account for what it pins. Each entry below
+is one pinned class; the gate for closing it is that suite going `FIXED` for exactly that class.
+Status is `todo` for a defect and `declared` for a convention that is not a group fact.
+
+### E.1 · `fix-pullback` — lint fixes rewrite a shared component in plan coordinates — closed by W5c
+
+`W_FIXTURE_BACK_TO_ROOM` and `W_DIM_OVERLAP` now pull their value back through the element's
+instance frame (`LintContext.frameOf`) before writing it: `actOnQuarterTurn(g⁻¹, n)` for the
+quarter-turn, `det(g)` on the offset (applied before rounding). A statement shared by several
+placed instances keeps one fix only when every instance raises the same edit; otherwise the fix is
+dropped with a hint (`reconcileSharedFixes`, `src/lint.ts`); the two dim rules report once per
+statement per placement so each instance answers for itself. Pin deleted; the witness is now the law
+(`test/equivariance-corpus.test.ts`, "closed classes"; `test/fix-pullback.test.ts`). What the pin
+also absorbed, `W_DIM_OVERLAP` measuring a mirrored opposite-normal pair differently, is the text
+side's, not the pullback's: it moved to E.14.
+
+### E.2 · `stair-tail` — a vertical run's arrow and entry edge ignore the frame — closed by W5b
+
+Each run's `transform` (`src/elements/{stair,escalator,elevator}.ts`) carries its local tail as
+`_tail`; `tailEdge` reads it and `runAxis` replaces `flightAxis` for the drawn axis (a square
+footprint's tie). Pins deleted; law: `test/vertical-frames.test.ts`, "closed classes" in
+`test/equivariance-corpus.test.ts`. The fixed page rule still decides the tail at the root.
+
+### E.3 · `stair-break-hand` — a mirrored stair keeps its break line's hand — closed by W5b
+
+`stair.transform` XORs `_mirror` on a reflection; `stairGlyph` negates the break line's cross
+coordinate for it. Pins deleted; law as E.2.
+
+### E.4 · `plugin-throw` — a plugin element inside `place` throws — closed by W2
+
+Each element module owns its frame action (`ElementDef.transform`); a plugin kind without one is
+dropped inside a `place` with `E_INSTANCE_NO_TRANSFORM`, never thrown. Pin deleted; the witness is now
+the law (`test/equivariance-corpus.test.ts`, "closed classes"; `test/transform-seam.test.ts`).
+
+### E.5 · `facing-tie` — a corner or 45° window resolves its tie N/S-first — `declared`
+
+`windowFacingPage` (`src/site.ts:191,206`) breaks a tie horizontal-first by stated convention, which
+an axis swap does not commute with. Not a defect; the pin moves only if the convention does.
+
+### E.6–E.10 · the nav grid breaks its ties in page order — closed by circulation v2 (E.9 by W3b)
+
+Owner decision: D4-symmetric tie rules, in one window (ADR 0008, "ties are broken by the group,
+not by the page"). An entrance on a lattice line seeds both sides of it and a detour's straight
+line runs to the nearer seed (E.6 entrance half, E.7); a threshold is carved on a symmetric row
+set — both sides of every lattice line, each seed to its nearest seed opposite, by both L-runs,
+spanning the host wall's axis, and stamping the connector's width only on the cells it opens
+(E.10); among equidistant cells a room is measured to the one the walk reaches first, then by a
+group-invariant key, from a seed point snapped to the frame lattice (E.6 anchor half, E.8). All
+four raster classes are closed: their pins are deleted, their eight `STILL` witnesses are laws
+("closed classes" in `test/equivariance-corpus.test.ts`), and T2 now compares every circulation
+number under every element — walks, bottlenecks, detours, entrances, key routes, the sealed
+rooms' widest way in. Fuzz (a one-off measurement; the shipped test runs fewer): 0 of 4000 random plans (seeds 11/22/43/91) show a raster
+violation, against 1352 before (1076 `raster-tie`, 334 `anchor-far-tie`, 91 `threshold-carve`,
+45 `entrance-seed-walk`).
+
+Re-measured before the change, on the tree after W3b's orbit pick and door-route gate (examples
+whose `describe()` moves; the W3b figures in parentheses): the walk-first rule for every room
+23 examples, 87 walks (24, 217); the same only when the seed point is covered 14 examples, 16
+walks (14); an entrance on both sides 20 examples, 71 walks (22, 119); a threshold on a
+symmetric row set 6 examples, 7 walks (5, 9). All together, with the seed snap, 24 examples and
+three fixtures move, only in `describe().circulation` — the ledger is in the header of
+`test/byte-identity-baseline.ts`. The largest single moves are the closed classes' own: an
+anchor ring (`courtyard-house` r_dining −1400, `garden-loft` r_live −1900, `townhouse` r_kitchen
+−1800) and a portal carve (`hexagon-pavilion` g_n −1200 straight through two aligned portals).
+`hexagon-pavilion`'s g_sw/g_se, behind the OBLIQUE portals of the 1200 mm drum, move +600/+500
+to 9800: the new value is rule-consistent, NOT a correction — the portal is carved by an
+L-shaped tunnel between seed cells several cells apart on either side of the masonry, and the
+symmetric seeds give a different tunnel (the card-A red team measured 170 band cells un-carved and
+124 others carved, the new g_sw path zig-zagging through the band). See C.5.
+
+Key routes follow the same law: a room whose nearest cells tie on the whole key is routed from
+its whole tie set, not the cell-index pick (red-team counterexample: routes[bed>bath] 4300 vs
+4200 under a turn; pre-existing on the tree before, where routes were not yet compared).
+
+Still open by construction: a plan whose extent is not a whole number of cells spills its last
+cell past one edge, so the raster is compared only under translation there.
+
+**Reopened and closed (E.10, carve order).** The symmetric carve still read each threshold
+point's seeds off the LIVE nav mask. A connector's points are visited centre, +d, −d in the
+frame's own axis order, which a turn or flip reverses, so a later point could seed on a cell an
+earlier one had just opened, and which room cell became the far seed (and took the connector's
+width) depended on the frame. Fuzz seed 2065024317 found it (a bottleneck of 700 against 740
+under r90/r180), present on `main`; the red team found the same through connector source order
+(`hexagon-pavilion` plus a second portal into `g_sw`: 8800 or 8200 by which was written first).
+Every connector's seeds are now read once, off the mask as it stood before any connector carved
+(`buildGrid`, `src/analyze/circulation.ts`), so point order and connector order commute with the
+carve. The witness, the twelve-spelling law and a two-order law are in "closed classes"
+(`test/equivariance-corpus.test.ts`). Only `hexagon-pavilion`'s `g_sw`/`g_se` moved, walk
+9800 → 8800 (detour 1.87 → 1.68), re-run here through `arch describe`; the 9800 above was
+itself a product of carve order, and 8800 is the same rule with the order taken out, not a
+measured truth (C.5). The opt-in overlay moved on 14 files with no fact moving outside the
+hexagon (`test/byte-identity-baseline.ts`).
+
+**Closed: no far-seed stamp, and a room is its floor (owner decisions).** A carve wrote the
+connector's clear width onto its far seed even when that cell was already walkable, which
+overrode the room's own furniture pinch, and only for the `between[1]` room, so it depended on
+source order. Three measured steps. (1) A key route starts, and a room is reached, on its floor:
+the cells walkable before any carve, never doorway cells a carve opened inside its rectangle
+(`test/route-source-floor.test.ts`; the red team's 14000-versus-740 route escape). Corpus:
+`hillside-villa`'s `r_terrace` bottleneck 1140 → 840 plus one accessibility-advisory
+`W_PATH_TOO_NARROW`. (2) With that, every path through a door crosses an opened cell carrying its
+width, so the far-seed stamp (first a replacement, then a minimum) could only cap paths that do
+not use the door, in one source order (a phantom plan read 640 against 700); it is dropped, and
+far seeds keep the room's own clearance. (3) The earlier rejection of dropping it
+(`eval/fidelity-plans/min-bedroom-flat.laundered.arch` 740 → 14000) was real only while routes
+started on opened cells. "No walk or key route is wider than the widest door path it must take"
+is a guard (`test/far-seed-pinch.test.ts`; the open-floor `zones-wings` plan is exempt). The
+front-door and shaft-landing stamps are left as they are: changing them would change their seed
+value (garage doors 2940 → 1300 and 2300; landings capped at 700).
+
+### E.11 · `float-translation` — facts change under a pure translation — `todo` (circulation half closed by W3b)
+
+**Closed for circulation.** A translation re-rounds a curve's tessellation (placed 20 m out, a ring
+vertex keeps one ulp less of its fraction), so the nav grid, sampling in absolute floats, resolved
+exact ties the other way (`aquarium` detour 1.01 → 1, `library` reading-room walk 25500 → 25300 mm).
+The grid now samples in its extent's own frame, each coordinate taken relative to the min corner and
+snapped to a 2⁻¹⁰ mm lattice (`toExtentFrame`), so every circulation fact is invariant under a
+translation unless a relative residue lies within about an ulp of a half-quantum (0 moves over 69
+non-integer translations of 8 examples; `test/equivariance-corpus.test.ts` "closed classes",
+`test/circulation-translation.test.ts`). The snap moved three
+P₀ values to their translation-invariant readings (the baseline header names them).
+
+The raster classes that shared this oracle closed with circulation v2 (E.6–E.10), so the class
+now covers only lint outputs of float-sensitive geometry.
+
+**Still open for lint:** a computed position that resolved an ulp off its integer (`at 12000 * 0.55`;
+`at 55%` itself is exact since PS0.19) rounds back 20 m away and flips `W_POCKET_RUN`'s `>= need`, making its reverse-slide fix appear. Close by
+snapping resolved positions (or comparing through the same snapped frame).
+
+### E.12 · `slide-track` — a mirrored sliding door swaps its panels' tracks — closed by W5b
+
+`door.transform` XORs `_mirror`; the `sliding` case of `renderDoorPanels` puts the fixed panel on
+`n · off · (_mirror ? −slide : slide)`. `slide` itself still does not flip. No root spelling
+draws a mirrored sliding door (reversing the wall reverses the normal with the traversal); the
+`test/place.test.ts` twin case encoded the defect and now excludes the sliding kind.
+
+### E.13 · `column-corner` — the frame carried a column's corner as a centre — closed by W5b
+
+`column.transform` carries `at`/`size` through `t.rect`, as every top-left rectangle is. Pins
+deleted; law: "closed classes" in `test/equivariance-corpus.test.ts`, `test/frame.test.ts`.
+
+### E.14 · `dim-text-side` — a dim's number was drawn inside its line for a negative offset — closed by W5b
+
+`dim.render` puts the number on the side a negative offset points (`pointsRight`), so it reads
+outside its line at the root. A zero offset has no sign, so a reflected call-out takes the frame's
+handedness from `RDim._mirror` (XORed in `dim.transform`, which writes `0 - offset` and so never
+makes a `-0`); an evaluated `-0` is folded to `0` at resolve. `W_DIM_OVERLAP`'s band follows the
+same side. No shipped example has a negative offset.
+
+The lint half W5c moved here closed with it: `W_DIM_OVERLAP`'s band (`Band.m`) now puts the number
+on the drawn side, so the A3 1:50 opposite-normal pairs (`550`/`-550` bumped `-1100` unplaced and
+`-825` mirrored; `550`/`-650` warned only unplaced) give one verdict and one bump under every g.
+
+### E.15 · `dim-tick-hand` — a mirrored dim draws its ticks on the other diagonal — `declared`
+
+Each 45° station tick is drawn along `dir + n` (`src/elements/dim.ts:290-291`), a slash of fixed page
+sense relative to the line — a drafting convention, like a hatch angle. Its mirror image is the
+other diagonal. Not a defect; the pin moves only if the tick convention does.
+
+### E.16 · `nested-ref` — a reference into a nested instance fails once its plan is placed — closed by W8
+
+Every level now reaches into its own descendants the way the root does: instance groups resolve
+deepest first, and each sees its descendants' walls and rooms carried into its local frame by the
+composed authored `place` frames, named relative to it (`src/ir.ts`, `descendantView`). None
+reaches out. Every position or category search sees descendants too (ADR 0016 §3 addendum), and
+an opening registers on its wall by the host's wall id, not its endpoint coordinates (which two
+float evaluation orders can split at grid 0). `clinic.arch` and `museum-wings.arch` survive being imported whole (T0 is clean);
+clinic's T1–T3 runs, vacuous until then, surfaced only existing classes (`raster-tie`,
+`threshold-carve`, `slide-track`, `dim-text-side`, `dim-tick-hand`), pinned per element. Pins
+deleted; the witness is now the law (`test/equivariance-corpus.test.ts`, "closed classes";
+`test/compose-assoc.test.ts`).
+
+### E.17 · `facade-probe-order` — placing a storey moved its `dims auto` chains — closed
+
+Found by the multi-storey drawing's T0 (M.5). `probeSide` (`src/facade.ts`) takes each facade's
+reference wall as the parallel segment nearest the facade's midpoint, and kept the FIRST of
+equidistant segments, so `ir.walls` order — which a `place` changes — picked between two walls
+of different thickness. `hillside-villa.arch`'s level 2 right facade has two: the shell and the
+`en_m` ensuite's 100 mm wall, both on x = 13800. The shipped page took the ensuite's face (13850)
+and drew the overall chain as 14000, while the walls drawn span -150..13950.
+
+Equidistant segments are now decided by the OUTERMOST face, then the thicker wall, never by
+list order. The face is signed along the side's outward normal and thickness has no frame, so
+the pick commutes with every D4 frame and translation. Two segments with the same face and
+thickness have the same line and half, so the answer is the same whichever is kept. The tie is
+the existing exact `d === bestDist`, with no new tolerance. The shipped hillside-villa L2 page
+changed (owner decision): the bottom and top chains end at 13950, and both overalls read 14100.
+That page and the witness below are the only drawings in the corpus that moved. No
+`describe()` or `lint()` output moved. The witness now draws `6300` with the `place` and with
+the same wall written inline:
+
+```arch static
+plan "witness" {
+  units mm
+  grid 50
+  dims auto overall
+  component side() {
+    wall id=w partition thickness 100 { (0,0) (0,2000) }
+  }
+  level 1 {
+    wall id=shell exterior thickness 300 { (0,0) (6000,0) (6000,4000) (0,4000) close }
+    room id=r at (0,0) size 6000x4000
+    place side() as s at (6000,1000)
+  }
+}
+```
+
+Pin deleted; the witness is now the law ("closed classes" in `test/equivariance-corpus.test.ts`).
+No facade's answer depends on wall order or on the frame, over the corpus and 33 generated ties,
+and the first-wins rule is shown to fail both.
+
+## Circulation findings (found while landing W3b)
+
+Pre-existing defects and one owner decision that W3b and its red-team review ran into; none was in
+W3b's scope.
+
+### C.1 · A partition thinner than a nav cell does not block the walk — closed by circulation v2
+
+`rasteriseWallSegments` blocked a cell only when its CENTRE was within half a wall's thickness of
+the wall, so a partition thinner than one cell (the random plans draw 80 mm walls on a 100 mm grid)
+blocked no cell at all and the walk leaked through it. Owner decision: the centre test PLUS every
+cell the wall's CENTRELINE passes through (closed-square touch). The walk is 4-connected
+(`neighbours4`) and the touched cells of a continuous centreline form an edge-connected chain —
+through a lattice corner all four cells round it are touched — so no step slips between them. A
+touched cell's centre is within `cell·√2/2` (70.7 mm) of the line, so for a wall of at least
+`cell·√2` (~142 mm) the centre test already blocked it: the cover is consulted only below that,
+and no shipped row moved. Rejected: blocking every cell the whole BAND passes through. Measured,
+that square predicate sits on its decision boundary wherever a face is tangent to a lattice line —
+the hand-derived drum's faces are — so a 1 mm nudge moved `test/circulation-hand-derived.test.ts`'s
+walk 16100 → 16300 (the open arc's 16500 → 16700), and it moved 31 corpus walks for walls whose
+faces fall inside a cell. The residual gate gains one structural class, `centrelineCover`, shown
+non-vacuous on a planted 80 mm partition (red on the centre-only rule, green with the cover).
+
+### C.2 · `--overlay circulation` ignores floor voids — closed by circulation v2
+
+`src/overlays/circulation.ts` now passes the storey's voids to `computeCirculationOverlay`, as
+`describe()` and lint do; `test/overlay.test.ts` pins that the drawn walks are exactly as long as
+the reported `walkDistanceMm`, with and without a void across the way in. Every plan without a
+`void` is unaffected.
+
+### C.3 · The detour ratio is taken from the nearest-by-walk entrance, which can be roundabout — decided: keep it
+
+Since G.5, a room's `detourRatio` divides its walk by the straight line from the entrance nearest
+it BY WALK. That door can sit behind the room's back: the museum's `g3` went 1.36 → 2.32 because the
+door it is now walked from is nearer on foot but not in a line. Owner decision: keep "per
+walk-nearest entrance", so one record describes one route — the alternative, the least ratio over
+every entrance, would call `g3` direct but no longer describe the walk `walkDistanceMm` reports.
+`W_CIRCUITOUS_PATH` now names the entrance its ratio is taken from; `docs/analysis.md` documents
+the difference.
+
+### C.5 · An oblique doorway is carved as an L-shaped tunnel — `todo`
+
+A threshold joins a seed cell on each side of the wall by an x-then-y (and, since circulation v2,
+also y-then-x) run of cells. Through a straight wall the seeds face each other and the run is a
+straight slit; through a thick wall at an angle — `hexagon-pavilion`'s portals on the 1200 mm
+drum — the nearest free cells on either side are several cells apart diagonally, and the run is an
+L that tunnels through the masonry beside the opening rather than along it. Which tunnel is carved
+depends on which seeds are chosen, so a rule change moves the walk (g_sw/g_se 9200/9300 → 9800
+under circulation v2, then 9800 → 8800 when seeds stopped depending on carve order, E.10's
+reopening) without any of those values being the opening's. Close by carving along the
+opening's own axis (the host's normal at the connector) through the band, bounded by the opening's
+width — a measured change for every oblique or curved doorway.
+
+### C.4 · An exterior door at the corner of two rooms joins them and gives no entrance — closed by 1e0c2d9
+
+A connector touching TWO rooms kept `doorConnections`' answer (the ≤2-room carve-out of the
+`probe` policy), and that answer was the two rooms — so an exterior door whose point was within the
+adjacency tolerance of a partition's end joined the rooms to each other and the plan reported
+`W_NO_ENTRANCE`, though a probe would have said "exterior" on the outer face. Repro:
+
+```arch static
+plan "corner" {
+  units mm
+  wall id=shell exterior thickness 200 { (0,0) (8000,0) (8000,3000) (0,3000) close }
+  wall id=mid partition thickness 100 { (4000,0) (4000,3000) }
+  room id=a at (0,0) size 4000x3000 label "Hall"
+  room id=b at (4000,0) size 4000x3000 label "Living"
+  door id=d at (4100,3000) width 900 wall shell
+  door id=d2 at (4000,1500) width 800 wall mid
+}
+```
+
+It was `describe().doors[d].between` `["a", "b"]`, `access.entrances` `[]`, lint `W_NO_ENTRANCE`.
+The same cause covered a door CENTRED on an exterior T-junction (plan-soundness PS0.1). The fix is
+wider than the one proposed here: every connector with a host wall, on any wall category, now
+joins the space probed one wall thickness either side of that wall's centreline (`connectorConnection`,
+`src/analyze.ts`), at the centre and just inside both jambs, when the point touches that room. A centre probe on a boundary two
+rooms share takes the room covering more of the clear span on that face. A connector with no
+host, or whose faces do not name two spaces, keeps `doorConnections`; the 3+-room policy is
+unchanged. The repro now reads `between ["exterior", "b"]`, `access.entrances ["d"]`, no
+`W_NO_ENTRANCE`, and the door carries the new additive `straddles ["a", "b"]` (its inner face
+spans the partition). `test/between-face-probes.test.ts` pins it.
+
+### C.6 · `W_PATH_TOO_NARROW` names fewer doors than it could, to stay inside its re-measure budget — `todo`
+
+A door is named only after a re-measure shows widening it clears the room, and one `lint()` run
+may spend `MAX_ATTRIBUTION_MEASURES` (2) re-measures, storeys together
+(`src/lint/rules/circulation-facts.ts`). The union-per-tier and door-graph proofs settle every
+tree-shaped plan with one re-measure (`test/lint-attribution-budget.test.ts`), but a door graph
+with cycles can need more. Measured over `examples/`, `test/fixtures/` and `eval/` under
+`accessibility-advisory`: of the walk warnings that named a door before any verification existed,
+10 still name none because the budget ran out first (the hillside villa's Study and Terrace among
+them); 1 is named that was not. Lint time stays within 1.5× of the unverified rule except
+`examples/library.arch` under `accessibility-advisory` (1.45–1.61× across five runs), where the
+single re-measure of a large nav grid is most of the cost. Close by re-measuring a door variant
+without rebuilding the raster (only the widened doorways' cells and stamps change), which would
+make each re-measure cheap enough to raise the budget.
+
+## Wall-face probe findings
+
+Left open by routing "which side of this wall has floor" through `wallFaceProbes`
+(`src/geometry.ts`) and giving `roomOfVertical` the room's shape. Neither was in that change's scope.
+Both closed their SHAPE half in W5a; P.1's message half closed with #404.
+
+### P.1 · A shaft landing on no room says its storey has no way in — closed: the shape half by W5a, the message by #404
+
+**Landed (W5a): `roomOfVertical` asks the room's shape, not its bounding box.** A stair or lift
+standing in a concave room's notch, or in a circle's bounding-box corner, is no longer claimed by
+that room — `test/vertical-room-shape.test.ts`.
+
+**Landed (#404): the message.** `W_NO_ENTRANCE` now names the storey and says why no shaft makes up
+for its door; what follows is the case as it was found. `verticalReach` (`src/vertical.ts`) counts the storey reachable
+(`describe().vertical.reachable_levels` lists it) but records an arrival room only for a stop whose
+`room` is non-null, and `no-entrance` (`src/lint/rules/entrance.ts`) stands down only for an arrival
+room. A stair landing in an L's unroomed notch therefore gets `W_NO_ENTRANCE` ("there is no way into
+the building") on a storey the shaft reaches. The rule is right — nothing at the landing is floor to
+arrive in — but the message misleads. Want a message (or code) that says the shaft lands on no room;
+keep the rule. Pinned by `test/vertical-room-shape.test.ts`.
+
+**Widened by room-aware reachability.** `verticalReach` now carries you on only from a room you
+can walk to (`test/access-policy.test.ts`), so a second case reaches the same message: a stair
+standing in a door-less store is a DEAD shaft, and the storey it leads to gets
+`W_NO_ENTRANCE` ("there is no way into the building") although a shaft does land there. The
+message work should cover both: name the shaft and say why it does not count (lands on no room;
+starts in a room nobody can reach). A stop whose footprint lies in no room still keeps the
+storey-level answer, so the notch case above is unchanged. Re-run: a hall with the front door
+plus a door-less store holding the stair, upper floor with no exterior door:
+`reachable_levels` `[1]` and `W_NO_ENTRANCE` on level 2 (was `[1, 2]` and silent).
+
+### P.2 · `swing into <rectangle room>` on an arc host picks its side off the chord — closed by W5a
+
+`wallFaceProbes` (`src/geometry.ts`) replaced the CHORD-normal probe `swingInto`'s rectangle path used
+with the TANGENT normal `doorSwing` and `roomSideOf` already used, so all three now agree on an arc
+host as they already did on a straight one. `test/wall-face-probe.test.ts` pins a major-arc door
+swinging into the side its leaf is actually drawn on, at both ends and the midpoint, for both winding
+directions.
+
+## Axonometric view findings
+
+Left open by W9, which made `compile(src, { view })` stop throwing on a wall set its openings
+consume and stop painting an empty ring. None of these throws; each draws or reports wrongly.
+
+**All four are won't-fix**: the view is deprecated and removed at 2.0 ([ADR 0021](adr/0021-plan-first-view-deprecated.md)), which closes them.
+
+### V.1 · Mixed-height joints interpenetrate and draw in the wrong order — `won't fix`
+
+`extrudeWalls` (`src/view/extrude.ts`) joins each wall-height subset on its own, so walls of
+different heights are never trimmed against each other: each runs to its own centreline. The painter
+keys on one centroid per face, so a short partition's quads sort nearer than a long, unsplit shell
+face and are drawn over it. Reproduced: a 4200 shell `(0,0)…(2300,5700) close` with a 3000 partition
+`(0,3700) (2300,3700)` paints the partition across the shell's near outer face; the same plan at one
+height draws correctly. No example mixes heights within a storey. A candidate: join by height
+BAND (every wall at least as tall as the band) rather than by equal height.
+
+### V.2 · A header or sill block overhangs its wall's end — `won't fix`
+
+`openingCut` (`src/geometry/band.ts`) is not clipped to its host segment, and the view extrudes the
+opening's fill-back blocks from that loop, so an opening running past a wall end puts a header or
+sill block out past it. The plan view does not show it: it only subtracts the cut.
+
+### V.3 · No diagnostic for an opening wider than, or consuming, its host — `won't fix`
+
+`wall … { (0,0) (1000,0) }` + `opening on w at center width 1200`, or overlapping openings that
+cover a wall end to end, are diagnostic-free. The wall is silently gone from both drawings.
+
+### V.4 · The joinery emits an UNCLOSED chain for a door consuming an arc wall under `grid` — `won't fix`
+
+`finishLoops` (`src/geometry/joinery.ts`) passes an unclosed chain through by design, so the defect
+it exposes reaches the drawing as an open outline. Found by the W9 red team: 11 of 8739 generated
+iso/axon compiles hit it. Its header says a dead-end chain means the classification was
+inconsistent, and closing the chain there would fabricate an edge; start from the classification.
+
+### V.5 · 2.0 removal of the axonometric view (phase B) — `todo`
+
+Phase A (deprecation) is done ([ADR 0021](adr/0021-plan-first-view-deprecated.md)). At 2.0, together
+with the removal of `while`/reassignment (its own checklist: 6.7), delete:
+
+- [ ] `src/view/`; the view branch in `pipeline.ts`; `Scene.view`; `CompileOptions.view`.
+- [ ] the view branches in `backends/svg.ts`, `export/pdf.ts` and `export/dxf.ts` (the `V-3D-*` layers).
+- [ ] the CLI `--view`, `resolveView` and `VIEW_FLAG`; the `index.ts` exports and the compile cache
+      key's `view`.
+- [ ] keep `joinWallSet` (the plan path uses it); un-export `themeBaseLookup` if only the view uses it.
+- [ ] the 10 `test/iso-*.test.ts` and the iso snapshot.
+- [ ] `VIEW_SVGS` in `scripts/gen-example-svgs.ts`, its `scripts/check-drift.ts` entries and
+      `docs-site/public/view/*.svg`.
+- [ ] `docs/axonometric.md`, its `docs-site/sync-docs.mjs` line and its `docs-site/.gitignore` entry.
+- [ ] the `AGENTS.md` rule becomes "Heights draw nothing."; drop the view lines in
+      `docs/agents/architecture.md`; rewrite the P3-2 note "The datum now has ONE consumer — the
+      axonometric" below.
+- [ ] prove it with a SHA-256 byte-identity sweep of `compile`, `describe` and `lint` over every example.
+
+The deletion is already prepared and red-teamed on branch `origin/feat/remove-view` (branched from
+the deprecation merge; byte-identity sweep 810/810; tests pin `--view` → exit 3; a manifest
+example-flag guard). At 2.0: rebase it onto `main`, re-run its sweep, and move its CHANGELOG
+`Removed — BREAKING` block into the 2.0.0 section. Rebase it, do not redo it.
+
+### V.6 · 2.0 raises the Node floor to 22 — `todo`
+
+Node 18 and 20 are end-of-life and get no security releases, yet `engines` stays `>=18` (root,
+`packages/mcp`, `packages/font-cjk`) and CI/nightly still test them. Raising the floor is breaking,
+so it waits for 2.0; until then nothing is exposed: the core and the MCP server open no network
+connection and decompress nothing, and the sites run on workerd, not Node. At 2.0:
+
+- [ ] every `engines.node` → `>=22`; drop 18/20 from the `ci.yml` and `nightly.yml` matrices and the
+      `node-version: 20` legs (`ci.yml`, `arch-render-selftest.yml`, the arch-render README example).
+- [ ] the engine-digest note (V8 on Node 18/20/22) and any doc naming Node 18 as supported.
+- [ ] a CHANGELOG `Removed — BREAKING` line.
+
+---
+
+## Found while landing the issued-sheet statements (`notes`, `schedule openings`)
+
+### N.2 · `E_LEVEL_MIX`'s remedy does not name `notes` among the plan-level settings — `todo`
+
+The remedy text in `src/error-catalog.ts` lists the statements that stay outside `level` blocks
+and predates `notes`. Cosmetic: `notes` inside a level is `E_PARSE`, as `legend` is.
+
+### N.3 · A tag with every candidate place taken keeps its first place — `todo`
+
+A tag tries up to seven places and takes the first clear of every opening, wall, drawn
+primitive and tag on the storey (`src/opening-schedule.ts`); with `schedule openings` injected
+into the corpus, 21 tags find none and stay on ink (dense furniture, a party wall), and 5 sit
+on a room name the label pass did not move. Each is pinned in `test/opening-tags-corpus.test.ts`
+(the list may only shrink). Better needs more candidate places or a leader line. Tags also
+number per storey (`W01` on each level); a set-unique numbering is an owner call.
+
+### N.4 · `fmt` round-trips `project`/`drawn_by`/`date` wrongly for a control character — `todo`
+
+`src/format.ts` quotes those three title fields with `JSON.stringify`, which writes a tab as
+`\t`; the lexer reads back only `\"`, `\\` and `\n`, so `title { project "A<TAB>B" }` formats to
+`project "A\tB"` and re-parses as `"AtB"` (likewise CR, U+0001, a lone surrogate). Older than
+the sheet statements, and left so `fmt` output on existing files does not move in that change;
+`number`/`revision`/`notes` already use `escapeStr`. Fix: the same escaper for the three.
+
+### N.5 · `E_DRAWING_LIMIT`'s catalogue entry omits its second trigger — `todo`
+
+`src/error-catalog.ts` describes only the primitive budget; the NOTES cap (over 200 wrapped
+lines, `src/draw-budget.ts`) raises the same code with its own message. One sentence (with N.2).
+
+### N.6 · Wide glyphs overrun the NOTES column — `todo`
+
+The project-wide width estimate (`src/text-metrics.ts`, 0.62 em per character) has no wide-glyph
+weight, so a line of 57 CJK characters (or 57 `W`) runs past the table's right rule; the page
+does not grow. Needs a per-character width class in the shared estimate, not in the wrapper.
+
+### N.7 · Sheet tables at extreme sizes — `declared`
+
+Every margin table's row height scales with the drawing's reference dimension, so a plan wider
+than about 4.65 km with 200 NOTES lines draws past `MODEL_RANGE_MM` (a 30 km plan: page height
+216,004,640 mm) — as `schedule rooms` with 200 rooms already does on main (218,044,654 mm). The
+slowest accepted `-f png` is 21–23 s / 7.9 MB (a 4×3 m plan with 200 lines). ROOM(S) clips at
+23 characters with some slack left in the drawn column.
+
+## Parked from the algebra programme (2026-09, [ADR 0020](adr/0020-algebraic-core.md))
+
+### 6.1 · D4-orbit `reroll` for a component or a `place … mirror` — `todo`
+
+W6b landed `arch reroll` + the LSP `refactor.rewrite` action + the `reroll()` API
+(`src/reroll.ts`, sharing `src/pipeline.ts`'s one `compileUncached` with `compile()`), but
+only for a **translation** arithmetic progression — same statement, same structure, a numeric
+slot advancing by a constant delta each iteration (`for i in 0..N { … i*d … }`). It does not
+recognise a run related by a D4 group element other than the identity: three `place`d
+instances of the same component at `rotate 0`, `rotate 90`, `rotate 180` (or a mirrored pair)
+are a real repetition — an ORBIT under `src/algebra/d4.ts`'s normal form — that a reader would
+also fold into a loop by hand, but nothing here proposes `for r in [0, 90, 180] { place C(...)
+rotate r ... }`. Detecting it needs a second structural-match mode (same statement/args, an
+`at`/`rotate`/`mirror` triple forming a D4 orbit rather than an AP) ahead of the same proof
+obligation `reroll.ts` already has; the proof machinery (`proves`/`compileUncached`) carries
+over unchanged. Track under a new work-package; do not build ahead of it.
+
+### 6.2 · A `mirror` fact on `describe()` furniture — `todo`
+
+Plan JSON already projects a reflecting `place`'s furniture as `mirror: true`
+(`planToJson`, G.10). `describe()`'s own furniture facts do not carry the equivalent bit, so
+an agent reading `describe()` alone cannot tell a mirrored piece from an unmirrored one of
+the same kind without also fetching Plan JSON. Small, additive, same key name.
+
+### 6.3 · Plan JSON reflection on dims, doors and vertical runs — `done` (doors, dims), vertical `_tail`/`_mirror` not projected
+
+**Landed: doors and dimensions project the frame's reflection.** `planToJson` emits
+`mirror: true` on a door or dimension inside a reflecting `place` frame (the IR's `_mirror`),
+the same semantics as furniture's (G.10): it records the FRAME's reflection, present only when
+reflected (a doubly-reflected instance composes back to no key). `swing` and `offset` are
+already the reflected values; the flag adds what they cannot say — which track a sliding door
+takes and which side a zero-offset call-out's number reads on. `planJsonToArch` refuses
+`mirror: true` on either with `E_JSON_MIRROR`, exactly as for furniture. A reflection-free
+plan's payload is byte-identical; across `examples/` only `clinic.arch` and `terrace-row.arch`
+(mirrored doors) change, by exactly the added key.
+
+**Not projected: the vertical members' `_tail` and `_mirror`.** A placed stair/escalator/elevator's entry edge (`_tail`) and a stair's reflection (`_mirror`, `src/ir.ts`, `src/elements/stair.ts`) are IR-internal, and
+Plan JSON has no vertical-circulation members at all, so there is nothing to attach it to. Adding
+one would be a new payload member, not a flag — a separate decision.
+
+### 6.4 · Rectangle-algebra path consistency for `intent` — `todo`, rejected for now (ADR 0020)
+
+Considered and set aside while writing ADR 0020: routing the `intent` channel's
+adjacency/reachability assertions through a general interval/rectangle constraint solver
+instead of today's bipartite matching (`checkPredicates`). Rejected as an eval-judge risk —
+a solver can satisfy a rubric with a *different* room assignment than the judge expects,
+moving eval scores for reasons unrelated to plan quality. Revisit only against a concrete
+rubric failure, not as a generalisation exercise.
+
+### 6.5 · Exact projective predicates (orient2d / homogeneous intersection) — `todo`, rejected for now (ADR 0020)
+
+Measured bounds with today's plain double arithmetic: `orient2d` stays exact to `2²⁵` mm;
+homogeneous line intersection is exact only to about 104 m (`2^(50/3)` mm ≈ 104,000 mm). Both cover every plan size the
+language can express today. Revisit only if a shipped plan (not a synthetic stress case)
+measures outside either bound. Re-examined and kept rejected in
+[ADR 0022](adr/0022-exact-decisions-and-bounded-input.md): the exact decisions this round
+needed were integer or `BigInt` comparisons on the 0.001 mm lattice and squared lengths, which
+rely only on IEEE-exact `+ − × ÷ √`, not on projective predicates. The `2²⁵` mm bound is also
+the candidate modelling range in M.1.
+
+### 6.6 · A trig/hypot cross-engine audit — measured: no divergence; replacement not motivated
+
+`src/analyze/syntax.ts`'s integration value uses `Math.log2` alongside the existing view and
+geometry code's `Math.hypot`/`Math.atan2` family (`docs/agents/architecture.md`: "the view
+uses no `Math.cos/sin/tan/atan`, not exactly rounded across platforms"). ECMA-262 fixes only
+`+ − × ÷` and `Math.sqrt`; the rest are implementation-approximated, and CI had pinned digests
+on V8 alone (Node 18/20/22), never on SpiderMonkey or JavaScriptCore.
+
+**Measured.** `npm run digest:engines` (`scripts/engine-digests.ts`) runs the built core in
+Playwright Chromium, Firefox and WebKit and compares each engine's digest of the agent-facing
+output (SVG, `describe()`, `lint()`, diagnostics, after the compiler's rounding) with Node's and
+with the pinned `test/while-byte-identity-baseline.ts`. Over 86 plans (examples with `lib`,
+fixtures, recovery corpus, eval goldens and fidelity plans) × 2 payloads (core and `--facts`)
+plus two transcendental probes: 172 of 172 digests identical in every engine and on Node, and
+Node matched all 39 pinned baseline rows. Measured when the harness landed and re-run on the
+tree with every change of this round merged: `status=clean` both times. Re-run
+`npm run digest:engines` after an engine or Playwright upgrade; the report names the versions
+it ran. The nightly `cross-engine` job re-runs it as an
+advisory signal (it never fails the night) and reports the first divergence.
+
+Decision: replacing `hypot`/`atan2`/`log2` at the decision sites with `+ − × ÷ √` forms is not
+motivated by this data and stays owner-gated until a divergence is measured. Limits: the
+payload compares output bytes after rounding, so a 1-ulp transcendental difference that never
+reaches an exact comparison is invisible by design; and Playwright WebKit on Windows is not
+Safari's JavaScriptCore on Apple hardware. ([ADR 0022](adr/0022-exact-decisions-and-bounded-input.md).)
+
+### 6.7 · `while` and reassignment removal at 2.0 — `todo`, owner decision: remove at the next MAJOR, no code before then
+
+`W_WHILE_DEPRECATED`/`W_REASSIGN_DEPRECATED` (`src/while-deprecation.ts`) soft-deprecate the two
+forms and `arch fix` offers a proven `while`→`for` rewrite (`src/while-fix.ts`); nothing is removed
+before the major. Removing them is language-breaking, so it ships in the same 2.0 as the
+axonometric removal (V.5) — one combined
+plan, one migration note, one byte-identity sweep. No shipped example, `test/fixtures/*.arch` or
+`dataset/` plan uses either form, so the sweep needs no example edits.
+
+Checklist:
+
+- [ ] **Escalate, do not delete, the parse.** `Parser.parseWhile` and `Parser.parseAssign`
+      (`src/parser.ts`) keep recognising both forms so the error can point at the construct and
+      carry the rewrite. `W_WHILE_DEPRECATED`/`W_REASSIGN_DEPRECATED` become errors under new
+      catalogued `E_*` codes (`src/error-catalog.ts`; propose `E_WHILE_REMOVED` and
+      `E_REASSIGN_REMOVED`, since the prefix encodes severity), raised from
+      `src/while-deprecation.ts` (`checkWhileDeprecation`; rename the module), still forwarded
+      from an imported module by `src/import.ts` and still ignored for a reassignment inside a
+      `while` body. The `ast.ts` `WhileNode`/`AssignNode` stay so the parse tree and the fix can
+      name them; the `while`/`assign` cases in `src/ir.ts`'s `expandScope` stop expanding (the
+      plan does not resolve) and `E_WHILE_LIMIT` plus `MAX_ITERATIONS` retire.
+- [ ] **The proven rewrite becomes the migration path.** `arch fix` keeps `proveWhileFixes`
+      (`src/while-fix.ts`, wired in `src/cli/commands-author.ts`) and applies it to the new error.
+      Because the plan no longer compiles, the proof cannot compare against the original run:
+      re-root it on the parse-stage shape (`canonicalShapeAt`) and prove the twin against the
+      pre-2.0 semantics kept as a test oracle, or ship the rewrite as `arch fix --migrate-2.0`
+      run on the last 1.x. Decide this before the code: it is the one non-mechanical item.
+- [ ] **The counter-example that is not a counted loop.** A `while` whose body does not have the
+      canonical `let I = A; while I < B { …; I = I + 1 }` shape (or a bare reassignment) has no
+      machine rewrite; the error's hint names `for NAME in A..B` and `let`, as today.
+- [ ] **Generated surfaces** (never hand-edit; run `npm run gen:all` and `npm run docs:build`):
+      `while` stays in `src/grammar/tokens.ts` `KEYWORDS` (the parser still recognises
+      it, and the editors keep colouring it); remove `while-stmt` and `assign-stmt` from
+      `scripts/gen-gbnf.ts` (`grammars/archlang.gbnf`) so a constrained decoder cannot emit them; update `scripts/gen-llm-spec.ts` (`spec.llm.md`,
+      `llms-full.txt`); `gen:errors` for `docs/error-codes.md`.
+- [ ] **Hand-written docs:** `docs/language-reference.md` ("Reassignment" and "Control flow"),
+      `docs/error-codes.md` examples, `docs/agents/architecture.md`, `skills/archlang/SKILL.md`, and a migration
+      note in `CHANGELOG.md` ("Removed"): the before/after for a counted loop, the accumulator
+      (`let total = 0; while … { total = total + x }`, which has no `for` twin and needs an
+      `if`/`let` chain or a component parameter), and the `arch fix` command.
+- [ ] **Tests that change:** `test/while-deprecation.test.ts` (warning → error),
+      `test/while-fix.test.ts`, `test/spec-forms.test.ts` and `test/diagnostics.test.ts`
+      (the forms' spec rows and catalogued codes), `test/lang.test.ts`, and
+      `test/while-byte-identity.test.ts` with `test/while-byte-identity-baseline.ts` (the
+      `compile().diagnostics` law over every example and fixture: it must stay green with the
+      new codes and NO re-measured row, since no shipped plan uses either form).
+      `test/byte-identity-baseline.ts` and the other `*-byte-identity` suites must not move.
+- [ ] **`arch fix`'s special case** (`src/cli/commands-author.ts`, the `W_WHILE_DEPRECATED`
+      filter that calls `proveWhileFixes`) re-targets the new error code. `arch validate
+      --strict` needs no change: it is the generic warnings-fail, and the error already exits
+      non-zero.
+- [ ] **Prove it:** SHA-256 sweep of `compile`, `describe` and `lint` over every example, and a
+      plan using `while` returns the new `E_*` with a span and the rewrite, never throws.
+
+### 6.8 · `museum-wings.arch`'s `full` layer was C1, and a double door read as obstructed — closed
+
+`full` was C1 for two reasons: `d_east` hung on the wrong jamb (fixed earlier: `east.shell` runs
+the opposite way to `west.shell`, so `hinge left` on both is the mirror pair) and `d_main` was a
+single leaf on the axis. Owner decision: a mirror-image pair. `d_main` is now `d_main_w` and
+`d_main_e`, two 1000 mm leaves at x=20500 and 21500 hinged on their outer jambs and meeting at a
+shared closed jamb on the axis; `describe --facts symmetry` gives `full` D1 x about (21000,6000)
+and `arch lint` is clean (`test/symmetry.test.ts`, with a C1 control that hangs one leaf on the
+shared jamb).
+
+(Superseded in part by 6.12: the sampler described below is no longer the detector;
+`swingsCollide` now decides with the exact `sectorsObstruct` test. The contact semantics
+recorded here are unchanged.)
+
+The pair used to raise `W_SWING_OBSTRUCTED` ("0 mm short"): the swing test accepted a closed
+boundary, so two quarter-discs tangent at the shared jamb collided. Owner decision: exempt
+single-point contact only. `swingsCollide` (`src/geometry.ts`) keeps its sampler as the
+detector and asks `sectorsObstruct` whether the contact is more than one point: a
+weak-separating-axis test over the finite candidate set of the two sectors' Minkowski
+difference (no separating line: the areas overlap), then, on the separating line, the length
+of the overlap of the two sectors' faces (a segment only where two straight edges lie on it).
+On axis-aligned whole-mm geometry both are exact (a shared jamb sums to 0, its contact has
+length 0); on an oblique wall the jambs agree only to ~1e-13 mm, so both are read within
+`VERTEX_EPS` (1e-6 mm, `src/geometry/polygon.ts`'s vertex-coincidence tolerance), not a new
+epsilon. A shared-jamb pair (2×900, 2×1000, every axis direction, oblique walls, both swing
+sides) is clear; a 1 mm overlap still warns, "1 mm short" (`test/swing.test.ts`,
+`test/lint-deficits.test.ts`). Consequences, each pinned:
+
+- Contact along a segment still warns, as before: two leaves 100 mm too close opening to
+  OPPOSITE faces (the closed leaves overlap along the wall), and two leaves back to back on one
+  post opening the same way. Leaves are solid, so a shared line is a clash. (On an oblique wall
+  the sampler, unchanged, already missed the first of these; that is not new. Closed by 6.12.)
+- With `swingClearanceMm > 0` (`accessibility-advisory`, 150), single-point contact at exactly
+  `radius + clearance` is clear. A double door is ONE assembly (lead decision): the clearance
+  keeps independent doors apart, not a pair's two leaves, so a shared-jamb pair
+  (`isDoubleDoorPair`: the far jambs coincide, the closed leaves run away from them along one
+  line, and at clearance 0 the discs meet in that point only) is clear at any clearance. Jambs
+  1 mm apart are two doors and keep the clearance. `museum-wings` lints `[]` under the profile,
+  as on the base, and passes `--strict`.
+- `W_SWING_OBSTRUCTED` against furniture (`sectorIntersectsRect`) is unchanged: exact contact
+  with a piece still warns.
+
+Measured: the corpus sweep (every storey's SVG, `describe()`, `lint()`, `compile().diagnostics`,
+the a11y profile's `lint()`, `--facts symmetry`; examples and fixtures) moved 0 of 279 payloads on
+the predicate change alone. On the base corpus no plan reached the sampler's hit branch, under
+either profile; on the final tree (counted by instrumenting it) only `museum-wings` does, once,
+its main pair, cleared as single-point contact (and, under the profile, as a pair). So no
+example lost or gained a warning, and every example's default `lint()` is byte-identical. A
+brute-force cross-check against the original predicate (random pairs on axis-aligned and
+oblique walls, clearance 0 and 150) finds no new collision, and every pair the change clears
+has no area in common and no collinear edge overlap: single-point contact, or a double-door
+pair at clearance 150. The re-measured `museum-wings` rows are explained field by field in
+`test/byte-identity-baseline.ts`.
+
+### 6.9 · `W_SWING_OBSTRUCTED`'s narrowing hint was wrong at a shortfall of 0 — closed
+
+`narrowTo` equalled the door's own width at a shortfall of 0 mm ("Narrow the door to 1000 mm or
+less" for a 1000 mm door). The formula behind it (`gap − radius − clearance`) was also wrong
+in general: narrowing keeps `at`, so the hinge moves, and on a `grid` the resolver snaps the
+width, so a quoted width could fail to clear. `widestClearingWidth` (`src/lint/rules/doors.ts`)
+now bisects the widths the author can get (multiples of the grid; whole mm without one) for the
+widest narrower leaf whose recomputed swing is clear of everything, the proof the hinge flip
+already had; no such width, no hint. At 0 mm short it quotes 999 mm, at 1 mm short 998 (not
+999, which still touches). The width it OFFERS is never below the narrowest door the ruleset
+passes (`passableDoorWidthMm`: no `W_DOOR_CLEARANCE`, and a clear width, by
+`connectorClearWidth` in `src/analyze.ts`, that no route pinches into `W_PATH_TOO_NARROW`;
+760 mm by default, 960 under `accessibility-advisory`); a proved width under that is quoted
+as "not a fix". Every quoted width in the shipped examples, applied to its door (in the file,
+or in the imported module that wrote it), clears that door, and an offered one raises no new
+warning of any kind (`test/lint-deficits.test.ts`, corpus-derived). The message's three numbers now agree
+(`deficitMm`, `src/lint/measure.ts`: need rounded up, have rounded down, the shortfall their
+difference), so "1999 mm apart … need 1999 mm (1 mm short)" cannot be printed. Every example's
+default `lint()` is unchanged; under `accessibility-advisory` the swing hints (and one rounded
+distance) of `furnished-flat`, `hillside-villa`, `imports` and `materials` move.
+
+### 6.10 · A door's `at` snaps to the grid silently — `todo` (observation, no decision)
+
+On `grid 100` the resolver rounds a door's `at` (`Math.round`: `src/ir.ts`,
+`src/elements/door.ts`, `src/attach.ts`), so 900 mm leaves written at 20550 and 21450 resolve to
+20600 and 21500: a double door's "shared jamb" lands at x=21050, 50 mm off an axis at 21000, and
+nothing says so. No diagnostic reports the snap. Found via 6.8, which sidestepped it with even
+1000 mm leaves; behaviour deliberately unchanged.
+
+### 6.11 · The analysis reads a double door as two narrow doors, not one wide opening — `todo` (no code)
+
+`describe()`'s access graph and circulation treat each leaf of a double door as its own door.
+`museum-wings.arch`'s main entrance (two 1000 mm leaves, 940 mm clear each) therefore counts
+as two 940 mm doorways, not one ~1940 mm opening, and every room's `bottleneckClearWidth` is now
+1140 mm: the widest way in is a wing's 1200 mm exit, not the main door. A pair of leaves on a
+shared jamb with both open is one opening to anyone walking through. Open: whether (and how)
+the analysis should recognise a pair: shared jamb, same host, both hinged on the outer jambs.
+The deferred egress facts (M.16) would settle it as a side effect: a max-flow door capacity
+has to merge a pair (`isDoubleDoorPair`) before it can count one.
+
+### 6.12 · The swing-overlap sampler missed real overlaps — closed
+
+`swingsCollide` (`src/geometry.ts`) only ever tested nine points on each leaf's arc against the
+other swing, so an overlap whose shared region held none of them was not seen. Counterexample:
+A hinged at (300,300), radius 900, wedge 180°–270° (far jamb (−600,300), leaf end
+(300,−600)); B hinged at the origin, radius 1000, first quadrant. They share the square
+[0,300]², about 90,000 mm², and the sampler said clear. It also missed segment contact on an
+oblique wall. Found by red-team review of 6.8.
+
+Decision (owner-approved): decide with the exact test. After the hinge-gap reject and the double-door
+check, `swingsCollide` now asks `sectorsObstruct` on both clearance pairings, with no sampling.
+`sectorsObstruct` was NOT exact on its own, which the sampler had masked: it stopped at the
+first candidate axis with a support sum `<= VERTEX_EPS`, a separating GAP included, and then
+measured the two faces' overlap along the line without asking whether they were on the same
+line, so two leaves opening away from each other with parallel facing edges "touched" (the
+eval golden `sized-wet-room`'s `d_live`/`d_bed`, 1500 mm apart). Now a gap answers clear and
+the contact length counts only collinear faces. Single-point contact stays clear and segment
+contact a clash (6.8 unchanged).
+
+The narrowing hint's bisection (`widestClearingWidth`) needs being clear to be monotone in
+the width. The geometry is (a narrower leaf, and its clearance-grown disc, nest inside the
+wider one's); the double-door exemption is not: a narrowed leaf whose far jamb lands exactly
+on a THIRD door's latch is a pair at that one width, clear under a clearance while every width
+around it collides, and the bisection could quote it ("500 mm or less" with 201–499 colliding;
+the same on the old predicate). The narrowing probes now read the leaf as an independent door
+(`swingsCollideAsIndependent`); the flip probe and the warning keep the exemption.
+
+What this does NOT make monotone: the bisection's furniture probe. A narrowed leaf is also
+tested against furniture with `sectorIntersectsRect` (`src/lint/rules/doors.ts`), a
+conservative heuristic that is not proven monotone in the width. The hint is provably monotone
+against other swings only; read this closure as "the swing check is exact", not "the narrowing
+hint is provably monotone".
+
+Measured: an instrumented sweep (examples with `lib`, fixtures, recovery corpus, eval goldens
+and fidelity plans; every door pair, every hinge flip and every narrowing width, at
+clearance 0 and 150) found no probe where the sampler and the exact test disagree, and the
+P-sweep (SVG, `describe()`, `lint()`, diagnostics, `accessibility-advisory` lint) moved 0 of
+84 rows. `test/swing-exact.test.ts` pins the counterexample, the gap family, the superset law
+against the frozen old predicate (`test/swing-predicate-v1.ts`), an independent polygon-clipping
+oracle and the bisection against every width.
+
+---
+
+## Found in the robustness programme ([ADR 0022](adr/0022-exact-decisions-and-bounded-input.md))
+
+Defects, limits and deferred capabilities the numbers/parser/predicates/multi-storey work turned
+up and deliberately did not widen into. Each says what was re-run for this entry; where nothing
+was, it says so and names where the observation came from.
+
+### M.1 · Absurd finite magnitudes: a modelling range — closed (every sub-item decided)
+
+Closed by a 2²⁵ mm (~33.5 km) modelling range, the bound under which ADR 0020 measured plain-double
+`orient2d` exact (6.5), and a run cap: `E_OUT_OF_RANGE` (`MODEL_RANGE_MM`, `src/num-format.ts`)
+and `E_RUN_TOO_LONG` (`MAX_RUN_TREADS`, 1,100 treads, about 308 m). Pinned by
+`test/model-range.test.ts`. Re-run here: `stair id=s at (0,0) size 1000000000000x3000 dir up` is
+one `E_OUT_OF_RANGE` ("The geometry of stair "s" reaches 1000000000000 mm, outside the modelling
+range of ±33554432 mm"), where `arch compile` used to run out of heap; an escalator `size
+400000x1200` is `E_RUN_TOO_LONG` (more than 1100 treads at the 280 mm going); a `dim`, furniture,
+fence, outdoor surface, lot line, `north`, hatch scale or `lineWeight` at 1e308 no longer prints
+`Infinity`. A coarse `scale 10` hatch on a small plan still compiles: hatch scale and `lineWeight`
+are held by the tile and pen they draw, not by a fixed cap. A door wider than its wall raises no
+diagnostic (V.3, `won't fix` with the view). The sub-items, all decided (the owner delegated them;
+ADR 0022's second addendum):
+
+- (a) **Won't fix.** The total-area `E_NON_FINITE` branch in `checkNumberDomain` is unreachable from
+  source (rooms inside the modelling range cannot overflow the sum); it stays as a backstop with no
+  source test.
+- (b) **Closed** by a drawing budget (`MAX_DRAW_UNITS`, 300,000, `src/draw-budget.ts`; the new
+  `E_DRAWING_LIMIT`), checked by `compile()` before `toScene()` (`describe` and `lint` draw
+  nothing and are not held by it). Measured per element at its worst (Node 24, scene nodes): an
+  escalator at the tread cap 2,203 (two chevron strokes per tread), a stair 1,103; a cabinet run
+  67 (its 64 divisions are capped), a fence segment 63 (60 posts, capped), a railed balcony side
+  27, a hedge 35, every other fixture category 20 or fewer, a dim 6, a door 5, a window 4, a room
+  3, a column, an opening and a roof 1; the whole wall set is one poché fill per material and one
+  face, whatever the wall count. Plan-wide, `dims auto` draws a 6-primitive dimension per chain
+  span, an `axes` position 3, a schedule row 4. So the treads dominate, and element and storey
+  counts multiply the rest. The estimate is a tight upper bound per kind: each `ElementDef`
+  declares its `drawCost` (room 3, door 5, window 4, dim 6, wall 2, run treads plus its arrow,
+  fence posts per segment, a balcony's rails; a fixture counts its own glyph, drawn once into a
+  throwaway list), plus one unit per point of its `bounds()` (the vertices a path carries), plus
+  each storey's plan-wide passes (`dims auto` counted by the same `synthDims`, axes, the lot line,
+  the tables); a kind with no `drawCost` (a plugin's) is 72. It is held at or above what is drawn
+  for every kind, every fixture category and every corpus plan, and its primitive part at most four
+  times what is drawn over the corpus (`test/drawing-budget.test.ts`). The first version charged a
+  flat 72 per element and refused real buildings (the red team's 24-storey tower of 200 flats was
+  estimated at 1,132,704 for 29,352 primitives drawn); it is now 108,120. The budget was set from
+  memory: each kind's densest shape scaled to about 300,000 units and run under a 512 MB heap cap
+  held 44 to 186 MB after collection (windows the densest, 0.62 KB a unit) and peaked at 104 to
+  330 MB before it (cabinet runs, 1.1 KB a unit); every one completed (table at
+  `MAX_DRAW_UNITS`). Re-run: 500 escalators at the cap (0.82 GB and 105 MB of SVG before) are one
+  `E_DRAWING_LIMIT` in milliseconds; the tower's three variants (with walls and doors, rooms only,
+  six storeys) and two storeys of 3,000 rooms compile; 24 storeys of 5,000 rooms (840,000 units)
+  are refused, where they would take minutes of label placement (nine storeys of 4,760 took 71 s).
+  The corpus maximum is 4,781 (`hillside-villa`), 63 times under.
+- (c) `describe` and `lint` stop at any resolve error, so huge-magnitude tests no longer reach
+  the grid code: any new grid bound needs an in-range test.
+- (d) **Won't fix.** `arch fmt` canonicalises a literal below |n|·1000 ≤ 2^53 to 0.001 mm. That is
+  the language's resolution, the same lattice the exact arc-radius check decides on (ADR 0022 §1),
+  so a sub-micrometre literal printing 0 (a thickness of 1e-300) is by design.
+- (e) **Closed.** A `lineWeight` passed through `compile()`'s options (`opts.theme`, or a theme in
+  `opts.themes` the plan selects and does not override) is held to the drawn-pen rule the source's
+  is, as one `E_OUT_OF_RANGE` at the `plan "…"` header saying the value came from the compile
+  options; a value that is not a finite number is reported without being printed. Before, 1e308
+  drew `stroke-width` past the range with no diagnostic. Pinned by `test/model-range.test.ts`
+  (API and source bisect to the same weight).
+- (f) **Closed.** A plan-level setting out of range is reported once per plan: a theme
+  `lineWeight` once (at the first storey whose pen leaves the range), and a report raised inside
+  the `axes` block, the `site` block or the plan's `height` once, untagged, where every storey
+  used to repeat it. Only those spans are collapsed: a statement written once and expanded on
+  several storeys (a component placed on two floors) keeps one report per storey with its level.
+  `north`, `grid` and a `paper` scale were already reported once (the parser, and the shared
+  sheet).
+- (g) **Won't fix.** Drawn annotation primitives (a door leaf, glazing, dimension ticks) may extend
+  slightly past the range on an accepted plan: they are finite, and only bounds and measures are
+  held.
+- (h) **Documented, not guarded.** The drawing budget is applied by `compile()`. `toScene()` is
+  public and draws whatever resolved IR it is handed: `toScene(resolve(ast).ir)` on 500
+  escalators at the tread cap made 1.1 million nodes and 238 MB with no diagnostic (red team). Its
+  JSDoc and the DXF, PDF and PNG exporters' docstrings now say that `compile().scene` is the
+  guarded route and that a caller drawing a resolved IR directly takes the budget on. No throw
+  was added: `toScene` returns a Scene, and a refusal there would need a channel it does not have.
+
+### M.2 · A global step budget for element-free nested loops — closed
+
+`E_ELEMENT_LIMIT` bounds what a plan creates, `E_WHILE_LIMIT` one loop's iterations, and the
+stack budget nesting; nothing bounded the work done in loops that create nothing. Closed by one
+evaluation-step budget across the whole resolution (`MAX_EVAL_STEPS`, 5,000,000,
+`src/expr.ts`; the new `E_STEP_LIMIT`). The unit is chosen by mechanism, so the time to reach the
+budget is bounded whatever shape spends it: a step is an expression node evaluated, a statement
+executed, a loop iteration, a value produced or walked (a range item, a character a template
+appends, an array item printed or compared, a character two equal-length strings compare), a
+binding copied (a scope snapshot, a call's closure), an edit-distance cell of a "did you mean"
+hint, and a diagnostic raised (64). Anything that builds a string is charged BEFORE it builds it:
+printing an array measures its length first, so 1,100 references to a 1 Mi-character string no
+longer throw `RangeError: Invalid string length` out of `compile`, `describe`, `lint`, `repair`,
+the language services or `resolve` (the red team's B1). The value walks that print or compare an
+array (`asStr`, `valueEq`) use an explicit stack, not the JS one: an array nested 10,000 or
+100,000 deep (`a = [a, 2]` in a loop) threw `RangeError: Maximum call stack size exceeded` out of
+`compile`, `describe` and `lint` on every earlier version, and is now walked item by item, each item
+a step (the red team's M3; no new code: depth is not a resource once the walk is iterative, so such
+a plan compiles or stops with `E_STEP_LIMIT`). Expressions stay bounded by the parser's nesting
+limit; copying a closure or a scope snapshot is shallow. Counting nodes alone was measured
+insufficient: a doubling string spent seconds on a handful of nodes, and an unknown name in M.2's
+loops raised 326,000 diagnostics in 4.5 s before diagnostics were charged (now 15,857 in 0.2 s).
+One counter runs across every storey (a storey starts where the one below stopped, and on a
+`paper` plan the geometry probes and the drawn pass count into the same total); the start is part
+of each storey's memo key, so the verdict does not depend on the caches. A plugin's `resolve()`
+that calls `compile()` runs that nested compile under a fresh budget of its own.
+
+Measured over the corpus: every tracked `.arch` file (90: examples with `lib`, test fixtures,
+the recovery corpus, eval goldens, faults and fidelity plans) and every `arch` fence of every
+tracked Markdown file and `llms*.txt` (188), 278 sources, of which 114 compile without error:
+median 79 steps, p90 648, the largest that compiles 4,974 (`terrace-row`); the bound is 1,005
+times that (accepted by the owner's delegate: the margin is measured against plans that compile).
+The catalogue's demonstrations of the other caps spend more by construction (the `E_WHILE_LIMIT`
+demo 260,090, `E_RANGE_LIMIT` 200,078, `E_ELEMENT_LIMIT` 86,079) and still reach their own cap
+first, 19 times under. A higher bound costs time linearly (a nested-loop iteration is about 2 µs
+and 14 steps). Re-run (Node 24, `compile()`): M.2's `for i in 0..100000 { for j in 0..1000 { let
+x = i } }` (killed after 40 s before) is one `E_STEP_LIMIT` in about 1 s cold; three nested
+capped `while`s in 0.7 s (with the innermost loop's own `E_WHILE_LIMIT`s before it); `f(40)` of
+a recursion that calls itself twice (killed after 40 s) in 0.3 s; a doubling string (a
+`RangeError` before) in milliseconds; 24 storeys of capped loops (each storey's
+`E_ELEMENT_LIMIT`) in about 1 s. Pinned by `test/step-budget.test.ts` (every public API on the
+string-building shapes, both margins over the corpus, a plan just under the budget compiles and
+ten iterations more does not, two storeys that fit alone cross it together).
+
+### M.3 · The doorway carve's inward walk stepped through eroded cells — closed
+
+A carve's far seed could land several cells from its door, because a connector's inward walk
+(`walkInward`, `src/analyze/circulation.ts`) passed through eroded cells, there a stair
+footprint: on `hillside-villa` level 2 it stamped `d_en2_corr`'s 640 mm onto one cell of the
+passage under the flight, (4950, 4050), and capped the Master Suite at 640 where the passage
+reads 700. The narrow fix (stamp only cells that were not free) was rejected because it also
+moved `eval/fidelity-plans/min-bedroom-flat.laundered.arch`'s first route 740 → 14000.
+
+Closed by stopping a connector's inward walk at the room's first eroded FLOOR cell (`buildGrid`
+records them; an eroded cell under a wall is a halo reaching through it and stays crossable).
+Re-run on the merged tree: `r_master` walk 9900, bottleneck 700, detour 1.81; `arch lint` still
+nine, the sixth `W_PATH_TOO_NARROW` now "The route from "Master Suite" to "Ensuite" squeezes to
+640 mm" through `d_enm`, a real 700 mm door; `min-bedroom-flat`'s route still 740. A FRONT
+door's seed is read as before: sealing it too was measured and rejected, because the
+closed-class witness "a room split by furniture, entered by an opening with a threshold point
+on a line" then measured no circulation room. Consequence, pinned at two cell sizes by
+`test/carve-inward-walk.test.ts`: furniture within R + δ of a doorway's face leaves the room
+`blocked` (δ depends on where the wall falls on the walk grid, 0 < δ ≤ one cell: R + δ is
+400 mm for a 100 mm partition on the 100 mm grid, 388 mm with 108 mm cells), where a doorway near a room
+corner or with a threshold point on a grid line used to be measured through a tunnel beside
+it. No shipped example has such a doorway. The far-seed question (E.6–E.10) is closed. Front-door
+seeds still walk through eroded cells, and the polygon seed branch takes no seal. The R + δ `blocked`
+reading is kept (owner decision): no one can stand in the doorway, and the old reading was the carve
+artefact.
+
+### M.4 · Shaft-reached storeys: what the first cut leaves out — `todo`
+
+Circulation now walks a storey reached only by a stair, lift or escalator from the run a
+person arrives by (ADR 0008's addendum). Left out, each re-run unless noted:
+
+- `--overlay circulation` draws nothing there (`computeCirculationOverlay` gets no arrivals and
+  the overlay path has no building context). Re-run: `hillside-villa` level 2's overlay SVG is
+  byte-identical to the plain drawing; level 1's is not.
+- Direction of travel is not modelled: `dir` is a per-storey drawing convention, so an escalator
+  PAIR (one up, one down) seeds the upper storey at both cars. Re-run on a two-storey probe:
+  the upper room is walked from `e_dn`.
+- The landing test is now on the plan's geometry, and it is SAMPLED: nine points along the
+  head, about 112 mm apart on a 900 mm flight, each 1 mm beyond it (`LANDING_PROBE_MM`,
+  `src/analyze/circulation.ts`). An obstruction narrower than the spacing can sit unseen
+  between two points, a free slot narrower than it can be missed, and floor 1 mm deep counts
+  as a landing even with a partition 50 mm farther out. A probe one body radius deep was
+  measured and not taken: it seals `two-storey`'s 200 mm upper landing (code comment; not
+  re-run here).
+- The nearest-cell fallback (a landing row with no free cell in some frames starts the walk
+  beside the flight) can add up to two cells of frame spill on its own; the red team measured
+  walks spilling up to 6 cells on random buildings against 4 before. The per-building bounds in
+  `test/shaft-equivariance.test.ts` are measured, not proven.
+- A landing that seeds nothing still reads `unreachable` (head against the shell) or
+  `no_threshold` (a covered landing on a door-less storey); a distinct reason for a sealed
+  landing would be a schema change (documented in `docs/analysis.md`, pinned by
+  `test/shaft-circulation.test.ts`).
+- Same-id stops whose footprints do not overlap on the two storeys raise nothing; a lint for
+  them is deferred. (A run drawn along another axis upstairs now takes its own entry edge rather
+  than reading its flight length as the landing width, pinned in
+  `test/shaft-circulation.test.ts`.)
+- Walls are never eroded, so the 400 mm passage under hillside's flight reads 700 (from the
+  card's report; not re-run).
+- `two-storey`'s upper landing is a 200 mm strip between the void and the stair head, a
+  one-cell pinch: re-run, the landing reads 900 and every room past it 700, narrower than any
+  door on the way (740, 840).
+- Per-room reachability on an upper storey for intent `reachable` needs a new describe fact (the
+  rooms reached per storey from its arrival rooms); `levels[i].access.rooms[].reachable` counts
+  exterior doors only. Re-run: the intent now fails a storey with no way in, but removing an
+  upper room's only door still passes it.
+- `suggestTopology` reads the lowest storey only (`resolvePlan().ir`) and so never seeds from
+  arrival rooms. Re-run: removing the kitchen door on `two-storey`'s ground floor gets
+  suggestions; removing the upper bath door (`W_ROOM_DISCONNECTED` on level 2) gets none. It
+  also fixes its tolerance at `DEFAULT_TOL` (`src/suggest.ts`), while lint's access graph reads
+  the ruleset's `tolMm`, so under a custom tolerance the two can disagree on what connects
+  (code read).
+- `diffPlans` compares the lowest storey only (documented), so upper storeys are never diffed.
+- An ungrounded storey's balcony doors share one exterior node, so a room opening only onto
+  balcony B counts as reachable from a room opening onto balcony A, and the room-aware fixpoint
+  inherits it (one node per outdoor surface would separate them). On a grounded storey
+  `describe().vertical` relays through a room a shaft lands in, while lint's reachability never
+  starts from it, so lint can call a room the building graph relays through disconnected.
+  `buildingRoomReach` (the callback `describe()` passes to `verticalReach`) is not exported, so
+  a caller of the public `verticalReach` must build its own. (From the card's reports; not
+  re-run.)
+- `describe()`/`lint()` compute the vertical fixpoint and then `arrivalRuns` recomputes it, plus
+  one storey-removed fixpoint per ungrounded reachable storey: redundant, cheap at dozens of
+  storeys (code read).
+
+### M.5 · The corpus equivariance oracle does not cover multi-storey plans — closed (T0–T3)
+
+The corpus suite places every shipped example with no `level` block
+(`test/equivariance-corpus.test.ts`, "the corpus is COMPUTED: every shipped example with no
+`level` block"), because a whole-file import drops `level` blocks. Multi-storey circulation
+has its own law (`test/shaft-equivariance.test.ts`); the rest of a `level` plan's facts now
+do too: `test/equivariance-storeys.test.ts` (shipped examples and the 1× shaft models) and
+`test/equivariance-storeys-{scaled,head}.test.ts` (the scaled shaft models, split for wall
+time), on `test/d4-oracle.ts`'s "Multi-storey buildings" section.
+
+**Construction.** Byte-preserving surgery on the source: each `level N … { body }` becomes
+`component storey_N() { body }` in place, and the plan closes with one
+`level N … { place storey_N() as g at (t,t) rotate r mirror m }` per storey, every storey
+placed by the same g. Not a whole-file import, which drops the levels; and not an imported
+component, which at the time did not see its own module's plan-global `let`s (`townhouse`'s
+storeys are written in `W`, `SPINE`, …): `import "m.arch": s1` where `m.arch` declares
+`let W = 5000` and `s1` uses `W` gave `E_UNKNOWN_REF Unknown name "W"`, while the same
+component written inline sees the root's `let`. Judged since by the owner as a defect and fixed:
+an imported component now falls back to its own module's plan-level `let`s after every name it
+saw before (the root's `let` still wins), so that repro draws the inline form's room
+(`test/import-module-lets.test.ts`; the language reference's component Scope bullet). The oracle's
+inline construction is unchanged. A storey's `roof` stays in its
+`level` block (inside a component it is `E_ROOF_PLACEMENT`, by design: a roof belongs to the
+building), its `wall <id>` naming the placed `g.<id>`.
+
+**What is compared.** Per storey, `describe().levels[i]` with the storey's diagnostics, and
+each lint rule's slice of that storey (run with the building's shaft context and checked to
+equal `lint()`), through the corpus's own `compareObservations`: fact kinds, rule classes and
+gates, with the gates set per storey. Per building, `levels` (number, name), `vertical` and
+the diagnostics no storey owns. Every one of the eight D4 elements and the translation; for a
+plan with a `site`, the three rotations again with `north` turned too. T0 (P₀ against P,
+P₀'s spans mapped back onto P's bytes) is clean for every case. Left out, with the corpus's
+reasons: the top-level facts (they repeat `levels[0]`), `axes` (a plan setting that does not
+turn), and the scene. The scaled models' raster is compared only under the translation (their
+cell does not divide the plan); the shaft suite owns it under turns and flips.
+
+**Covered:** all four shipped `level` examples (`garden-house`, `hillside-villa`,
+`townhouse`, `two-storey`, every storey lattice-aligned) and all twelve buildings of
+`test/shaft-equivariance.test.ts`. **Not expressible this way:** a `roof polygon` (written in
+storey coordinates, outside the component a `place` frame would carry; none shipped).
+
+**Findings (T0–T2): none.** No violation under any element, on any storey or building, so no
+pin is added. The suites show they can fail: r270 observed against r90's prediction is red on every
+storey; one storey placed `rotate 90` in a building placed `rotate 180` is red on that storey
+alone and fails the pin table as `NEW`; a P₀ with one storey's door widened fails T0 on that
+storey alone. Re-run: `npx vitest run test/equivariance-storeys.test.ts
+test/equivariance-storeys-scaled.test.ts test/equivariance-storeys-head.test.ts`.
+
+**What it cannot see, because `describe()` does not carry it.** A door's entry is `id`,
+`between`, `width` and `head`: no swing, hinge or position. A window's is `id`, `room`,
+`width`, `facing`, `sill` and `head`: no position. A defect in how a frame carries either is
+seen only if a lint rule happens to measure it. Measured by planting a defect in `src/` in a
+scratch worktree and running the three storey suites (16 buildings):
+
+- `swing: el.swing` in `door.transform` (`src/elements/door.ts`; the swing no longer flips
+  under a reflection) is caught on 1 building of 16. `hillside-villa` fails only through
+  `lint.swing-obstructed` (and its `.fixes`), on both storeys, under the four reflections.
+  The other 15 stay green.
+- A window's `at` shifted +100 mm in `window.transform` (`src/elements/window.ts`) is caught
+  nowhere: all 42 tests green, T0 included, though P₀'s windows resolve 100 mm off P's
+  (`two-storey`: `w_living` at (5000,0) in P, `g.w_living` at (5100,0) in P₀).
+
+Both need T3, which compares the drawn door leaf and swing arc and the window's glazing (both
+closed below).
+
+**The roof is nearly unobserved.** A roof is drawing-only and reaches the facts only through
+the drawing bounds. Removing each shipped example's one `roof` line leaves every storey's
+facts and lint, `vertical`, and the building's diagnostics unchanged in `garden-house`,
+`townhouse` and `two-storey`, in P and in P₀. In `hillside-villa` it changes only the sheet
+fit: with the roof every storey reads `drawing_fits: false` and the building raises
+`W_DRAWING_OVERFLOW` (the 700 mm eaves overflow A2 at 1:50); without it neither appears.
+Those are sheet facts, compared only under the elements that keep the axes. So the roof
+surgery is checked by facts only there, and otherwise only by not raising
+`E_ROOF_PLACEMENT`: a roof carried wrongly by a quarter-turn would go unseen by the facts.
+Pinned by "the roof is nearly unobserved" in `test/equivariance-storeys.test.ts`.
+
+**T3, the drawing: closed.** `test/equivariance-storeys-scene.test.ts`, on
+`test/d4-oracle.ts`'s "Multi-storey buildings, tier T3". Every storey's scene, P₀ against
+every gP (the eight D4 elements but the identity, and the translation), through the
+single-storey tier's `compareScenes`: the same `sceneGroups` split (a hand-written dim as
+`.line`, `.ticks`, `.text`), the same canonical form, the same fixed sheet (A0, 1:100: the
+source's own `paper`/`scale` blanked and the fixed sheet stated, before the storey surgery,
+so P₀ and gP still differ only in their closing `level` lines), and the same exclusions for
+the same reasons: the label pass, hatches, every text but a hand-written dim's number, and
+the `dims auto` chains. North is held fixed, as the single-storey T3 holds it. A storey's
+roof stays in its `level` block, so its group is `roof_1`, unprefixed. All sixteen buildings
+(the four shipped examples and the twelve shaft models); drawing is cheap, so one file runs
+them all in about 5 s. The case context a pin's class reads is built only for a run with a
+violation.
+
+T0 for the drawing (`t0BuildingScenes`) compares P with P₀ on P's own sheet, storey by
+storey, over every node and every scene key, the T3 exclusions included. What the
+construction changes is taken out: the `g.` prefix, every `span` carried back onto P's bytes
+(a relocated roof's span included, now that `toSource` maps it), and a schedule row's
+`zone: "g"`. Each group is compared as a multiset, because the roof is emitted at a
+different position in the node list (it moves out of the component), which the SVG does not
+draw. Clean on 34 of 35 storeys; the SVG is byte-identical after unprefixing on 8 of the 9
+shipped storeys. The ninth was a finding, E.17, since closed: T0 is now clean on all 35.
+
+**Findings on the unplanted tree.** Two, both pinned in `test/equivariance-known.ts` when
+this tier landed; the second is now closed:
+
+- `dim-tick-hand` (E.15, `declared`): `hillside-villa.arch@L1`, `g.dim_1`'s ticks under the
+  four reflections. Re-run with `npx vitest run test/equivariance-storeys-scene.test.ts -t
+  hillside`.
+- `facade-probe-order` (E.17, a composition defect, since closed): `hillside-villa.arch@L2`,
+  `T0`, `scene.dims`. The `dims auto` chains ended on a different wall once the storey was
+  placed: 14000 on the shipped page, 14100 placed. Both now read 14100, and T0 is clean on
+  every storey.
+
+No `facing-tie` (E.5) appears: it is a `describe()` fact, and no storey has a window on a
+tie.
+
+**The blind spots, closed.** Re-run M.5's plants in a scratch copy of `src/` (never
+committed), each against the scene suite and the three facts suites (16 buildings):
+
+- `swing: el.swing` in `door.transform`: the scene tier catches 16 of 16 buildings, every
+  storey, under the four reflections, as `scene.door[]` on every hinged door. The facts
+  tier still catches only `hillside-villa` (through `lint.swing-obstructed`).
+- A window's `at` +100 mm in `window.transform`: 4 of 4 buildings with windows (the twelve
+  models have none), every storey, under r90, r180, r270, mx, r90mx and r270mx as
+  `scene.window[]` and `scene.walls` (the cut moves). r180mx, a reflection in y, carries +x
+  to +x, so the shift commutes with it. T0 catches it too, on every storey (P's windows do
+  not move, P₀'s do), and so does `scene.dims` wherever an openings chain measures them.
+  Facts: 0 of 16.
+- A roof carried wrongly under a quarter-turn (constructed: `offsetRingOutward`,
+  `src/elements/roof.ts`, pushes faces that are vertical on the page 100 mm further): 4 of 4
+  roofs, each building's top storey only, under exactly r90, r270, r90mx and r270mx, as
+  `scene.roof[roof_1]`. Facts: 0 of 16.
+- The stair's break-line hand (own plant: the `_mirror` XOR dropped from `stair.transform`,
+  E.3 reopened): 16 of 16 buildings, every storey, under the four reflections, as
+  `scene.stair[]`. Facts: 0 of 16.
+- A dim's side (own plant: `offset: el.offset` in `dim.transform`, no negation under a
+  reflection): `hillside-villa@L1` `g.dim_1` (`.line` and `.text`) under the four
+  reflections, the corpus's only hand-written dim on a storey. Facts catch it there too,
+  through `lint.dim-inside`.
+
+**Controls kept as tests** (no `src/` change): r270 observed against r90's prediction is
+red on every storey of every shipped building; one storey placed `rotate 90` in a building
+placed `rotate 180` is red on that storey alone and fails the pin table as `NEW`; in gP's
+source, a door's swing (`townhouse` L2 `d_bed1`, under r90mx), a door's hinge (L1
+`d_front`, mx), a window's position (L2 `n_bed1` +100 mm, r90) and the roof's overhang
+(r90) are each red on their storey and element alone while the facts tier stays green there;
+a P₀ whose L2 window is moved 100 mm fails the drawing's T0 on L2 alone.
+
+**Not compared, with reasons:** the north co-rotated variant (`+N`): north draws only page
+chrome, which is not a compared group, and the single-storey T3 does not run it either. A
+`roof polygon` is still not expressible this way (none shipped). T0 on the fixed sheet is
+not run separately: T0 states that the construction draws the shipped pages.
+
+### M.6 · Load-sensitive visual and sheet tests — `todo`
+
+`test/visual.test.ts` and `test/sheet.test.ts` hit vitest's 5 s per-test budget under heavy
+machine load and pass alone: the same shape as 4.10, and the same options apply (an explicit
+timeout on the heavy cases, never a raised global `testTimeout`). Observed during this
+programme's gate runs; not reproduced on purpose here.
+
+### M.7 · `diffPlans` follow-ups — closed
+
+An insertion plus a newly authored `id=` in the same edit paired the wrong rooms: before, auto
+"Hall"; after, auto "Kitchen" plus `id=hall` "Hall". Re-run: `Relabeled room_1 to "Kitchen"`,
+`Added Hall`. The entry's proposed fix (the unique-label pass for every room, authored or not)
+was incomplete: it re-pairs an `id=` authored on both sides by label, failing the `id=room_3`
+pin in `test/diff.test.ts` and the `planSpec` antisymmetry law. Closed in `src/diff.ts`
+`matchRooms`: an id authored on both sides pairs first (pass 0), then a label unique on each
+side pairs whatever the ids (pass 1); both read the two sides identically, so antisymmetry
+holds. The case now reads `Added Kitchen (9.0 m²)`.
+
+The two "still silent" cases both reproduced (`diffPlans` returned an empty summary for the
+second) and are now `Walk to …` sentences, no new field or change kind: a room blocked on both
+sides whose `widestWayInMm` moves past the 50 mm pinch floor, and each matched room against
+`no circulation model` when one side's `circulation` is null. Pinned in `test/diff.test.ts`
+(`M.7:` cases); `test/diff-laws.test.ts` runs the laws over mixed authored/auto ids with
+unique and repeated labels, where "a kept room is never reported" fails on the old matching
+(antisymmetry and identity do not: the old rule was symmetric, just wrong). There is no
+`arch diff` command.
+
+### M.8 · The source formatter is lossy past three decimals, and silent when it refuses — `todo`
+
+`format()` prints every literal through `fmt3`, so precision beyond 0.001 mm is dropped and a
+`.0005` rounds by the binary value. Re-run: `room id=a at (0.0004,1.0005) …` formats to
+`at (0, 1.001)`. Separately, `arch fmt` on a file with parse errors (including the newly
+diagnosed trailing content) prints it unchanged and exits 0, so nothing tells the user it
+refused: re-run on a stray-`}` file. Consider a note on stderr or a non-zero exit.
+
+### M.9 · Grid snap rounds half up, so a mirror image snaps differently — `todo`
+
+`Math.round` rounds .5 toward +∞, so snapping is not odd-symmetric. Re-run on `grid 50`: a room
+at x = 25 resolves to 50, at x = −25 to −0 (not −50; the JSON prints `0`). A mirrored drawing
+therefore snaps to a different shape. The same rule makes `fmt2(−x) ≠ −fmt2(x)`: `fmt2(0.125)` is
+`0.13`, `fmt2(−0.125)` is `−0.12` (re-run through `src/num-format.ts`). Changing either moves
+output; it needs a decision and a sweep.
+
+### M.10 · Catalogue order followed ICU collation, not code units — closed
+
+`ERROR_CODES` (`src/error-catalog.ts`) sorted with `localeCompare`, which reads the host's ICU
+collation; it feeds `docs/error-codes.md`, `llms-full.txt` and `arch manifest --json`. Re-measured
+on the closing tree (153 codes, Node ICU 77.1): the severity-grouped order and the same order by
+code units differ at 20 positions, under `en-US` as much as `zh-CN`, `de`, `sv` and `ja`. So the
+cause was not one locale: ICU ranks `_` below every letter, code units put it after `A`–`Z`
+(`E_INTENT_NOT_ADJACENT` vs `E_INTENT_NO_DOOR`). The committed order matched every ICU locale
+tried, but would not survive a build whose collation data differs.
+
+Closed by a plain code-unit comparison inside each severity group, pinned by
+`test/error-catalog-order.test.ts` (fails on the old comparator). `gen:all` moved the generated
+order once: `docs/error-codes.md` and `llms-full.txt`, each a pure permutation of its lines.
+`dataset/dedup.ts` and `dataset/generate.ts` still sort with `localeCompare`: no committed artifact
+reads them, but `generate.ts` orders the keys of the published `report.json`, which cannot be
+checked without regenerating the dataset. `dedup.ts` compares labels already folded to `[a-z ]`,
+where the two orders agree.
+
+### M.11 · LSP rename misses an assignment target — `todo`
+
+`rename` (`src/lsp.ts`) collects references from expressions and instance names, not the name
+on the left of `NAME = expr`. Re-run: renaming `x` to `y` in `let x = 1`, `x = x + 1`,
+`room at (x,0) …` gives `let y = 1`, `x = y + 1`, `room at (y,0) …`. Low priority:
+reassignment is deprecated and removed at 2.0 (6.7).
+
+### M.12 · `detourRatio` divides a 4-connected walk by a straight line — `todo` (observation, no decision)
+
+The walk is measured on the 4-connected nav grid (an L1-like length) and divided by the
+Euclidean line, so a direct diagonal walk reads about √2. Re-run: an empty 8 m × 8 m room
+entered by a door at x = 700 reports walk 7000, detour 1.41. Harmless at the default
+`maxDetourRatio` of 3, misleading for a tight one. Related: C.3.
+
+### M.13 · A polygon room's occupancy seed breaks ties in page order — `todo`
+
+`src/analyze/occupancy.ts` seeds a polygon room's doorway at the nearest free cell with ties
+broken row-major (its own comment says so), the page-order tie the nav grid gave up in E.6–E.10.
+Code read only; no flipped fact has been reproduced, and the occupancy grid is not in the
+equivariance oracle's comparison.
+
+### M.14 · A roof's acute corner is mitred without bound — `todo` (policy, no decision)
+
+`roof overhang` meets two offset faces at their line intersection, so at an acute corner the
+eave runs far past the wall. Re-run: a 10° corner with `roof overhang 600` on a 200 mm wall puts
+the eave apex at (−8002, −700), about 8033 mm from the wall corner, while the wall joinery
+bevels the same corner; lint is silent. Defensible as drafting (the eave is where the faces
+meet); a bevel or a miter limit is a policy choice. The roof keeps its own `meet` rather than
+`meetLines` (`src/geometry/intersect.ts`): unifying them moved about 11 % of decimal
+rectilinear rings by 0.01 in SVG, so it needs its own measured change. `connectorEdges`
+(`src/analyze.ts`) and `PARALLEL_SIN` (`src/geometry/intersect.ts`) are exported but no longer
+imported outside their modules (grep re-run).
+
+### M.15 · Parser recovery and resource-cap follow-ups — `todo`
+
+- `relatedSpans` (the "plan was closed here" note) reach only `arch compile`'s text output, not
+  `--json` or the LSP. Re-run: the `lint --json` diagnostic has no related span.
+- Indentation-guided recovery: a tab meeting spaces has no order, so such lines fall back to
+  the previous rule; when a block header fails and its `}` is also missing, the deeper-indented
+  lines are skipped as its body (pinned in `test/parser-recovery-metric.test.ts`).
+- `relocateLabels` was quadratic in co-located rooms (about 11 s at 5,000 identical rooms, from
+  the card's report). Identical rooms now continue a remembered sum (M.19): that plan compiles
+  in 0.74–0.85 s, down from 7.0–7.3 s. Distinct rooms whose labels all overlap are still
+  quadratic in the labels, because the exact sum has that many nonzero terms (M.19), so this
+  alone does not justify raising `MAX_ELEMENTS`. `E_ELEMENT_LIMIT`'s catalogue
+  text says "5,000" literally; `test/element-cap.test.ts` keeps it equal to `MAX_ELEMENTS`.
+- The shared stack budget (`MAX_STACK_UNITS`, `src/expr.ts`) was measured cold on Node, Node
+  workers and Chromium/Firefox/WebKit workers; the rule (minimum capacity / 1.5) is the thing to
+  re-run when an engine changes, and the table lives in that docstring.
+- `reroll`: a run that `buildCandidate` rejects (a `#` comment inside or after the maximal run)
+  is rescanned from each later start, so detection stays quadratic on that input (about 3.2 s
+  at 800 statements, from the card's report). The linear `findRun` kept these semantics on
+  purpose.
+- Eval `proveInfeasible` never combines a plan-wide floor with a concept's exact count:
+  `{total ≤ 12, every room ≥ 5, exactly 3 bedrooms}` is infeasible but derives no conflict (from
+  the card's report).
+- `W_ROOM_NOT_ENCLOSED` on a circle room says "~18850 mm of its perimeter has no wall" of a drum
+  whose wall is visible but whose centreline lies more than the tolerance off the radius (a
+  420 mm wall with its inner face on R). The rectangular path words a wall off an edge the same
+  way; "not backed by a wall centreline within 200 mm" would be truer.
+
+### M.16 · Deferred capabilities — `deferred` (each needs a consumer)
+
+Recorded with reasons in ADR 0022; none was built this round.
+
+- **Egress facts** (an opt-in `describe --facts egress`): room dominators, a door-disjoint second
+  route, max-flow door capacity (which would also settle 6.11's double door), the capacity left
+  when any single exit fails (a minimum cut), exit separation.
+- **A daylight-ratio fact**: glazing over floor area from the height datum already authored.
+- **Roof ridges from the straight skeleton**: exact on ½ℤ for an integer rectilinear outline,
+  but a roof plan is another drawing and a new language form.
+- **Dimension completeness** (P2-8): which plan lengths no `dim` fixes; a set difference.
+- **A deterministic `ownerOf`** for playground drag-to-edit: which literal owns a coordinate.
+- **Small-scope parameter enumeration**: compile a component over a small parameter grid and
+  report the failing values, worded for that range only.
+- **A clear-width decision by squared comparison**: whether a disc of width w passes a gap is
+  exact with squared distances (`BigInt` for large oblique values); the nav grid quantises it.
+- **A per-brief cluster bootstrap for eval comparisons**: an observation only; it does not
+  reopen G1.
+- Interval-graph layering for `W_DIM_OVERLAP`, regular-path queries on the access graph, bare
+  component extraction (MDL), a dataset entropy report: possible, no failure evidence yet.
+
+### M.17 · `spec.llm.md` headroom under its prompt-size cap — closed
+
+`test/llm-spec-drift.test.ts` caps the in-memory `renderLlmSpec()` string below 30,000
+characters, and the spec had 13 left. The duplication the test's rules name first was trimmed
+(no language fact removed, token sets compared); the cap is unchanged. Re-measured through the
+test's own `renderLlmSpec(exampleSources())`: 28,843, headroom 1,157.
+
+### M.20 · Intent concept `dining-room` is not a table key, so a room labelled "Dining" misses it — `todo` (needs an owner-approved `SYNONYMS_VERSION` bump)
+
+`CONCEPTS` (`src/intent-concepts.ts`) has `dining` but no `dining-room`, so `dining-room` is an
+UNKNOWN concept and takes the literal fallback in `roomsMatchingConcept`: it matches the label
+"Dining Room" but not "Dining". Re-run: a one-room plan labelled "Dining", intent
+`{"roomsInclude":[{"concept":"dining-room"}]}`, `arch score <plan> --brief <intent> --json`
+gives `satisfied: 0` and `E_INTENT_ROOM_MISSING`; the same plan against `dining` satisfies. The
+fix is a table change (a `dining-room` key or alias), which bumps `SYNONYMS_VERSION`; the
+version is pinned by a test and the eval scores through the same table, so the bump is the
+owner's call.
+
+### M.21 · `format()` writes the plan name with `JSON.stringify`, which the lexer cannot read back — `todo`
+
+The lexer knows only the escapes `\n`, `\"` and `\\` (`src/lexer.ts`, the string-literal
+branch), but `src/format.ts` prints the plan name, level names, zone labels, import specs and
+title fields through `JSON.stringify`, which also emits `\t`, `\r`, `\uXXXX` and the like.
+Re-run: `plan "A<TAB>B"` through `arch fmt` prints `"A\tB"`, which reads back as `AtB`
+(`arch describe --json` `plan`). `arch finish` already uses the language's own escaper;
+`format()` should too.
+
+### M.22 · `finish` furnish stage: what it leaves alone — `todo` (limits, not defects)
+
+`src/furnish.ts` furnishes rectangular rooms with an authored `id=` of their own, on every storey,
+and only a room that holds no furniture. Each of these is reported in `unresolved` and left as it
+is:
+
+- polygon and circular rooms;
+- rooms inside a component instance (a plan body can name them, `in u1.bed`, but the stage writes
+  nothing for one; a single-storey plan's bytes and a storey's must agree if that changes);
+- rooms over `MAX_ROOM_AREA_M2`;
+- a room that already holds any furniture (fill-only: it is never topped up);
+- relational rooms with no fixed `at`.
+
+A kitchen run additionally needs a wall with an `id=` of its own for `against wall` to name;
+without one the required piece has no position and the use is left out.
+
+### M.23 · Default PNG export of a large sheet is over 2000 px on a side — `todo`
+
+`arch compile -f png` at the default raster scale writes `examples/museum.arch` at 3179 x 2245
+and `examples/studio.arch` at 9648 x 10214, and some image readers refuse an image over 2000 px
+on a side. `-s <n>` lowers it (`studio.arch` at `-s 0.25` is 2412 x 2553). Re-run:
+`node dist/cli.js compile examples/museum.arch -f png -o out.png`, then read the width and
+height from the PNG header (bytes 16-23).
+
+### M.24 · An unseeded property test flakes about once in 200 runs — `done`
+
+`test/reroll-findrun-oracle.test.ts` › "reroll() — identical suggestions …" › "generated sources"
+runs 60 fast-check cases with no `seed` and then asserts `offered > 0`. Seeds 124, 461 and 524 of
+640 tried produce no suggestion at all (on `main` too), so the run goes red about 0.5 % of the time
+with no defect; it went red once on the Windows leg and passed on re-run. Fix: pin a `seed` (as
+`test/diff-laws.test.ts` does), or move the `> 0` assertion to a fixed sample that is known to
+offer one, keeping the unseeded equality property. Then grep `test/` for other `fc.assert` blocks
+followed by a count assertion with no `seed` (the same file's `numRuns: 300`/`5000` blocks have the
+shape with far more runs). Verify: the chosen seed reproduces a non-zero count; `check` green.
+
+Done (PR #300): the equality law stays unseeded and a second case pins `seed: 20261027` for the `offered > 0` check; the grep found no other unseeded count assertion with the flaky shape.
+
+### M.19 · Quadratic passes the two budgets do not see — closed (label placement kept by decision; ring tests charged after a reopening)
+
+**Reopened by the owner on 2026-11-01, on a measurement from H10.** The decision below rested on
+"seconds, not unbounded", which held for small rings only: 100 staircase rooms of about 300
+vertices, boxes overlapping and floors disjoint, spent 4,554,140 steps, under the budget, and 376 s
+in `checkRoomOverlaps` with no diagnostic. `polygonsOverlap` now reads only what reaches the window
+the two boxes share, 15 times faster on that plan's pairs and 100 times on two round rooms clipping
+at a corner, and charges those reads before each case runs, 14 to a step (`RING_READS_PER_STEP`),
+the budget's own rate. A pair a box rejects, and a class of coincident rooms beyond its one test, cost
+what they did, and no `W_ROOM_OVERLAP` text moves. Its answers are the old form's
+(`test/polygon-overlap-oracle.test.ts` keeps that form) except where the old form reported a crossing
+between disjoint near-collinear edges outside the shared window, a rounding artefact: there the new
+answer is correct. Several hundred polygon or round rooms whose boxes all overlap now reach
+`E_STEP_LIMIT` (a stack of 380 round rooms compiles, 400 does not, where the old form compiled 400 in
+about 2 s): that is the cap doing its job. That plan is now one `E_STEP_LIMIT` in about a second, reported at the pair; a
+cap on the count, which the decision weighed, was not needed. A first charge of 13 steps per edge
+pair of the whole rings refused honest plans (100 packed `room circle`s, each a 48-gon, after 0.19 s
+of real work), so the window is what makes the bound affordable. Two rooms of about 1,600 vertices
+whose boxes overlap still fit, and the largest example is back at 5,294 steps. `polygonsOverlap` has
+three other callers, all unmetered: `W_OUTDOOR_OVERLAPS_ROOM` adds each surface's cost up first and
+files `outdoor-budget` for those that no longer fit; `surfaceNames` (`src/lint/rules/outdoor.ts`)
+and `standsIn` (`src/furnish.ts`) test a rectangle against a ring and are not bounded by a count.
+The label-placement residual below stays kept, and so does `polygonLabelPoint`'s fallback, which
+runs at render, outside the meter, bounded by the element cap and its grid.
+
+The step budget counts the evaluator and the drawing budget the primitives drawn; three passes
+that run after both cost more than either counts, each within the element cap. Re-measured
+(Node 22, built `dist/`, a fresh process per run, `main` and the fix alternated); no output
+byte moved, and each replaced pass is compared with its old form, kept verbatim, by an oracle
+(`test/room-overlap-oracle.test.ts`, `test/label-placement-oracle.test.ts`,
+`test/vocabulary-matcher-oracle.test.ts`, `test/room-adjacency-oracle.test.ts`).
+
+- **Closed: `W_ROOM_OVERLAP`.** 5,000 coincident rooms emit 201 diagnostics (200 pairs listed,
+  then "…and 12,497,300 more"), so the output is bounded and only the count was quadratic.
+  Rooms with value-identical geometry are now one class tested once, the listing stops at the
+  cap, and rectangle pairs past it are counted exactly in O(n log n)
+  (`countOverlappingRectPairs`, `src/geometry/rect.ts`). Compile of that plan 7.0–7.3 s →
+  0.74–0.85 s (the rest is label placement and `describe`, below). A second shape the red team
+  did not report was worse: 2,000 coincident L-shaped polygon rooms took 17.8–18.1 s in
+  `describe` for zero diagnostics (identical rings never test as overlapping), now 1.1–1.3 s.
+  Still quadratic, because the answer is: n DISTINCT polygon rooms sharing one cell are n²
+  distinct exact ring tests. A bound there is a language decision (e.g. stop counting past a
+  cap and word the summary "…and more than N"); not built. **Owner decision: keep it**
+  (reopened, above: the tests are charged, and no cap was built). The input is a constructed
+  pile, the cost is bounded by the element cap (seconds, not unbounded), and a cap would
+  change a shipped diagnostic's text for it. Reopen only against a real plan that pays this
+  cost.
+- **Reduced: label placement.** Each probe's sum over obstacles and placed labels now asks a
+  grid for the boxes it can touch, and groups with the same text box, anchor and ring continue
+  a remembered running sum instead of rescanning (`BoxSums`, `src/label-placement.ts`). The
+  sums are the same floats: the same nonzero terms in the same order. 5,000 identical rooms:
+  255,000 terms summed in all, against about 637 million. Nine storeys of 4,760 rooms
+  (labels wider than the rooms, so each overlaps about 100 others): 31.5–32.1 s → 8.8–9.4 s;
+  one storey sums 20.6 million terms (11.2 million nonzero) against 577.6 million.
+  What stays is the exact ordered sum itself: 5,000 DISTINCT rooms 1 mm apart compile in
+  6.4–6.8 s (12.9–13.2 s before), and 76.8 million of the 101.8 million terms they sum are
+  nonzero. Bounding that would change which label wins (a cap on the labels considered, or a
+  different sum), so it is a drawing decision; not built. **Owner decision: keep it**, for
+  the same reasons: which label wins is shipped drawing behaviour, and only a constructed
+  pile of thousands of mutually overlapping labels pays for the exact sum.
+- **Closed: a long label.** One room labelled with a 500,003-character string (a 100,000-deep
+  array printed into it, about 100,000 tokens). `classifyLabelUses` (`src/vocabulary.ts`)
+  made 26 `synonymMatchesLabel` passes over the label, each re-normalising and re-splitting it
+  and building a `new RegExp` per token for the numeric-suffix test; `describe` classifies the
+  label once, `lint` six times (every rule asking `isBedroom`/`isWetRoom`/… re-classifies).
+  The label is now split once per classification, the table's words once at load, and the
+  suffix is read by UTF-16 code unit (the old `^<word>[0-9]+$` had no flags: ASCII digits
+  only, shown equal on every code unit). CLI, `main` → fix: `lint` 11.4–11.6 s → 0.57–0.64 s,
+  `describe` 2.3–2.4 s → 0.43–0.47 s. What is left is linear in the label: six classifications
+  cost about 150 ms of that `lint`, the rest is the evaluator building the string. Memoising
+  `classifyLabelUses` within one call is not built: `roomUses`'s callers (`src/analyze.ts`,
+  the lint rules) would have to carry a per-call memo, and a module-level one would outlive
+  the call. A length cap is a language decision.
+- **Closed: `describe`'s room adjacency.** `summarize` (`src/describe.ts`) tested
+  `roomsAdjacent` for every ordered room pair. `roomAdjacency` asks the same predicate only of
+  the pairs a broad phase cannot rule out (two rectangles: an edge within `tol` of the facing
+  one, found in sorted key lists; a polygon or circle side: ring bounds within `tol`), in
+  element order. 5,000 coincident rooms share no edge and ask for no pair: `describe`
+  1.26–1.39 s → 0.34–0.40 s (`lint` 2.3 s → 1.3 s, through the shorter classification). Still quadratic where the answer is: n coincident polygon rooms
+  are all adjacent to one another, n² ids in the output.
+
+---
+
+## Found in the symbol redraw ([ADR 0023](adr/0023-plan-symbol-drawing-language.md))
+
+Things the plan-symbol redraw turned up and deliberately did not widen into. Each was re-run on
+`main` for this entry through the CLI or the source named in it.
+
+### D.4 · Fence ticks and window sills draw outside `bounds()` — `declared`
+
+`fence.bounds()` is the run's points, and every post tick stands `7 × thin` either side of the run;
+a corner tick lies along the bisector, past both runs. Re-run: `fence picket { (0,0) (6000,0)
+(6000,4000) }` draws ticks to y = −67.2 and the corner tick from (6067.2, −67.2) to
+(5932.8, 67.2). `window.bounds()` is empty on purpose (its comment); the sill stands 0.2 t proud
+of the outside face, and `window.measures()` covers it. The page margin absorbs both today.
+
+### D.5 · A hatch's `origin`/`zoom` is honoured by SVG only — `todo`
+
+`toDxf` writes a `HATCH` from the material, scale and angle and drops `origin` and `zoom`
+(`src/export/dxf.ts`); PDF fills every hatch with the solid poché base, so neither applies there.
+Re-run: `examples/garden-house.arch -f dxf` carries the legend and 23 `HATCH` entities on level 1,
+so its ground swatches tile from the drawing origin at full size, the framing the SVG swatch was
+moved off. A plugin's hatch with an `origin` is affected the same way.
+
+### D.6 · `pool_table` is catalogued `symmetric` but is not quarter-turn exact — `todo`
+
+On a square footprint its rail, cushion and pockets follow the long axis, so a quarter-turn is a
+different drawing; mirror and half-turn are exact. Re-run: `fixtureGlyph("pool_table", …)` against
+`rotateNode(…, 90)` under `marksEqual`, for squares of 1–2400 mm at offsets 0, 100 and 1000:
+false at every one. No D4 sweep covers it (`glyphs-misc.test.ts` sweeps `plant` and
+`meeting_table`). `rug` and `shrub`, which failed the same sweep before the redraw, now pass. With
+`requiresWall: false` and no `directional`, the flag changes no orientation decision; drop it or
+make the square drawing D4-exact.
+
+### D.7 · The sheet draws two different hairlines — `todo` (an owner decision)
+
+A sheet-table hairline (`rule(…, hairline)`, `src/sheet-tables.ts`) is `extraThin`,
+`thin × 13/18`; the title block's row rules are drawn outside the Scene at `thin × 0.5`
+(`src/backends/svg.ts`, `src/export/pdf.ts`). Re-run: `examples/garden-house.arch` level 1 has
+`thin` 18, the schedule's and the legend's hairlines at 13 and the four title-block rules at 9, in
+the SVG and in the PDF alike. One hairline for the sheet (`weightWidth("extraThin", sizes)` for
+the title block too) moves the SVG and the PDF of every plan with a title block, so it is the
+owner's call.
+
+- **Closed: SVG and PDF disagreed on the table hairline.** The rule carried
+  `paint.width = thin × 0.5` beside `lineWeight: "extraThin"`; SVG follows the weight and PDF
+  reads `paint.width`, so the PDF drew the tables' hairlines at 9. The rule now carries the width
+  its weight resolves to (`weightWidth`); no SVG moved.
+
+### D.8 · The before/after specimen tool lives outside the repo — `todo` (a want)
+
+Judging a redraw needs every family drawn old against new at one footprint, at 1:50 and 1:100
+and in each theme. The tool used for this redraw was never committed; `scripts/` has no
+equivalent. Consider promoting a `scripts/specimen` that takes two checkouts and writes one PNG
+sheet, kept outside `check:drift`.
+
+### D.9 · A wall-thickness call-out can sit on a stair, column, elevator or escalator — `todo`
+
+`thicknessStation` (`src/scene-build.ts`) keeps a thickness call-out (`dims auto walls` and
+`dims auto all`) off the openings on its wall and off furniture footprints, but nothing else that
+stands on the floor blocks it. Re-run: `examples/townhouse.arch` draws its "300" at
+(4871.25, 3550) on all three storeys, inside stair `st` (x 4150–5050, y 2600–5800); the same as
+before the furniture rule landed. Its `el.kind !== "furniture"` test is a one-entry stopgap for
+"what occupies floor". Close by declaring that once, on the element (an `ElementDef` field read
+through the registry, with each element's `bounds()` as the footprint), and reading it here and
+in any other placement that avoids obstacles. It moves the drawing of every plan whose call-out
+stands on such an element.
+
+---
+
+## Wave 5 — deferred by name in v1.28.0 / v1.29.0
+
+Each of these was **named in `CHANGELOG.md` at the time it was skipped**, not quietly omitted, so
+nobody has to guess whether it was overlooked. Two v1.28 entries are already gone from this list:
+`rug`, `sofa_l`, `piano` and `sun_lounger` were deferred there and **shipped in v1.29.0**.
+
+### 5.1 · An `arc` edge under `roof overhang` — `todo`
+
+`roof overhang <mm>` mitres a closed wall ring outward in closed form (line–line intersection,
+orientation from the shoelace sign). A curved edge has no such offset in the same arithmetic, so
+`E_ROOF_CURVED` **refuses** rather than approximating, and the author writes `roof polygon …`
+instead. Same shape as the `arc`-inside-a-`room polygon` deferral below, and probably the same
+design pass: an offset ring that carries arcs is an offset ring whose whole consumer set has to
+learn arcs.
+
+**Gate:** the refusal's own test in `test/roof.test.ts` inverts — an arc-bearing ring must produce
+a drawn eaves line at `R ± overhang` on the curved run, and the exact-coordinate assertions on the
+straight runs must not move.
+
+### 5.2 · A polygonal `void` — `todo`
+
+`void … size WxH` is rectangle-only in v1. A ring form needs the machinery `room polygon` already
+has, and **every consumer here is written on a rectangle**: the nav-grid obstacle, the poly-aware
+room attribution, and `frame.ts`'s `transformElement`. Cheap to add to the grammar, not cheap to
+add to those three.
+
+### 5.3 · Area subtraction under a `void` — `todo`
+
+A void deliberately does **not** reduce its room's area today; `describe --json`'s `voids[]` gives
+the extent so a consumer can subtract. That decision is *pinned* by `test/void.test.ts`, so
+changing it is an argument with a test rather than an oversight — which is the point. Before
+reopening it, decide what a subtracted area means to `schedule rooms`, to the room label's `m²`
+text, and to an intent's area assertion, because those three are what would silently disagree.
+
+### 5.5 · A syntax for overhead dashes — `todo` (the CONVENTION is settled; the syntax is not)
+
+`upper_cabinet` is drawn dashed because of *what it is*, and there is no way for an author to say
+"draw this piece above the cut plane" about anything else. Any design has to decide whether it is a
+clause on `furniture`, a property of a category, or a plan-level convention.
+
+**The half of this item that was open is now closed.** It asked that `upper_cabinet`, `roof` and
+`void` "agree about what dashed *means* before a fourth spelling appears" — and v1.31 supplied the
+fourth (a `garage` door's overhead projection) and the agreement with it. The convention, stated
+once and written into `src/elements/door-panels.ts`'s header, `docs/furniture.md` and the door-kinds
+section of `docs/language-reference.md`:
+
+> **A dashed outline means a thing above the horizontal cut a floor plan is taken at.**
+
+Everything that draws one now derives its pattern from the single `dashedPattern(sizes)` helper in
+`src/elements/glyph-lib.ts` and sets `lineType: "dashed"` beside it — `upper_cabinet`, `roof`,
+`void`, the v1.31 `pergola` and the `shed`'s ridge, and the garage projection. (The three older
+dashed rules in `door-panels.ts` — a `barn`'s two wall faces and a `bifold`'s opening line — dash
+for a *different* reason, redrawing an edge the leaf covers, and deliberately keep their own raw
+pattern with no named line type.)
+
+What is still `todo` is the SYNTAX: an author still cannot say "draw this piece above the cut
+plane" about an arbitrary `furniture` statement. The convention above is now the constraint any
+such design has to satisfy rather than a question it has to answer.
+
+**Item 5.7 supplied the SEMANTICS and deliberately did not touch this.** `overhead` is catalogue
+data on four families (`upper_cabinet`, `wall_cabinet`, `mirror`, `range_hood`); this item is about
+giving an author a word. So 5.5 is now a syntax problem, not a drawing one.
+
+**One tripwire to respect when you take it.** `test/overhead-furniture.test.ts` pins that the
+overhead set is exactly those four families **and that all four are `requiresWall`**. That premise
+is load-bearing: it is why `W_FURN_CLEARANCE` has no `isOverhead` arm — every overhead piece is
+already skipped one condition to the left, so an arm today would be unreachable, untested code.
+A ceiling-hung family (a pendant, a projector, a ceiling fan hangs off the slab, not the fabric)
+breaks both halves of that pin **on purpose** — and that is the moment to add the clearance arm,
+which will then be reachable enough to test by consequence. **Deleting the pin instead of adding
+the arm is the failure mode.**
+
+### 5.6 · Angled furniture — `todo`
+
+A fixture still draws on an **axis-aligned footprint**, so a piece against a sloped wall is not
+turned to it. Deferred by name in v1.28.0. Related but not the same as 3.15 above (which is about
+*measuring* against a curved wall, not drawing at an angle); both are instances of the fixture
+layer knowing only rectangles.
+
+## Repair findings (found downstream, 2026-10-05)
+
+### R.1 · `repair()` could move a piece INTO a hard conflict the input did not have — closed
+
+Found by ArchCanvas, which applies any `repair()` pass that still compiles. On the
+`examples/hillside-villa.arch` that shipped in 1.36.0–1.39.0 (the piano at `(3200,4400)`),
+1.36.0 declined `armchair#7` ("would pinch the walk to "Living" below 700 mm") and the
+repaired source had no `W_FURNITURE_OVERLAP`. 1.37.0 to 1.39.0 moved it to `(3600,5800)` and
+shipped `Furniture "tv_unit" overlaps "armchair".` (level 1). The bisect to 1.37.0 holds.
+
+**The diagnosis was half right.** The pinch guard did stop refusing the move. Under 1.36 the
+move left `r_living` unreachable (bottleneck 0); under 1.37's nearest-entrance walk it is 940 mm
+either way. Nothing after that guard checked the new position. But the cause is not 1.37:
+overlap separation yields only to EARLIER pieces (`computeOverlapPush` is given `earlierThan`),
+so a piece can be pushed into a LATER piece repair may not move (`tv_unit_10` is
+`against wall`). A piece parked on its cycle's canonical member can also be parked inside a
+wall. The pinch guard had been hiding the bug on the villa by accident. On `main`'s villa (the
+piano moved in `3da5563`), 1.36.0 makes the same bad move, and `examples/furnished-flat.arch`
+gained three conflicts on every version measured. Over generated plans `main` made 156 of 2000
+(seed 42) and 242 of 3000 (seed 7) worse.
+
+**Closed by a law, not a threshold.** `repair()` never returns a source that is worse than its
+input. "Worse" means it holds a *hard conflict* the input did not, keyed by who is in it:
+two same-layer pieces overlapping (`W_FURNITURE_OVERLAP`), a piece through a wall
+(`W_FURNITURE_WALL_COLLISION`), a piece in a door's landing (`W_DOORWAY_BLOCKED`), or a piece in
+a door's swing (`W_SWING_OBSTRUCTED`). It is a subset test, not a count: clearing an overlap by
+putting the piece into a wall is worse. `hardConflictsOf` (`src/repair.ts`) uses each lint
+rule's own predicate. A run's RESULT is checked against its input. Each piece that moved into a
+new conflict is pinned where the input has it and the run is repeated. The note names where
+repair would have put it and what that would hit. The result is checked rather than each pass,
+because a round may pass through a conflict a later round clears. The checked runs are iterated
+to their cycle so `repair(repair(s)) === repair(s)` still holds. Only results that contained a
+new conflict move: the villa and furnished-flat in the corpus, and exactly the 156/242 generated
+plans above. `compile()`/`describe()`/`lint()` of every corpus plan are byte-identical. Pinned by
+`test/repair-no-worse.test.ts` (fails on `main`); SANDWICH in `test/repair.test.ts` now declines.
+
+**Order-dependent, by design and now visibly so.** Overlap separation moves the later piece, so
+the result depends on source order. The check can therefore decline a move another order would
+have placed safely. The witness in `test/repair-no-worse.test.ts` declines `b` when `a` is
+written first; written the other way, `a` yields into open floor and the overlap clears.
+
+**Left open.** The census leaves out `W_FIXTURE_WRONG_ROOM`, `W_FIXTURE_FLOATING` and
+`W_FIXTURE_BACK_TO_ROOM`: those are a piece's relation to its own room or wall, not a collision
+with something else. Also, repair's overlap mover ignores the cut-plane layer that
+`W_FURNITURE_OVERLAP` honours, so it "separates" a sofa from the rug under it. That is a fault
+lint does not flag, and it is what sets off every move on the villa and on furnished-flat. Making
+the mover layer-aware would change `repair()` results on plans that are not worse today, so it
+needs its own decision.
+
+## Room labels (found downstream, 2026-10-05)
+
+### L.1 · A room name too wide for its room ran through the walls — closed
+
+Found by ArchCanvas's showcase (compiled at 1.40.0). A room's name was one line of text, so in
+a narrow room a long name ran through both walls and, at the edge of a plan, over the dimension
+chains, with no way to fix it short of renaming the room. (No earlier entry recorded it; the
+"area label wider than a room under ~2.2 m" limitation was searched for here and is not in
+this file.)
+
+**Closed by wrapping as a placement fallback** (`wrapLabels`, `src/label-placement.ts`; the
+breaker is `src/text-layout.ts`). When the one-line name does not fit its room's wall-free run
+at the drawing's label size (the shared `textWidth` estimate, against the wall bands the
+relocation steers by), the fewest-line, most balanced break that fits is drawn instead: breaks
+at spaces only, a separator word (`/`) kept on the line before. A name that fits is untouched,
+so the corpus moved only where a name did not fit: `clinic` and five eval plans, drawing only.
+`test/label-wrap.test.ts` holds the law against the previous implementation over the corpus
+and generated plans.
+
+### L.2 · What still overflows, by design — `declared`
+
+Since #367 a room's label that does not fit is drawn smaller (`fitLabels`, `src/label-fit.ts`),
+down to the furniture-label size, wrapped at a space where that helps, on a table of the wider of
+Roboto's and Helvetica Bold's advances (`inkWidth`, `src/text-metrics.ts`). What is left:
+
+- **A name wider than its room at the smallest height**: drawn there, and reported by
+  `W_ANNOTATION_OVERLAP`. No leader line, and no word is ever split: `Abstellraum` does not become
+  `Abstell-` · `raum` unless the author writes the space.
+- **`wrapLabels` still judges at the generous estimate**, so the "Accessible WC" witness stays on
+  one line through that step and is wrapped by `fitLabels` instead, which reads the width drawn.
+- **The area figure never wraps.** It is a number and its unit, which no break should split. It
+  goes down with the name, and past that overflows a room narrower than itself.
+- **Fit is judged on the row through the label's anchor** by `wrapLabels`, so a name that would fit
+  one line in a wider part of a polygon room may still wrap; and at most three line counts (the
+  fewest and the next two) are tried, which bounds the work on any input.
+- **The places tried are a lattice of the room's box** (`FRACTIONS`), so an L can have a clear
+  place none of them hits. `W_ANNOTATION_OVERLAP`'s hint says the placer did not find one, no more.
+- **An `outdoor` surface's name, a pinned label and the figure of a room with no name do not
+  shrink**, and an `outdoor` name does not wrap; only a room's does.
+- **The widths cover two faces, not every font.** A host with neither Helvetica nor Arial, or a
+  theme that names another family, can draw a name wider than `inkWidth` reads. Outside the tables
+  (past Latin-1, not CJK) a character takes the flat 0.62 em.
+
+## A11y of the compiled drawing (found downstream, 2026-09-13)
+
+v1.36.0 made an element a named control; the first consumer to wire a real screen reader to the
+output (ArchCanvas, NVDA) then found what the compiler still leaves unnamed. **Every item here has
+a consumer-side workaround today**, which is why none of them blocked the release and why each one
+should be weighed against the cost of a new emitted attribute rather than fixed on sight. The
+limitations are documented for consumers in
+[`docs/language-reference.md`](language-reference.md) § "Known limitations (screen readers)" — an
+entry closed here must be struck there in the same PR.
+
+### A.1 · `dims auto` text is announced as a bare number — `todo`
+
+An automatic dimension chain draws its readings as `<text>` carrying **no `data-arch-id`**, so
+`accessible` neither names them nor hides them: a reader announces `3400`, `600`, `5600` with
+nothing saying what they measure or that they belong together. Measured with
+`{ annotate: true, accessible: true }`: `bungalow.arch` emits **87** unowned `<text>` nodes, most of
+them dimension readings; `furnished-flat.arch` 40; `studio.arch` 11.
+
+Two candidate answers, and they are not the same decision. `aria-hidden="true"` says a dimension is
+decoration, which is wrong for a drawing whose whole point is measurement. `aria-label="3.4 metres"`
+says it in words, which needs a unit-to-prose rule (and a language for it) the compiler does not
+have. **Whichever is chosen, the annotation layer's own text is the scope** — the title block, the
+schedule and the legend are A.4 and must not be folded in by accident.
+
+An **authored** `dim` element is already correctly handled on this half: its drawn number carries a
+`data-arch-id` and is `aria-hidden`. See A.2 for the other half of that case.
+
+### A.2 · An authored `dim` becomes a control called `Dim` — `todo`
+
+A `dim` statement is an element, so under `annotate` + `accessible` its first non-`text` primitive —
+a witness line — is stamped `role="button"` with the kind-only name `Dim`. `studio.arch` has four.
+A focusable control named for its kind alone is defensible for a door (`Door` is what the drawing
+says about it) and not for a dimension, which exists to report a number a reader cannot get from
+that name.
+
+The cheap answer is to exclude `dim` from the primary stamping, the way `wall` is already excluded
+— but `wall` is excluded because unioned geometry has no one element to point at, which is a
+different reason, and a selection UI may legitimately want to click a dimension. The honest answer
+is probably the measured value in the name, which makes this the same unit-to-prose question as A.1;
+settle that one first.
+
+### A.3 · `describe().caption` names elements by raw id, and it is SPOKEN — `todo`
+
+The `<desc>` under `accessible` is the caption, and the caption ends *"…entrance via `d_front`,
+`d_garden`"* — an author's identifiers, read aloud to someone who cannot see the drawing.
+Consumers rewrite the sentence client-side, which is a second model of a fact the compiler owns.
+The caption should name a door the way `aria-label` does, and it already knows how: the naming rule
+landed in v1.36 and `describe()` does not use it.
+
+⚠ **The caption is not only an a11y string.** It is `describe().caption`, an agent-facing field with
+its own consumers and its own goldens; changing its wording moves the `<desc>` bytes of every plan
+compiled with `accessible`, and the byte-identity law covers the DEFAULT output, not this one. It
+needs the same treatment any `describe()` change gets, not an a11y-shaped patch.
+
+### A.4 · The sheet's own text is unowned — `todo` (may be CORRECT as it stands)
+
+The title block, the room schedule, the legend, the north arrow and the scale bar are `<text>` with
+no `data-arch-id`: neither named nor hidden. In ordinary browse mode that is **right** — they read
+as the drawing's printed matter, which is what they are, and a schedule read linearly is genuinely
+useful. It only breaks inside a consumer's `role="application"` scope, where a reader stops
+browsing and nothing reaches them.
+
+So this may need no compiler change at all, and the entry exists to stop the next agent from
+"fixing" it by hiding the schedule. If anything is owed upstream it is a document structure the
+scope can expose — the tables are already built in one place (`sheet-tables.ts`) — not an
+`aria-hidden`.
+
+### A.5 · NVDA browse mode drops an SVG `role="button"`'s name — `todo` (NOT OURS; file upstream)
+
+NVDA announces the first character of `aria-label` on an SVG `role="button"` and stops. The markup
+is correct and other readers announce it in full. **Nothing in this repository should change for
+it**; the action is to file it with NVDA and cite the issue here, so the next consumer that meets
+the symptom stops looking for a compiler bug. Recorded because an undocumented reader limitation
+reads exactly like one of ours.
+
+---
+
+### A.6 · The MCP shim cannot ask for an operable drawing — `todo`
+
+`packages/mcp`'s `compile` tool takes `accessible` as a **boolean** and passes `annotate` only for
+`format:"txt"`, so an MCP host can get the `<title>`/`<desc>` pair and nothing else: no
+`data-arch-primary`, no `role="button"`, no `aria-label`, and no `{ idPrefix }` for a page holding
+several plans. The core has all of it; the shim's schema is what is behind.
+
+Cheap to close — `accessible: z.union([z.boolean(), z.object({ idPrefix: z.string() })])` plus an
+`annotate` passthrough — but it is a **schema change on a published tool**, so it ships under the
+shim's own rules: a bump in `packages/mcp/package.json` AND both `server.json` version fields, or it
+never reaches npm or the registry. Documented as a limitation in `packages/mcp/README.md` until then.
+
+---
+
+### A.7 · `--accessible` cannot produce an operable drawing, because `annotate` has no flag — `todo`
+
+**The whole v1.36 feature is library-only, and nothing said so.** The element controls need
+`annotate` and `accessible` together; `accessible` has a flag and `annotate` does not exist as one.
+`src/cli/serialize.ts` turns `annotate` on for `-f txt` / `--ascii` alone, where the ASCII renderer
+needs it — so `arch compile --accessible --acc-id-prefix plan-7` emits a `<title>`, a `<desc>`,
+`role="img"`, and not one `role="button"`.
+
+Found by `test/docs-flags.test.ts` while writing the docs for this, which is the guard working: the
+README had promised a `--annotate` flag for some time and the file it does not cover is the one that
+made the claim. Every doc now says library-only; the flag is what is missing, not the sentence.
+
+Closing it is a flag (`--annotate`, on `compile`/`preview`/`md`) plus a manifest row, a
+`FLAG_KEYS` entry and the bidirectional drift pin those bring with them — small, but it puts a
+**new public flag** on the primary agent interface and regenerates `docs/cli-reference.md`,
+`llms-full.txt` and every baked MCP resource, so it wants its own PR and a version of its own.
+⚠ It must not silently widen what `-f txt` does: `annotate` is already forced there, and a flag
+that reaches the same option needs to be a no-op for that format rather than a second path to it.
+Pairs with **A.6** (the MCP shim has the matching gap on the same option).
+
+---
+
+## Not a defect — gitleaks in FILESYSTEM mode reports four more (2026-09-20)
+
+**Deliberately not excluded. Do not "fix" this.** `gitleaks dir .` (filesystem mode) reports four
+`sourcegraph-access-token` findings — two in `CHANGELOG.md`, two in `docs/backlog.md` — where a git
+commit SHA appears in prose. That rule matches a bare 40-character hex string, and a commit SHA is
+one; `.gitleaksignore`'s header already records the same rule firing on the ecosystem census.
+
+They do not affect CI. The nightly `secrets` job runs `gitleaks-action`, which scans GIT history,
+and history mode does not surface them: it reads commit diffs, where the leading `+` changes the
+context the rule needs. Verified 2026-09-20 — a full-history scan of this branch is clean
+(`no leaks found`, 708 commits) while a filesystem scan of the same tree reports these four.
+
+The reason to leave them is the cost of excluding them. `CHANGELOG.md` and `docs/backlog.md` are
+long-lived prose files that a real token could plausibly land in one day, and gitleaks cannot scope
+an allowlist to a path AND a shape (see `.gitleaks.toml`'s header: `matchCondition` is ignored on a
+top-level allowlist and the conditions OR together). Excluding these two paths would therefore
+switch the rule off for two files that must keep it. A finding that CI never sees is not worth that.
+
+If a future filesystem-mode scan is wanted as a gate, the answer is a per-finding fingerprint in
+`.gitleaksignore`, not a path in `.gitleaks.toml`.
+
+## Found by the fresh-agent audit (2026-10-13)
+
+A fresh agent was given a one-paragraph brief ("2-bedroom flat, about 65 m², open-plan
+kitchen-living, one bathroom, entrance hall, small balcony; a drawing I can send to a builder")
+and worked blind from the README and the site on core 1.42.1 and MCP 0.2.24. The audit and the
+programme that answers it are kept outside this repository, in the growth repo's
+`strategy/agent-reach-programme-2026-10.md`. Its cards A1 to A9, B1 to B7, C1 to C6 and D1 to D6
+cover: the `arch` command collision, the skill bundle, the MCP `instructions` and tool texts, the
+four lint `fix` texts, the `finish` skip of a partly furnished room, the dimension call-outs over
+openings, the docs-site loop, centreline versus net area, door tags, DXF units and layers, sheet
+notes, and the rest of the reach work. This section holds only what no card covers. Line numbers
+were checked against `main` when filed; the quoted commands and outputs are the audit's own and
+were not re-run when filing. Re-measure before building on one.
+
+### U.1 · The balcony door is treated as a place a walk arrives from — `todo`
+
+**Observed (audit finding 9).** On the audit's 65 m² plan, `circulation.rooms[r_live]` reports
+`entranceId: "d_balc"` and a 2.2 m walk from the street, measured from the balcony slab. The
+walk to the living room should start at the front door.
+
+**Hypothesis.** `levelIsGrounded` (`src/analyze.ts:657`) already discounts a door that opens
+onto an `outdoor balcony`, but the entrance list it reads, built at `src/analyze.ts:568-571`
+(`joins(e) && e.exterior`), keeps the balcony door, and the circulation seeds are built from
+that same list without the discount (`src/analyze/circulation.ts:1702,1742`). Which of the two
+places should drop the door is open; settle it first, because `entrances` also feeds
+`hasEntrance`.
+
+**Gate:** a plan whose only exterior door besides the front door opens onto a balcony reports
+the front door as `entranceId` for every room under `arch describe --json`; the circulation
+and `lint()` rows over the examples are byte-identical unless an example has such a door (list
+any that move, with the reason). **Size:** S.
+
+### U.2 · Metres compile silently — `todo`
+
+**Observed (audit finding 11, Appendix B).** `size 4x3` and `thickness 0.2` (metres written
+where millimetres are the unit) compile `ok:true` with no diagnostic. Only lint reaches the
+mistake, as "only 0 m²" and "0.9 mm wide". The spec states the unit as rule 1, and the audit
+rated this "Partially" fixable in one shot.
+
+**Hypothesis.** Nothing in the parse or evaluate stage sees a length below a plausible floor
+for its role, since `MODEL_RANGE_MM` (`src/num-format.ts`) bounds only the top of the range.
+The wall check at `src/elements/wall.ts:152` refuses only a non-positive thickness. Whether to
+add a warning at that point or a lint hint that names the unit is open; a warning on a legal
+tiny value (a hairline, a model in another scale) may be noise.
+
+**Gate:** a catalogued code with a `fix` that names millimetres, fired on the audit's two
+inputs and on no example (`arch lint --json` over `examples/`); the error-catalog example test
+and `gen:errors` stay green. **Size:** S.
+
+### U.3 · A misspelt furniture category passes `validate --strict` — `todo`
+
+**Observed (audit finding 11, Appendix B).** `furniture grand_pianno` passes `validate --strict`
+with no signal at all, although an unknown material or theme key gets `W_UNKNOWN_MATERIAL`,
+`W_UNKNOWN_STYLE_KEY` or `W_UNKNOWN_THEME_KEY` (`src/error-catalog.ts:835-850`).
+
+**Hypothesis.** Furniture is deliberately open: a category outside `FIXTURE_FAMILIES` falls
+back to a labelled rectangle (`src/elements/furniture.ts:347-348`), so a new name is legal and
+a typo is indistinguishable from one. A warning would need a nearest-name test against the
+catalogue (a fix of "did you mean `grand_piano`") and must stay quiet for a real custom name
+with a `label`. Decide that line before coding.
+
+**Gate:** `furniture grand_pianno` raises a catalogued warning with a nearest-category `fix`
+under `arch validate --strict --json`; no example gains a diagnostic. **Size:** S.
+
+### U.4 · A furniture `label` on a drawn symbol vanishes without a word — `todo` (needs a decision)
+
+**Observed (audit finding 11).** A `label` on a furniture item disappears from the drawing with
+no diagnostic.
+
+**Hypothesis, and why it is not a plain bug.** This is by design: a drawn symbol ignores its
+`label` (AGENTS.md, "New element"), and the labelled-rectangle fallback is "the ONLY path that
+renders a furniture `label` at all" (`src/elements/furniture.ts:347-348`). The gap is that the
+author is never told. Either an info-level diagnostic when a `label` is present on a drawn
+category, or a sentence in the spec, would close it. The spec has about 454 B of headroom and
+a new diagnostic moves `lint()` only for plans that write such a label.
+
+**Gate:** decision recorded in this entry first; then the chosen text is pinned by a test and
+`describe()`/`lint()` over the examples are byte-identical (verify that no example writes a
+label on a drawn symbol). **Size:** S.
+
+### U.5 · A parse error does not use what the spec already predicts — `todo`
+
+**Observed (audit finding 12, Appendix B).** `wall exterior id=w1 …` gives
+`E_PARSE Expected "thickness" but found "id"` plus a cascading `W_EMPTY_PLAN`. Spec rule 6 says
+`id=` comes first and names exactly this form as an error. The audit's agent could correct it
+only with that rule in context.
+
+**Hypothesis.** The wall parser (`src/elements/wall.ts:45-47`) eats the category word and then
+expects `thickness`; it never checks for a stray `id=`. The same shape exists for `furniture
+bed id=b1`, which rule 6 also lists. A targeted message ("`id=` goes before the category:
+`wall id=w1 exterior`") with a machine `fix` would close both. The `W_EMPTY_PLAN` that follows
+is a second symptom: it says nothing the parse error did not.
+
+**Gate:** both rule-6 forms return one `E_PARSE` whose `fix` is the reordered line under
+`arch compile - --json`; the cascade `W_EMPTY_PLAN` is suppressed when a parse error already
+explains it, or the entry says why not. **Size:** S.
+
+### U.6 · `uses balcony` does not point to `outdoor balcony` — `todo`
+
+**Observed (audit finding 12, Appendix B).** `room … uses balcony` returns an `E_PARSE` that
+lists the valid uses and gives no hint toward `outdoor balcony`.
+
+**Hypothesis.** The "Expected one or more room uses" message is built from `USE_KINDS` alone
+(`src/elements/room.ts:140-143`). A small map of near-miss words (`balcony`, `terrace`,
+`garden`) to the element that draws them would let the message name it.
+
+**Gate:** `uses balcony` yields a message that contains `outdoor balcony`, pinned by test;
+`arch compile --json` over the examples unchanged. **Size:** S.
+
+### U.7 · Two bedrooms are both typed `MasterRoom` in Plan JSON — `todo` (needs a decision)
+
+**Observed (audit finding 16).** Both bedrooms of the audit plan come out of the Plan JSON
+export typed `MasterRoom`.
+
+**Hypothesis.** `USE_TO_ROOM_TYPE` maps `bedroom` to `MasterRoom` and the mapping is
+documented as many-to-one (`src/plan-json.ts:90-97`; the inverse at `:144-150` folds
+`MasterRoom`, `ChildRoom`, `SecondRoom` and `GuestRoom` back to `bedroom`). The source has no
+way to say which bedroom is the master, so a consumer that reads the type reads an invented
+fact. Options: keep, and say so in the export's documentation; or take a name-based hint. A
+name-based guess would be a heuristic in a deterministic export and the entry leans against it.
+
+**Gate:** decision written here; if the export documents it, a test pins the sentence. If the
+mapping changes, every Plan JSON round-trip test and `--from-json` over the corpus stays
+identical on `describe()`. **Size:** S.
+
+### U.8 · `compile --json` returns a summary far heavier than a compile needs — `todo`
+
+**Observed (audit finding 14).** `compile --json` returns a 13.7 KB summary for a five-room
+plan; `arch context` is 107 KB (about 27k tokens); `spec.llm.md` is 29.5 KB with grammar lines
+up to about 5 KB each. (The stale "~50KB" figure for `context` is card A1, not this entry.)
+
+**Hypothesis.** The compile envelope carries the whole-plan `describe()` result beside the
+SVG (`src/cli/commands-render.ts:238-247` and `:303-312`), so an agent that only wants to know
+whether the compile worked pays for every room. `describe --select` already exists
+(`src/cli/commands-analyze.ts:240`), which suggests `compile --json` could omit the summary
+unless asked. The envelope is read by tools and tests; changing its default is a contract
+change and needs its own decision.
+
+**Gate:** `compile --json` on the audit plan is measured before and after with `wc -c`, the
+size is quoted, and every existing envelope test is updated deliberately. **Size:** S to M.
+
+### U.9 · No room shows its clear, face-to-face size — `todo`
+
+**Observed (audit, "What ArchLang lacks").** Dimension chains are axis, opening and overall; no
+room is annotated with its internal size. Bedroom 1 is drawn 12.6 m² and is 3450 × 3350 clear.
+
+**Hypothesis.** Card D1 adds the net area figure to `describe()` and the schedule; it does not
+draw a clear width and depth on the plan. This entry is the drawing half, an opt-in dims form.
+It is a drawing change, so it needs a byte-identity law and bounds that cover what it draws.
+
+**Gate:** an opt-in form draws clear sizes for rect rooms; plans not using it are
+byte-identical; `bounds()` and `drawCost` cover the text. **Size:** M. D1 has landed
+(`net_area_m2`, `docs/adr/0027-net-internal-area.md`), so this is unblocked.
+
+### U.10 · The legend has one wall swatch and no wall types — `todo`
+
+**Observed (audit, "What ArchLang lacks").** The legend shows a single "poche" swatch. Exterior
+and partition walls are not told apart, and there are no build-up notes.
+
+**Hypothesis.** `wall <category>` already carries `exterior` or `interior` and a `material`
+(`src/elements/wall.ts:25`), so the data exists; the legend code does not read it. The legend
+generator was not located when filing; find it first. Adding a swatch per category used would
+move every sheet SVG, so it is a drawing change under the byte-identity rule.
+
+**Gate:** a plan with both wall categories lists both in the legend; `describe()` and `lint()`
+over the corpus unchanged; moved SVG rows re-pinned with the reason. **Size:** S to M.
+
+### U.11 · The scale bar is 0 to 1 m on a 10 m plan — `todo`
+
+**Observed (audit, "What ArchLang lacks").** The scale bar on the audit's 10.0 × 6.5 m sheet
+is only 0 to 1 m.
+
+**Hypothesis.** The length is `niceBarLength(refDim * SCALEBAR_TARGET_F)` over
+`NICE_LENGTHS = [500, 1000, 2000, 5000, …]` (`src/chrome-layout.ts:37,203`), so the target
+fraction is what makes a 1 m bar on a plan this size. Whether 1 m is wrong or just short is a
+taste call; the audit only noted it. Any change moves the sheet SVG for every plan with one.
+
+**Gate:** decision first; then re-pinned SVG rows with the reason, no `describe()` or
+`lint()` movement. **Size:** S.
+
+### U.12 · `finish` adds no worktop run to a kitchen — `todo`
+
+**Observed (audit, "What ArchLang lacks").** `finish` furnishes rooms but adds no kitchen
+worktop run, so a kitchen sheet shows appliances with nothing between them.
+
+**Hypothesis.** The furnish table has rows per use with `required` and `place: "wall"` items
+(`src/furnish.ts:69-102`) but no continuous-run item; a run is a different shape of placement
+from a single piece. ADR 0025 decision 2 (fill only empty rooms) still applies.
+
+**Gate:** on a bare kitchen, `arch finish --dry-run --json` lists the run and the result is
+lint-clean; byte-identity laws gain a row per example whose `finish` output moves. **Size:** M.
+
+### U.13 · The DXF is geometry only, beyond units and layers — `done`
+
+Doors, windows and catalogued furniture are blocks with one `INSERT` each, dimensions are `DIMENSION` entities, and `npm run check:dxf` reads the file through ezdxf (`research/2026-11-02-interchange.md` in `docs/plans/preview-and-remodel/`). What stays open: a cased `opening` is flat, `dim radius` is a linear dimension with its `R` text, and the file has no handles or OBJECTS section.
+
+**Observed (audit, "What ArchLang lacks").** The DXF has LINE, ARC and TEXT and no DIMENSION
+entities, blocks or hatches, so a CAD user gets no editable dimension and no door block.
+Units and layers are card D3 and are not repeated here.
+
+**Hypothesis.** The writer (`src/export/dxf.ts`) emits flat primitives, as `header` at `:230`
+suggests. DIMENSION and INSERT are larger than a header line and carry their own validity
+rules; a CAD round-trip (ezdxf or LibreCAD) is the only honest test.
+
+**Gate:** the DXF opens in ezdxf with the new entities and the SVG, `describe()` and `lint()`
+are unchanged; every DXF test updated with the reason. **Size:** M. Wait for D3.
+
+### U.14 · No `arch diff` verb, though `diffPlans` is exported — `todo`
+
+**Observed (engineering gap audit, row 26).** `diffPlans` is public (`src/index.ts:232`), and
+neither the CLI nor the MCP server exposes it, so a user cannot see what an edit changed.
+
+**Hypothesis.** The verb is a thin wrapper: read two sources, call `diffPlans`, print with
+`--json`. It lives under `src/cli/`, where Node APIs are allowed.
+
+**Gate:** `arch diff a.arch b.arch --json` prints the delta; a CLI test and the manifest
+drift gate (`gen:all`, `check:drift`) stay green. **Size:** S.
+
+### U.15 · No `arch doctor` — `todo`
+
+**Observed (engineering gap audit, row 25).** Nothing reports the optional dependencies
+(resvg, pdfkit), the CJK font, the installed version against npm latest, or the MCP shim
+version. The audit's agent met `--install` guidance that a local `npm i` had already made moot.
+
+**Hypothesis.** A read-only CLI verb. The network lookup of the latest version must be
+optional and off by default so the verb works offline.
+
+**Gate:** `arch doctor --json` reports each item on a clean install and on one without the
+optional dependencies. **Size:** S.
+
+### U.16 · `arch new` has one starter and cannot list templates — `todo`
+
+**Observed (engineering gap audit, row 10).** `arch new` writes the single `STARTER` string
+(`src/cli/commands-meta.ts:34`); there is no `--list` and no `--from <example>`.
+
+**Hypothesis.** Templates can be the authored examples, copied at run time, so no new plan is
+written by hand. The corpus holds mostly dwellings and museums; card D6 adds non-dwelling ones.
+
+**Gate:** `arch new --list --json` lists names; `arch new --from <example>` writes a file that
+compiles clean. **Size:** S.
+
+### U.17 · No report says how many diagnostics carry a machine fix — `todo`
+
+**Observed (engineering gap audit, row 24).** All 153 codes (101 errors, 52 warnings) carry a
+catalogue `fix` text; only about 30 produce a span edit (a grep estimate, not a measurement).
+No test prints the coverage, so the gap is not a number.
+
+**Hypothesis.** A test or script that walks the catalogue and the fix producers can print the
+count. The estimate is the first thing to replace.
+
+**Gate:** the script prints "N of M codes have a span edit" and a test fails if the count
+drops. **Size:** S.
+
+### U.18 · The playground PDF is raster — `todo`
+
+**Observed (engineering gap audit, row 32).** The playground builds its PDF through jsPDF
+(`playground/src/actions.ts`), while the CLI writes a vector PDF at true scale. Since 2026-11-01 a
+plan with a sheet prints at its paper size, so its scale holds; the PDF is still a raster, which is
+what remains of this card.
+
+**Hypothesis.** The playground cannot load pdfkit; the core already produces the sheet SVG.
+Whether a vector path is worth the bundle is open.
+
+**Gate:** `npm run e2e:playground` covers the chosen behaviour; the playground bundle size
+before and after is quoted. **Size:** M.
+
+### U.19 · A global install can fail on the `arch` alias bin where npm's prefix is `/usr` — `todo`
+
+**Observed (red-team of card A1; read from npm's source, not run on such a host).** The package
+installs two bins, `archlang` and `arch`. npm's `bin-links` (`lib/link-gently.js:55-87`) throws
+`EEXIST` when the global bin directory already holds a non-symlink of the same name and `--force`
+is off. Where npm's prefix is `/usr`, `/usr/bin/arch` (coreutils) is that file, so
+`npm i -g @chanmeng666/archlang` can fail outright. Where the prefix is `/usr/local`, the alias
+instead shadows coreutils `arch` for the user's other scripts. Both behaviours predate A1, which
+added `archlang`; the docs now lead with `npx -y @chanmeng666/archlang`.
+
+**Hypothesis.** Dropping the `arch` bin removes both, at the cost of breaking scripts that call
+it; that is a 2.0 decision for the owner.
+
+**Gate:** on a Linux host whose npm prefix is `/usr`, `npm i -g` of the packed tarball succeeds
+and `archlang --version` prints the version. **Size:** S.
+
+### U.20 · The MCP `describe` tool's description names only the centreline area — `todo`
+
+**Observed (card D1, out of its scope).** `describe()` now reports `rooms[].net_area_m2` and
+`totals.net_floor_area_m2` beside the centreline `area_m2`
+(`docs/adr/0027-net-internal-area.md`). The `describe` tool's description in
+`packages/mcp/src/tools.ts` still lists rooms by "area" alone, so an agent reading the tool list
+is not told which figure is the floor no wall stands on, or that it can be absent.
+
+**Hypothesis.** One clause in the description: `area_m2` on wall centrelines, `net_area_m2`
+the floor no wall stands on (absent when it cannot be computed exactly). Any `packages/mcp` change, prose included, publishes only with a version bump
+in `packages/mcp/package.json` and both `server.json` `version` fields.
+
+**Gate:** the tool description names both fields; the MCP lockstep and tool-text tests pass; the
+version is bumped in all three places. **Size:** S.
+
+### U.21 · The playground facts strip shows only the centreline floor area — closed by P3 (#504)
+
+The facts strip is one line, "57 lines of ArchLang → 3 rooms · 45.05 m² (net)", and the room
+tooltip and the room's facts card say which area they show: the net figure, labelled "(net)", and
+the centreline one, labelled "(centreline)", when the net one is absent
+(`playground/src/room-facts.ts`, `playground/test/room-facts.test.ts`, `panels.spec.ts`). Kept from
+the hypothesis below: a plan with no `net_floor_area_m2` shows its centreline total, labelled, not
+a sum over some rooms. What stays open is in PG.1–PG.3.
+
+**Observed (card D1, out of its scope).** `playground/src/facts-strip.ts:20` prints
+`totals.floor_area_m2` as "Floor area", which is the centreline figure; the net figure
+(`totals.net_floor_area_m2`) is not shown, and the room tooltip (`playground/src/interact.ts`)
+prints `area_m2` alone.
+
+**Hypothesis.** Show the net figure as the floor area and label the centreline one, or show both;
+when the plan has no `net_floor_area_m2` (a room's net area was omitted), say so rather than
+show a sum.
+The strip is a reader-facing surface, so the wording follows `docs/adr/0027-net-internal-area.md`.
+
+**Gate:** the strip and tooltip name which figure they show; `playground/test` and
+`npm run e2e:playground` cover the new text. **Size:** S.
+
+### U.22 · `describe()` is unbudgeted, and the net-area term is quadratic per room — `todo`
+
+**Observed (card D1 review).** The net-area measurement pairs a room's edges with the wall-band
+curves near it, capped per room at `MAX_NET_CURVES` (`src/analyze/net-area.ts`), but nothing caps
+rooms times that: 200 overlapping rooms each meeting 1,920 curves take about 4.2 s in
+`describe()`, linear in rooms up to `MAX_ELEMENTS`. `compile()` charges the term to the drawing
+budget only under `schedule rooms`; `describe()` has never had a budget (adjacency is already
+quadratic in rooms). The hosted Worker's CPU cap bounds it in practice.
+
+**Hypothesis.** Give `describe()` a work meter of its own, or charge the net-area pairs to a
+per-plan total and omit `net_area_m2` past it, as a single room already omits past its cap.
+
+**Gate:** the adversarial plan above returns within the budget, with net areas omitted rather
+than late; the corpus `describe()` output does not move. **Size:** M.
+
+## Found downstream (2026-10-17)
+
+ArchCanvas adopted net area and the issued-sheet statements and showed two gaps that only a
+consumer sees. Each has an issue holding its measurements; the numbers below are the issue's own
+and were not re-run when filing.
+
+### H.1 · Lint messages still quote element ids (issue #187) — `todo`
+
+**Observed.** A consumer shows a diagnostic's `message` verbatim to people who never see the
+source, so an id in it (`"d_main"`, `"w_mid"`, `"r_bath"`, an auto-generated `"door_1"`) is
+noise to them. PR #186 fixed `W_PATH_TOO_NARROW` and `W_FURNITURE_WALL_COLLISION`. These
+still quote ids: `W_CIRCUITOUS_PATH` (the entrance door), `W_POCKET_RUN` (the host wall),
+`W_OPENING_NOT_DIMENSIONED` from the `dims auto all` chain rule (the opening and the wall),
+`W_FIXTURE_WRONG_ROOM` (the room id where its label is what a person knows), and every room rule
+for an unlabelled room, because `labelOf` (`src/lint/context.ts`) falls back to `r.id`.
+
+**Hypothesis.** The shape #186 used carries over: a door by the rooms it joins, a wall by its kind
+and the line it runs on, a room by its label, with the id kept or moved into the hint. The unlabelled-room fallback needs a decision first: a derived name (the room's use plus its
+position) or the id marked as one.
+
+**Gate:** extend `CODES` in the "messages name things as a reader would" law in
+`test/lint-fix-texts.test.ts` to these codes, with a minimal plan per rule (the shipped corpus
+raises none of them); re-measure the byte-identity rows as #186 did, by hashing the new compile
+and describe with the old `lint()` and checking the old row reproduces. **Size:** M.
+
+### H.2 · `finish()` cannot accept a code its caller treats as advisory (issue #189) — `todo`
+
+**Observed.** `finish()`'s never-worse law (`codesOf`, `src/finish.ts`) refuses any statement
+that adds a diagnostic code, so where `dims auto all` raises `W_OPENING_NOT_DIMENSIONED` the sheet
+stage degrades it to `dims auto overall`. ArchCanvas treats that code as advisory. Over 416 of
+its recorded plans, 410 match `finish({ only: "sheet" })` on every sheet statement; the other 6
+differ only in `dims auto all` (its own chooser) versus `dims auto overall` (upstream), each on a
+courtyard or recessed face whose opening no facade chain passes. This is the one thing keeping
+ArchCanvas on its own sheet chooser.
+
+**Hypothesis.** An explicit allow-list, `FinishOptions.accept: [codes]`: an accepted code leaves
+the before/after comparison under every profile, errors are never acceptable, and each statement
+kept only because of `accept` gets a `FinishNote` naming the code. It defaults to empty. The
+alternative, a lint profile with per-code severity, is larger and changes what `lint()` reports.
+
+**Gate:** with `accept` omitted every `finish` law test and the corpus output are unchanged; a plan
+whose `dims auto all` raises only `W_OPENING_NOT_DIMENSIONED` keeps `dims auto all` under
+`accept: ["W_OPENING_NOT_DIMENSIONED"]` with a note naming the code; fixpoint holds with `accept` as
+part of the input; an unknown or error code is a usage error. **Size:** S.
+
+## Registry listings (opened 2026-10-10)
+
+The state of each listing is the table in `docs/seo.md` § 8. These are what is still owed. The
+2026-11-06/07 submissions and deferrals are in `docs/plans/geo-seo/handoff.md`.
+
+Readings of the agent-reach E1/E2 metrics must discount the 2026-10-14 burst traffic (the owner's
+own ~1,500 hosted-MCP requests; `docs/seo.md` section 8).
+
+### O.1 · awesome-mcp-servers #14383 waits on its maintainer — `todo` (BLOCKED on a third party)
+
+The merge condition, a Glama quality score of any grade, is met: on 2026-10-25 Glama's Dockerfile
+settings were set to install `@chanmeng666/archlang-mcp` and run `archlang-mcp` behind `mcp-proxy`
+(its auto-generated build had run the CLI, not the MCP server), release 0.1.0 built and was rated A.
+The score badge is on the entry in #14383 and the maintainer was told there. On 2026-11-06 #14383
+was rebased and is conflict-free. Left: the merge.
+
+### O.3 · How the Claude plugin directory learns of a new version is unverified — `todo`
+
+The plugin was submitted from `plugins/archlang/` on 2026-10-10 and is in review. The directory
+offered a "push updates" webhook, which was dismissed and is not set up. Whether the listing follows
+`main` without it, or needs a resubmission after each release, has not been observed; settle it at
+the first release after the listing is approved. The directory holds a pinned-`npx` server for a
+policy review, and may ask for a privacy-policy page. The OpenAI plugin directory
+needs a privacy-policy page and a terms page too; both now exist, at https://archlang.uk/privacy and
+https://archlang.uk/terms. The OpenAI submission's state is O.7 and `docs/seo.md` section 8.
+
+### O.4 · Open VSX trusted publishing — `done`
+
+`.github/workflows/publish-openvsx.yml` publishes by manual dispatch with `ovsx publish
+--trusted-publishing` (no token), registered on open-vsx.org as the trusted publisher of
+`ChanMeng.archlang` (repository `ChanMeng666/archlang`, workflow `publish-openvsx.yml`).
+
+**Done 2026-10-25:** the first dispatch published 0.31.1 ("Published ChanMeng.archlang v0.31.1");
+Open VSX holds a new version "Under review" for a while, and the public API answers 404 until then.
+
+### O.5 · `@chanmeng666/arch-plan` publishing in `release.yml` — `done`
+
+`release.yml` publishes it in its own job, `publish-arch-plan`, after the core; the owner registers the
+npmjs trusted publisher once (steps in `.claude/commands/release-check.md`).
+
+### O.6 · A WAF rule for `/svg/` — `done`
+
+The zone rule `mcp abuse guard` was widened from `/mcp` to the whole host `mcp.archlang.uk` (same
+per-IP 100 requests per 10 s, block 10 s), so it covers `/svg/` too.
+
+### O.7 · The next shim release carries the MCP tool annotations and the OpenAI/Codex listing — `done`
+
+**Done 2026-10-16:** `@chanmeng666/archlang-mcp` 0.2.26 (released with core 1.43.1) ships the annotations to local installs.
+
+The next `@chanmeng666/archlang-mcp` release (bumped by `/release-check` item 2, not before) ships the
+tools' `annotations` (read-only, not destructive, idempotent, closed-world) that the OpenAI directory's
+tool scan requires; the hosted Worker already serves them once they reach `main` (`deploy-mcp`
+redeploys on a tool-set change), so the OpenAI/Codex draft (state in `docs/seo.md` section 8) already
+passes that scan; the shim release brings the annotations to local installs.
+
+### O.8 · `OPENAI_CATEGORIES` is a retyped list — `todo` (re-check on disagreement)
+
+`OPENAI_CATEGORIES` in `scripts/gen-agent-manifests.ts` is retyped from the `plugin_category_unknown`
+row of https://developers.openai.com/plugins/deploy/submission-errors as read on 2026-10-15. When
+`test/agent-manifests.test.ts` or the portal disagrees with it, re-check it against that page.
+
+### O.9 · The OpenAI portal finds the `compile` tool's name unclear — `done`
+
+The portal's MCP scan reported "compile: This tool's name appears unclear or does not communicate
+its purpose": the scanner shows a tool's title as its name, and the title listed output formats. The
+title is now "Compile a floor plan to a drawing"; local installs get it at the next shim release.
+The listing still shows the old one: O.11.
+
+### O.10 · Two Dependabot major bumps wait for a decision — todo (decision needed)
+
+`@types/node` 22 → 26 (#121; the runtime stays Node 18-22, so the types would run ahead of it) and
+`vitest` 2 → 5 (#119, CI red on the branch). Patch/minor bumps were merged on 2026-10-15 under the merge policy.
+
+### O.11 · The OpenAI listing shows the `compile` tool's old title — `todo` (BLOCKED on a third party)
+
+`tools/list` on the hosted server returns the new title, but the portal and ChatGPT's tool card show
+the definition cached at review ("Compile ArchLang → SVG, ASCII, Plan JSON or PNG"). On 2026-11-01,
+after 1.50.1 was published, Rescan and Reconnect were disabled, and a new draft had not refreshed
+it. Calls are unaffected. **Gate:** ChatGPT's card reads the new title; if it never does, ask OpenAI
+how a published plugin refreshes its tool definitions.
+
+### O.12 · Two OpenAI starter prompts name a `plan.arch` a new user does not have — `todo`
+
+"Make the bedroom in plan.arch 1 m wider…" and "Put plan.arch on an A3 sheet…" passed in ChatGPT on
+2026-11-01, but that account's earlier chats had saved a `plan.arch`, which ChatGPT found. What a
+user with no such file sees is unverified. **Gate:** both prompts run in an account with no saved
+plan. If they fail or dead-end, reword them or have the skills offer to start from a brief; either
+needs a new ZIP and the owner's resubmission.
+
+### O.13 · The OpenAI plugin is untested in Codex — `todo` (owner: a ChatGPT-login Codex)
+
+`codex-cli` on the owner's machine is logged in with a paid API key and its marketplaces list no
+ArchLang, so it was not run; a paid run was not approved. **Gate:** one starter prompt in a Codex
+signed in with a ChatGPT account.
+
+### O.14 · The MCP WAF rule may throttle OpenAI's shared egress — `todo` (check once traffic exists)
+
+The "mcp abuse guard" rule (100 requests per 10 s per IP, then a 10 s block) counts per IP, and
+ChatGPT's calls may share addresses. This is inferred, not observed. **Gate:** the owner reads the
+rule's WAF records in the Cloudflare dashboard, which an agent cannot open.
+
+### O.16 · Arcade, which absorbed Smithery, may be a new listing — `todo` (assess first)
+
+Smithery was acquired by Arcade (arcade.dev) and closed its MCP proxy and publishing on 2026-10-31;
+our Smithery listing is gone and the release path no longer builds for it (#468). Arcade's catalogue
+lists MCP servers (Context7, Exa). Unknown: whether it takes third-party stdio servers, by what
+submission, and on what terms. The 2026-11-06 channel research found no submission route (it
+records the Smithery row as retired), and arcade.dev on 2026-11-07 names an "Arcade Registry" to
+"share and discover all your MCP tools" without saying who can publish to it, so the question is
+still open. **Gate:** a short note in `docs/seo.md` § 8 saying yes (with the steps)
+or no (with the reason); a submission itself is the owner's.
+
+### O.17 · The Docker MCP Catalog entry pins an archlang commit — `todo` (at each release)
+
+`servers/archlang/server.yaml` in docker/mcp-registry#6704 (from the owner's fork
+`ChanMeng666/mcp-registry`) builds `packages/mcp/Dockerfile` at a pinned `source.commit`, and the
+Dockerfile installs the `@chanmeng666/archlang-mcp` version in `packages/mcp/package.json` at that
+commit. **Gate:** after a release that moves the MCP package, a follow-up PR there moves the commit
+(`.claude/commands/release-check.md`).
+
+### O.18 · The awesome-openclaw-skills entry (#610) waits on its maintainers — `todo` (BLOCKED on a third party)
+
+`VoltAgent/awesome-openclaw-skills` declines brand-new skills, so the entry for the ClawHub skill
+(`docs/seo.md` § 8) is deferred; its draft is in the session archive. **Gate:** the skill shows
+users on ClawHub, then the entry is filed.
+
+## Visual-assets residue (from `docs/plans/visual-assets/handoff.md`, 2026-11-04)
+
+### VA.1 · The bean bag reads stepped in 3D — `todo`
+
+`bean_bag` is built from stacked rounded tiers, so its silhouette steps. A smoother profiled section
+(`profile` in `src/mesh/t0.ts`) would read softer. **Gate:** `t0.test.ts` green; laneway pins unmoved.
+
+### VA.2 · Outdoor ground surfaces get no 3D finish — `todo`
+
+Lawn, paving and deck areas are not built in 3D, so a garden is bare ground in the replay and the GLB.
+**Gate:** a ledgered default per surface; pins move only with the reason recorded.
+
+### VA.3 · A room with no `uses` keeps the neutral floor — `todo` (decision: read the label?)
+
+`floorFinish` reads `uses` only; the label is deliberately not read. Decide whether a label should
+ever pick a finish before building anything.
+
+### VA.4 · The CLI has no `--theme` flag — `todo`
+
+`rendered` is reached only by `theme rendered` in the source or `CompileOptions.theme`. A flag is a
+manifest row (`src/manifest.ts`) and regenerates `docs/cli-reference.md`. **Gate:** the default output
+byte-identical without the flag.
+
+### VA.5 · Shadows in the replay — `todo` (measure first)
+
+Shadow maps cost +55% SwiftShader frame time when measured (V9) and were left out. Revisit only with
+a cheaper technique (baked contact shadows) and a frame-time budget.
+
+## Playground residue (public-surfaces cards P2 and P3, 2026-11-06)
+
+### PG.1 · A room cannot be reached from the keyboard — `todo`
+
+The hover tooltip and the room's facts card (`playground/src/interact.ts`, `room-card.ts`) open
+from the pointer only: no room in the drawing takes the focus, so a keyboard or screen-reader user
+cannot open a room's card at all. Once open, the card is reachable and Escape closes it. One way:
+a focusable list of the rooms (the facts line, or a "Rooms" control) that opens the same card.
+**Gate:** an e2e case opens a room's card from the keyboard alone; the card keeps its focus rules.
+
+### PG.2 · The card and the tooltip pick a room by its bounding box — `todo`
+
+`pickSmallestContaining` (`playground/src/interact.ts`) hit-tests describe()'s `bbox`, so on an L,
+a trapezoid or a circle a point inside the box but outside the room picks that room (or a smaller
+box around it), and its card opens. AGENTS.md: a derived position comes from the shape, never its
+bounding box. The shape is in the summary (`floor_polygon`, `floor_circle`): test it, boundary
+inclusive, and keep the smallest-room tie rule (`playground/test/interact.test.ts`). **Gate:**
+unit cases on `hexagon-pavilion` (trapezoids, the rotunda) and `gallery-l`; the rectangle cases
+unchanged.
+
+### PG.3 · The facts line moves the drawing on the first compile — `todo`
+
+The facts line is empty in the served page and filled after the first compile, so the stage
+shrinks by its height then (35 px, measured at 1280 and at 390 wide). Writing
+it at build time (`playground/scripts/gen-static.mjs`) would fix that, but with JavaScript off the
+drawing's share of a 1280×720 viewport would fall to about 0.66, under `boot.spec`'s 0.70; moving
+the line into the output pane's status row first keeps both. **Gate:** the stage box is the same
+before and after the first compile; `boot.spec`'s no-JS share holds.
+
+## Stairs in the 3D preview (public-surfaces card X3, 2026-11-06)
+
+### ST.1 · No lint compares a stair's drawn treads with its storey height — `todo`
+
+The plan draws each flight with `treadCount(run)` treads (`src/elements/vertical-glyphs.ts`, a
+nominal 280 mm going, whatever the storey height), and the 3D preview climbs the storey on one
+riser per drawn tread plus one per flight (`docs/plans/public-surfaces/3d.md` §3, a ruling: the 3D
+keeps the plan's treads). So the drawing itself implies a riser height, and several examples imply
+245–273 mm (two-storey 2700 / 11, townhouse and garden-house 3000 / 12, hillside-villa 3000 / 11),
+above the 220 mm `stairMaxRiseMm` that `W_STAIR_TOO_STEEP` assumes. That rule checks a flight's
+run against the shortest run that climbs the storey, and only where the plan authors a height; it
+never compares the treads drawn with the storey height, so none of these plans warns (measured with
+`arch lint --json`: no `W_STAIR_*` on any of the four; only two-storey authors a height, and its
+2900 mm run passes the 2640 mm its 2700 mm storey needs at 220 mm). A lint (or a `describe()` fact first) would report the
+riser the drawing implies, where the plan authors a height. **Gate:** the implied riser for each
+example, hand-derived in the test; a plan with no `height` unchanged; the byte-identity law over
+the corpus for `describe()` if a fact is added, and the lint's own corpus findings listed in the PR.
+
+### ST.2 · The walking line over a winder landing is drawn as a chord but credited as an arc — `todo`
+
+PR #533 (winders on a quarter-turn landing, preview-and-remodel D46) credits a winder landing with
+`min(n, floor(arc / going))` goings, where `arc` is the quarter arc of radius `width / 2` round the
+inner corner (about 0.785 × width). The glyph (`src/elements/vertical-glyphs.ts`) still draws the
+walking line across that landing as one straight chord (about 0.707 × width), so the drawing and
+the lint read two different lengths. Lint never reads the drawing, so this is a drawing change:
+draw the arc. It moves the SVG of plans that write `winders` only; `describe()` and `lint()` do
+not move (the `block-stair-winders-byte-identity` law pins every plan without the clause). The
+contributor offered to do it. **Gate:** the winders law green; the digest of every winders fixture
+listed before and after in the PR; a plan without `winders` byte-identical.
+
+### ST.3 · `archlang-3d` builds a winder landing as a level landing — `todo`
+
+The 3D package ignores `describe().verticals[].landings[].winders` and builds the landing flat, so
+the preview climbs the storey in fewer, taller risers than the plan draws (the plan shows `n`
+treads fanning from the inner corner). Fan `n` wedge-shaped treads from the inner corner in
+`packages/archlang-3d`, each rising one riser, so the 3D keeps the plan's treads (the X3 ruling).
+Core untouched. **Gate:** `check:3d`; the mesh/GLB pins move only for the winders fixture; a plan
+without `winders` byte-identical in every 3D output.
+
+## 3D asset and surface residue (public-surfaces 3D cards X4b, X6, V2, 2026-11-06)
+
+### 3D.1 · The asset check trusts the manifest for the plan PNG — `todo`
+
+`checkAssets` (`packages/archlang-3d/scripts/gen-3d-assets.ts`) compares a committed
+`<name>.plan.png` only by SHA-256 against the manifest, then re-rasterises the source to the
+recorded pixel hash; it never decodes the committed file. A PNG swapped together with its manifest
+`sha256` passes. **Gate:** `pixelsHash(readFileSync(file))` must equal `plan.pixelsSha256`; a
+planted swap fails `--check`.
+
+### 3D.2 · No size budget for plan and poster PNGs — `todo`
+
+The budget table caps WebP, MP4 and GLB only; `.plan.png` (92–245 KB today) and `.poster.png` have
+none, so an A1 sheet could grow unchecked. **Gate:** a budget (for example 300 KB) enforced by the
+generator and `--check`.
+
+### 3D.3 · `pngjs` is not declared by `packages/archlang-3d` — `todo`
+
+The generator script imports it through the root `devDependencies` (hoisting). Not shipped
+(`scripts/` is outside `files`), but an isolated install of the workspace would break. **Gate:**
+`pngjs` and `@types/pngjs` in the package's `devDependencies`.
+
+### 3D.4 · Pitched roofs in the 3D preview — `todo` (design first)
+
+A plan's roof becomes a hidden 150 mm flat slab (`roof-flat-150`); every surface says "no pitched
+roofs yet". **Gate:** a design note (which roof forms the core states, how the replay shows them)
+before any code; the laneway GLB pin moves only with its reason.
+
+### 3D.5 · MP4 replays and byte ranges — `todo` (measure)
+
+Cloudflare answers a `Range` request for `/3d/*.mp4` with 200, so Safari may not play the replays;
+the sites fall back to the poster and an MP4 link. **Gate:** a real Safari check; if it fails,
+serve the MP4s from a host that answers 206, or keep the fallback as the design.
+
+## Site chrome (found while fixing the nav overflow, 2026-09-20)
+
+### N.1 · The nav row needs 1152px, and the hamburger persists until then — `todo` (a WANT, not a bug)
+
+**The defect is fixed; this entry is the better answer that was deliberately not taken.** Nothing is
+broken at any width today — `docs-site/e2e/page-chrome.spec.ts` ("the nav bar fits the viewport")
+asserts zero page overflow AND zero last-item overhang on `/` and `/guide` across 768 → 1152. Do not
+treat N.1 as a red.
+
+What shipped, and why 1152. VitePress reveals the desktop nav row at `min-width: 768px`; our
+eight-destination bar does not fit until 1152, so the reveal was moved there. The fault had two faces
+and **only one of them scrolled**, which is the part worth carrying forward: below 960 `.VPNav` is
+`position: relative`, so the too-wide row grew the document and the page scrolled sideways (272px at
+768, 240 at 800, 140 at 900); at 960 VitePress makes `.VPNav` `position: fixed`, and **a fixed
+element's overflow never grows the document** — so the row did not start fitting there, it started
+being CLIPPED at the viewport edge while `scrollWidth - clientWidth` read 0. Measured overhang of the
+last nav item ("Ecosystem"), Playwright/Chromium, reproduced independently on the live site:
+
+```
+/        960:+44  980:+24  1000:+4  1024:ok                  → was clipped across [960, 1003]
+/guide   960:+179 1000:+139 1024:+115 1100:+39 1152:ok        → was clipped across [960, 1138]
+```
+
+⚠ **Never set this breakpoint from `scrollWidth` alone.** That number is 0 across the whole clipped
+band; a binary search on it lands on 960 and ships a page whose last nav entry is severed at 1024.
+
+**The cost of the answer taken, which is what remains open:** the hamburger persists to 1151px, so a
+1024 iPad landscape and a 1100px laptop window get a hamburger beside ~500px of empty bar. That is
+cosmetic, not broken — every destination is reachable and keyboard-focusable there (measured: 22
+controls, 17 distinct hrefs) — but it is not what a docs site should look like at 1100.
+
+**The recommended long-term fix is (B): cut the top level from seven items to five, and move the
+breakpoint back down.** The arithmetic, so nobody re-derives it. The menu is **684px** intrinsic
+(Guide 63 · Reference 110 · Examples 88 · Showcase 91 · AI Agents 106 · Playground 114 ·
+Ecosystem 113). On a doc page at 960 the space left after the 272px sidebar gutter, the 183px search
+box and the 32px right padding is **473px** — a **179px deficit**. Every saving that keeps all seven
+items was costed and they do not reach it: item padding 12→6 buys 84px, 14px→13px labels ~30px,
+dropping the `Ctrl K` chip ~40px — **154px ceiling**, at the cost of degrading the bar at 1440 where
+nothing is wrong. Dropping Showcase (91px) and Ecosystem (113px) buys **204px** against the 179px
+deficit, so the row would fit from 960 with room to spare; Showcase would move under an "Examples"
+dropdown, and ArchCanvas/npm/GitHub stay reachable through the footer, the nav screen and
+`socialLinks`.
+
+Why it was not taken now (owner, 2026-09-20): **Showcase is deliberate outreach material** — the
+famous-building plans — and demoting it from the top level is a content-strategy decision that should
+not be forced by the schedule of a CSS fix. Decoupling them was the point: the defect is fixed today,
+and the IA can be reconsidered on its own merits. The `nav` block in `docs-site/.vitepress/config.ts`
+reasons about this IA in prose ("Playground is the standalone CTA — it is intentionally NOT repeated
+inside Ecosystem"), so whoever picks this up should read that first.
+
+Closing it means: change the `max-width` in the nav block at the foot of
+`docs-site/.vitepress/theme/style.css`, change the `nav` array in `config.ts`, and widen the E2E's
+width list — the overhang assertion already there is what proves the row fits, and it must keep
+running on a route **with** a sidebar, which is the tight case.
+
+---
+
+## Accessibility — axe findings that are NOT ours (2026-09-20)
+
+Found by the first `a11y-loop` pass over the rebuilt landing page, a doc page and the playground
+(five passes each: default, dark, forced-colors, reduced-motion, 320px reflow; the playground also
+driven through three storey-switcher states). **Everything this batch built came back clean** — the
+nine-sheet landing page reported 0 violations, and all three switcher states reported 0. The
+findings below pre-date it and are logged so they are not rediscovered from scratch.
+
+### A.1 · VitePress sidebar section headers promise button behaviour they do not keep — `todo`
+
+5 × **SC 2.1.1 Keyboard (Level A)**. `#VPSidebarNav … div.item` carries `role="button"` and
+`tabindex="0"` but activates on neither Enter nor Space, so a keyboard user can focus a collapsible
+section and not collapse it. Upstream `VPSidebarItem.vue` (`data-v-b3fd67f8`), not our theme — the
+fix means shadowing the component or adding a keydown handler, so it wants its own change. Real,
+and live.
+
+### A.2 · Playground — three pre-existing violations — `todo`
+
+`scrollable-region-focusable` ×2 (SC 2.1.1) on two scrollable panes with no keyboard access;
+`focus-not-visible` (SC 2.4.7) on CodeMirror's `.cm-content`; `reflow-horizontal-scroll`
+(SC 1.4.10) on `header > .tb-cell:nth-of-type(2)` at 320 px. That header cell is the View select —
+nothing this batch touched. The CodeMirror one is upstream CM6.
+
+### A.3 · Do NOT re-report these two — they are measurement artifacts
+
+**21 `keyboard-unreachable` on `/guide` are a tool budget, not a focus trap.** The walk gives up
+after 60 Tab steps and the sidebar alone spends most of them. Driven manually: the code copy button
+takes focus at step **62**, the footer credit link at **77**, and the cycle repeats every 82 steps
+(77 → 159 → 241 → 323). The tab order is complete.
+
+**91 `color-contrast` needsReview on the landing page are inside the compiled SVG plans.** axe
+cannot resolve a background through the shape stack and says so — "could not be determined because
+it is overlapped by another element". The room labels are `#222222` on sheet paper: **15.90:1** on
+white, **14.22:1** on `--paper`. Both pass AA and AAA. Resolve by reasoning about the source, never
+by widening a rule.
+
+## Wave 4 — P2 language features
+
+Designed and evidenced in the competitor-borrowing roadmap §5 (archived with the other research
+docs outside this repository). Each one
+**adds tokens**, so each needs: its own design pass, full `gen:*` regeneration, closed value sets
+**interpolated from the source of truth, never retyped into a generator**, a byte-identity law
+pinned by test ("a plan that does not use it renders, describes and lints exactly as before",
+proven by a SHA-256 sweep over the shipped examples), and a corpus entry in the executable-spec gate.
+
+| # | Feature | Status | Note |
+|---|---|---|---|
+| P2-7 | Four-sided authorable clearances + embedded-insert exemption | `todo` | Most contained — widens `clearanceMm` (`src/fixtures-catalog.ts:21`) to `{front,back,left,right}` plus a per-statement override. **Re-scope before starting:** v1.28.0 took that catalog from 18 categories to **59 across 36 families** and gave `FixtureSpec` two more flags (`directional`, then v1.29's `underlay`), so "one default per category" is now a far larger table to be right about — and an underlay already has a stated exemption (it never blocks a fixture's use-space) that a four-sided rule must not re-litigate |
+| P2-10 | Feet-and-inches display formatting (`dimension_units standard`) | `todo` | **Display only** — millimetres stay the internal unit and the measured truth. Route through `fmt()` |
+| P2-8 | Targeted dimension selection (dimensions on named walls/fixtures) | `todo` | Composes with the sheet layer |
+| P2-2 | Room-relative door hand | `todo` | **Behaviour change for every plan with a reversed wall — must be staged.** (a) an advisory `W_*` naming the doors whose hand would move, zero geometry change; (b) the flip behind a release boundary, goldens re-blessed after review. Check the `place … mirror` goldens specifically: `frame.ts`'s `det < 0` handedness flip must compose with the new rule, not fight it |
+
+### 4.5 · Deferred by name in v1.31.0 — `todo`
+
+Four things the ground track decided NOT to do, recorded so the next person finds a decision
+rather than an omission:
+
+- **Ground in the circulation model.** An `outdoor` surface obstructs nothing today: you can walk
+  on the lawn, and you can walk on the `water`. Fixing the pond without fixing the pond-with-a-
+  bridge is the trap — a gate in a fence, a stepping-stone path and a `water` feature all want the
+  same answer — so the whole question is one piece of work rather than a per-kind special case.
+  Note the nav grid presently models the INSIDE of the building only, so "walk the garden" is a
+  larger change than it looks.
+- **A curved fence** (`E_FENCE_CURVED`). The post pitch, the panel offset and `length_mm` are all
+  measured along a straight run. Wants the per-segment arc lowering `wall` already has, plus an
+  arc-length pitch — not a facet.
+- **A polygonal balcony** (`E_OUTDOOR_POLY_DEGENERATE` covers it). The railing is derived per named
+  EDGE (`top`/`bottom`/`left`/`right`) and carried through a `place` frame by those edges' outward
+  normals; a ring has no such names. Wants a per-EDGE rail model first, which is the real work.
+- **`outdoor` in Plan JSON.** Deliberately absent — `planToJson` is byte-identical with and without
+  ground, pinned in `test/outdoor-byte-identity.test.ts`. Adding it is a schema change and should be
+  argued as one, with a consumer that wants it.
+
+A fifth was found while reviewing the flagship for release and is filed on its own, since it is a
+defect in an existing rule rather than a scope decision: **4.8**, a `dims auto` chain running across
+an `outdoor` surface attached to the facade it measures.
+
+### 4.7 · The MCP registry publish races npm — `todo` (RE-OPENED 2026-09-04)
+
+**Closed in v1.31.0 with a bounded retry; RE-OPENED by v1.34.0, which the retry did not save.** Three
+consecutive clean runs had made this look settled — and the AGENTS.md rows were right to keep saying
+a clean run is *evidence the retry works, not proof the race is gone*. Here is the counterexample.
+
+**What happens.** `mcp-publisher publish` hands the registry a `server.json`, and the registry
+validates it by looking the package up on npm — the package this same job published seconds earlier.
+npm's registry has not yet made that version visible to a third party, so it 404s:
+
+```
+registry validation failed for package 0 (@chanmeng666/archlang-mcp):
+NPM package '@chanmeng666/archlang-mcp' exists, but version '0.2.14' was not found (status: 404).
+```
+
+**The budget is the defect, and it is now measured rather than guessed.** The retry is 6 attempts
+20 s apart — **a 2-minute window**. On v1.34.0 every one of the six 404'd. The publish itself was
+fine: `npm view @chanmeng666/archlang-mcp version` read `0.2.14` immediately afterwards, and a manual
+`gh run rerun --failed` succeeded with no change, which is the signature of a race and not of a bad
+manifest.
+
+| release | outcome |
+|---|---|
+| v1.30.0 | failed, manual `gh run rerun --failed` |
+| v1.31.0 · v1.32.0 · v1.33.0 | green on attempt 1 |
+| **v1.34.0** | **all 6 retries 404'd; manual re-run needed** |
+| **v1.43.1** (2026-10-16 UTC) | **all 6 retries (6 × 20 s) 404'd.** The shim publish signed its provenance at 13:36:14 and returned at 13:36:16; the registry still answered 404 at 13:38:01; `npm view …@0.2.26` first answered at 13:39:17, about 3 minutes later. Recovered by `gh run rerun --failed` once `npm view` showed the version. **Budget raised after it:** `release.yml` now waits for `npm view @chanmeng666/archlang-mcp@<version> version --prefer-online` to answer, every 20 s for up to 10 minutes, before the registry publish, and fails with an error if it never does; the six retries stay as the second line |
+
+**Blast radius, which is why this is worth fixing rather than living with.** The registry step sits
+*before* the GitHub Release step, so its failure also left the Release uncreated while both npm
+packages were already public — a half-published state that reads, from `gh release list`, exactly
+like "the release never happened".
+
+**Directions, in order of how much they actually address the cause.** Widen the window well past two
+minutes with backoff (cheap, and npm visibility is measured in minutes, not seconds); or poll
+`npm view <pkg>@<version> version` until it answers *before* invoking `mcp-publisher`, which turns a
+blind retry into a precondition; or move the GitHub Release step **ahead of** the registry step, so a
+registry race can never again hide a successful npm publish. The last one is independent of the other
+two and worth doing regardless.
+
+**Do not** narrow this to "re-run it by hand" — that is the workaround, and it has now been needed
+twice in five releases.
+
+### 4.10 · A 5 s test budget on a heavy optional import — `todo`
+
+Found 2026-09-04 while gating item 4.9, and worth filing because `AGENTS.md` currently records that
+the suite has **no known flake**.
+
+`test/roof.test.ts` → "PDF export draws it" opens with `await import("pdfkit")`, a heavy optional
+dependency, under vitest's default **5000 ms** per-test budget. Measured on this machine:
+
+| condition | duration | verdict |
+|---|---|---|
+| file run alone, machine idle | **674 ms** | passes, 7.4x margin |
+| inside a full-suite run under heavy parallel load | **5821 ms** | **fails: `Test timed out in 5000ms`** |
+
+So the margin is real but it is a margin on an **import**, not on the assertion — the same run had
+`test/zones.test.ts` take 105 s. It reproduced twice under load and passed 32/32 three times when run
+alone, including on `main`, so it is not a defect in `roof` and was not introduced by 4.9, which does
+not touch that file.
+
+**The trap this entry exists to mark.** The failure text says `Test timed out in 5000ms`, which is
+exactly the diagnosis item G.9 records being WRONG about twice — there, the text said
+`expected at least 1 JSON envelope(s) on stdout, saw 0`, which is not a timeout at all, and two agents
+theorised about load from the *shape* of the symptom without reading it. Here the text really is a
+timeout and the margin was measured, so the reading holds. **Read the assertion, then measure the
+margin; do not pattern-match either way.**
+
+Options, in the order they are worth trying: give this one case an explicit timeout that reflects what
+it does (a dynamic import of an optional native-ish package is not a 5 ms unit test); or hoist the
+capability probe so the import is paid once per file rather than inside the timed case; or leave it and
+say plainly in `AGENTS.md` that the suite has one load-sensitive case, since a number nobody can
+reproduce on a quiet machine is worse than a documented one. **Do not raise the global
+`testTimeout`** — that hides every future instance of the same shape.
+
+### 4.11 · `arch watch` missed a save made after its banner — closed
+
+**Symptom.** On 2026-10-06, `test/cli-commands.test.ts` → "`watch -o <file> --json` still writes
+the artifact on every save" failed on `main` (CI run 37437084059, job "Node 22") with
+`timed out after 90000ms waiting for: a recompile carrying Bravissimo`. The commit touched no code,
+and a re-run passed. The test had already waited for the first output, the first envelope and the
+`Ctrl+C to stop` banner, so the watcher was supposedly armed.
+
+**Cause: a product defect. The save was never seen.** `cmdWatch` armed `fs.watchFile` and then
+printed the banner, on the premise in its comment that `watchFile` "takes its baseline `stat` when
+it is called". It does not. libuv's `uv_fs_poll_start` queues that `stat` on the threadpool and
+returns, and the first result becomes the baseline whenever it lands. A save made before then is
+folded into the baseline and never reported. Measured on Node 22.22.0 with plain `node`, no tsx and
+no vitest: a different-length write in the same tick as `watchFile()` was missed 47 times in 50. In
+the end-to-end test, the save comes after the banner has crossed a pipe and the test's 50 ms poll.
+So the miss needs that `stat` to be delayed by tens of milliseconds, which CPU contention on a CI
+runner can do. The other two explanations were ruled out. The payloads differ in length, so the
+change is visible to `size` alone. `cmdCompile` writes synchronously before it emits, and `peek`
+re-reads the file. In every reproduced failure the banner was already on stderr.
+
+**Reproduction**, by running the single test with `npx vitest run … -t "still writes the artifact"`
+on an unmodified `HEAD`, Node 22.22.0, in 8 concurrent copies at a time, alongside 24 busy-loop
+`node` processes on 4 cores:
+
+| tree | runs | failures |
+|---|---|---|
+| `HEAD` (`fs.watchFile`) | 80 | **14**, all with the CI message verbatim |
+| this fix (`watchPath`) | 80 | **0** |
+| `HEAD` again, after the fix's run | 80 | **14**, all with the CI message verbatim |
+
+The first `HEAD` run partly overlapped the widening runs below, which added load. The third row
+ran alone, under exactly the conditions of the second, and failed just as often. The fix's run
+ran from a separate worktree of the change, so neither tree tested the other's code.
+
+Widening the window gives the deterministic proof. Four `crypto.pbkdf2` jobs of about 1.5 s,
+queued just before arming, occupy the threadpool. The old tree then fails 3 runs in 3 with the
+CI message, and the fixed tree, with the same insertion, passes 3 in 3.
+
+**Fix.** `watchPath` (`src/cli/commands-render.ts`) takes a synchronous `statSync` baseline inside
+the call and polls every 300 ms. It compares device, inode, mode, size, and mtime and ctime in
+nanoseconds. `test/watch-arming.test.ts` now asserts on `watchPath(` and adds three behavioural
+cases. With the stat source and the timer injected, a save between arming and the first poll is
+reported, and so is a file vanishing and coming back. Against the real filesystem, a save in the
+same tick as arming is reported. That last case failed 2 runs in 3 when `watchPath` was swapped
+back to `fs.watchFile`. **No budget, timeout or retry changed.**
+
+**What is still uncertain.** Why the failure showed only on the Node 22 leg is unknown. One run on
+one leg is not evidence of a version difference. The mechanism above is the same on 18, 20 and 22,
+and nothing in the code path is version-specific.
+
+### 4.1 · Joinery pass performance — `todo`
+
+`toScene` got roughly **3× slower** when v1.30 replaced the three wall-lowering paths with one
+joinery pass (ADR 0018). The cost was measured, accepted on 2026-08-28 and tracked here; it was
+**not** an oversight and the `bench` PR comment is informational and has never gated.
+
+**Measured back-to-back against `main`'s `src/` in one session** (`git checkout main -- src/`,
+bench, restore):
+
+| corpus | main | v1.30 | delta |
+|---|---|---|---|
+| all 29 examples, every storey, total | 57.5 ms | 162.0 ms | +182% |
+| mean per storey | 1.98 ms | 5.59 ms | +182% |
+| slowest real plan (`library`) | 6.75 ms | 16.0 ms | +137% |
+| `bench` OPENING_HEAVY (400 walls, 600 openings) | 5.96 ms | 116.3 ms | +1852% |
+| `bench` BALANCED | 120.7 ms | 184.7 ms | +53% |
+| `bench` ROOM_HEAVY | 190.8 ms | 235.4 ms | +23% |
+
+`OPENING_HEAVY` is the worst case *because* 400 disjoint axis-aligned segments is exactly what the
+retired rectangle sweep was fastest at.
+
+**Restated: the deltas stand, the `bench` absolutes do not.** Each row above is a difference on
+the same bench in the same session, so the joinery pass's cost is what it says. But the three
+`bench` ABSOLUTES were measured on the old one-line generated layout (a ~1 km drawing whose
+room font was metres tall), where every label relocated: `relocateLabels` was about 58 % of
+BALANCED and about 97 % of ROOM_HEAVY `toScene` (inspector profile, `bench/README.md`). Do not
+budget against 184.7 ms or 235.4 ms as joinery cost; OPENING_HEAVY was the only clean joinery
+measurement. `bench/gen.ts` now lays plans out on a grid on an A0 sheet, where label placement
+is negligible and `joinWalls` is over 90 % of BALANCED, and `bench/baseline.json` is still the
+old one: regenerate it on an idle machine before quoting fresh absolutes.
+
+**Landed: the constant factors.** `PointInterner` keys its cells with nested integer maps
+instead of template strings, and `chainLoops` computes each edge's undirected key once instead
+of on every sort comparison; the algorithm, iteration order and `pointKey` strings are
+unchanged and the output byte-identical (`test/interner-oracle.test.ts`, the joinery oracles,
+every golden). Measured back to back in one session on a loaded machine (not re-run here):
+`toScene` about 0.55–0.75× on BALANCED and OPENING_HEAVY, `joinWalls` alone about 0.85–0.95×.
+
+**That profile no longer holds; re-measured 2026-10-03 before choosing what to change.** The
+earlier table (split 61.5 ms, about 45 % of the pass) predates the constant factors above. On the
+same OPENING_HEAVY input, timed as `joinWalls` alone (inputs built once, compiled JS, temporary
+phase instrumentation since reverted), the split was about **21–27 %** of the pass, and grouping
+plus chaining together were larger:
+
+| OPENING_HEAVY, ms per call | split | group | index | classify | chain |
+|---|---|---|---|---|---|
+| before | 7.9 | 7.7 | 1.5 | 8.8 | 11.4 |
+| after (landed below) | 8.7 | 2.4 | 1.6 | 7.7 | 4.3 |
+
+Phase attribution in a garbage-collected run is fuzzy: a collection is billed to whichever phase
+triggers it, which is why `split` reads slightly higher "after" here. With a forced collection
+before each call (all absolutes inflate), split read 14.2–16.3 ms before and 9.6–12.2 after.
+Compare shapes, not single cells.
+
+**What the split's pair scan actually does** (OPENING_HEAVY, per call): 4,000 edges, 7,600
+candidate pairs, and **every** candidate's boxes overlap: the grid hands out the true overlap
+set, with no false positives to remove. All 7,600 pairs are axis-aligned (6,400 vertical x
+horizontal, 1,200 collinear). 8,800 interner lookups. The scan's cost is the interner and the
+per-pair overhead, not the crossing arithmetic.
+
+**Landed 2026-10-03: the second round** (`src/geometry/joinery.ts`). Same algorithm, same
+iteration order, same emitted floats. Proven by `test/joinery-split-oracle.test.ts`, which keeps
+each replaced form verbatim, runs old against new over every example storey and generated wall
+sets, and compares with `Object.is`, so −0 and one ulp both count. Each of its blocks was shown
+to fail on a planted defect, and counts the inputs that reached the new path. Also checked
+outside the suite: main's and this `joinWalls` were bit-identical on all 320 calls `compile()`
+makes over 107 corpus sources (plan view and every `--view`), and on 3,000 generated inputs; a
+planted one-ulp change was caught in 189 of the 320.
+
+- *Per-call point-key memo.* `pointKey` was rebuilt for the same interned vertex by grouping,
+  chaining, rotation and the final sort; a `Map<Point, string>` owned by the call returns the
+  same string, already hashed.
+- *Lines grouped through nested maps.* `L|k1|k2` equality is exactly `(k1, k2)` equality, since
+  a point key holds one `|`, so the concatenated key is never built. Arcs keep the full key.
+  `[k1, k2].sort()` became one comparison (`<` is the code-unit order `sort()` uses).
+- *An unread field removed.* Each group carried a `coincident` set (and called `sameDirection`
+  to fill it) that nothing ever read; classification probes both sides instead.
+- *Probe allocations.* A probe asked `queryBox` for the cuts, which builds a `Set` and an array
+  only to deduplicate; whether ANY cut contains the probe is all that is asked, so it walks the
+  cells directly. `contextAt`'s per-group `Set` became a stamp array keyed by wall-index slot.
+- *The fill that IS the outline.* When every side of every edge reads the same for "owned by g"
+  as for "owned", the fill would rebuild the outline's edges one for one and chain them again;
+  it takes the outline's loops in fresh arrays instead. That is every single-material plan,
+  OPENING_HEAVY and BALANCED included. Multi-material plans keep the general pass.
+- *The axis-aligned split shortcut.* A vertical x horizontal pair returns `(v.x, h.y)` before
+  `parallel`. Exact because `parallel` is always false for such a pair and `meetLines` already
+  returned that point with no arithmetic; all it saves is `parallel`'s two square roots. It is
+  worth **2–6 % of the split, about 1 % of the pass** (final code with and without it, six
+  rounds, one of which went the other way). That is small but real and exact. The item's
+  premise that this pair needed a "general line–line solve" was already untrue.
+
+Measured back to back in one session on a cloud VM (`origin/main` d4a9a3f against this change,
+interleaved): `joinWalls` alone **0.58–0.71×** on OPENING_HEAVY (six rounds, median about 0.65)
+and 0.65–0.70× on BALANCED; `npx tsx bench/run.ts --json` `toScene` **0.70–0.73×** on
+OPENING_HEAVY and 0.70–0.78× on BALANCED (three rounds); real plans `museum` 0.64–0.77× and
+`library` (multi-material, so no fill reuse) 0.75–0.90×. Ratios only: `bench/baseline.json` was
+not regenerated and must be on an idle machine.
+
+**Tried and rejected, with the evidence:**
+
+- *A sweep line instead of the grid pair scan.* The grid's candidates already ARE the
+  box-overlap pairs (7,600 of 7,600 overlap), so a sweep cannot cut the pair count, only the
+  index build (about 1.6 ms). A one-dimensional sweep would test every pair that overlaps on its
+  axis: **348,000** along x and **234,000** along y on OPENING_HEAVY (BALANCED: 167,010 and
+  107,950 against 4,800). That is 30–46× the pair work to save the build. Not built. Only a
+  two-dimensional structure could compete, and the grid is one.
+- *Skip re-interning a collinear pair's endpoints* (they are interned objects already). Measured
+  4–5 % of the split, inside the whole call's noise, and its exactness rests on an interner
+  invariant (`intern.get(p) === p` for an interned `p`), not on a local equality. Not landed.
+- *An explicit comparator for the chainer's `startKeys` sort.* The default `sort()` was a
+  visible line in the profile (about 6 %), but an explicit code-unit comparator measured the same:
+  the cost is the comparisons, not the comparator. Not landed.
+
+**Still open, if anyone returns to this.** After the round above, the profile is flat: GC (about
+17 %), the chainer's `startKeys` string sort, interner lookups (renormalising the universe plus
+the split's 8,800), and the classify probes' winding walks. None is a single hot spot; each
+needs an argument as careful as the ones above.
+
+**The constraint, and it is the whole point of the item.** Any fix must stay **INSIDE the one
+algorithm**. Legitimate directions: an exact axis-aligned shortcut within the split phase,
+fewer allocations per group, a cheaper `undirectedKey` (all three landed above); a sweep line
+was measured and rejected above. **Never a second
+pipeline** — a rectilinear fast path would reintroduce exactly the three-paths structure ADR 0018
+removed, and the four defects that came with it. That the joinery's rectilinear outline is
+vertex-identical to the old rectangle boolean's (reversed and rotated) makes the shortcut *look*
+free; it is not, because the fills and the opening cuts would have to agree too, and then there are
+two implementations of the ownership rule to keep in step.
+
+**Two approaches already shown NOT to apply** — do not re-try them without new evidence:
+
+- *Classify per HATCH GROUP so each call sees a fraction of the plan* (proposed in the Stage-A
+  notes). The ownership rule is **cross-group by design**: "an edge is on group `g`'s fill iff
+  exactly one side is owned by `g`" is what makes two materials tile without a doubled boundary.
+  Splitting the call breaks the decision the fills depend on — and `OPENING_HEAVY` is single-material
+  anyway, so it would not have helped the worst case.
+- *Stop rebuilding the spatial indices per call.* There is exactly **one `joinWalls` call per plan**;
+  there is nothing to reuse across.
+
+**Gate for any attempt:** the output must not move by one byte. `test/joinery-oracle.test.ts`,
+`test/joinery-pipeline.test.ts` and the whole golden set are the proof, and a re-bless is a red
+flag, not a step.
+
+### Not scheduled — recorded so they are not lost
+
+- **`arc` edge inside a `room polygon` ring.** Was promised in a shipped error message "for v1.25";
+  v1.25 shipped without it and the promise has been retracted to point here. Genuinely large: the
+  ring's whole analysis layer — effective-vertex count, self-intersection, centroid, adjacency,
+  occupancy and nav grids, the `dims auto` vertex chain — is written on literal vertices and must
+  learn arcs. Build it on its own merits, not to honour a version number.
+- **P2-5** measured-vs-drawn edge separation ·
+  **P2-6** multi-flight stairs — each needs its own design pass.
+- **Deferred from the axonometric view (P3-3, shipped)**, by name: the roof (there is no pitch
+  datum, only an eaves outline — approximating one is the move `roof` itself refuses), furniture,
+  ground, fences, stairs and every annotation layer; and the painter's algorithm has no answer for
+  two interpenetrating solids.
+- **The rest of P3** (IFC4 export, occupancy-grid export, `arch vary`, `--why`, anchor-relative
+  coordinates) — each is a project, not a task. **P3-2's prerequisite is DONE**: element heights and
+  opening sill/head heights landed as the v1.35 vertical
+  datum layer (`src/datum.ts`, branch `feat/height-datum`) — `RWall.height`, `sill`/`head` on every
+  resolved opening, `ResolvedPlan.storeyHeight`/`elevation`, and `Opening.kind`/`sill`/`head` on the
+  list a wall keeps of what is cut into it, which is what a 2.5D slice at a sensor height reads.
+  **P3-2 itself stays open.** The datum now has ONE consumer — the axonometric — and what building
+  it discovered is worth carrying: nothing was missing for a 2.5D slice, but a **slab thickness**
+  still does not exist (v1's storey height is floor-to-floor and a wall runs the full storey), so
+  a consumer that must separate structural depth from clear height has to add it.
+- **P3-7 arbitrary rotation** is deliberately NOT built; the trade-off is recorded in the archived
+  competitor-borrowing roadmap.
+  Any future design must first answer what the handed rules (`hinge left`,
+  `against wall … side left`, `anchor top-left`, `right-of`) mean at non-axis angles, plus grid snap
+  and `fmt()` stability.
+
+### Settled — never re-propose
+
+`T3` (the diagnostic-loop live experiment) is **permanently declined**; `T6` (area-syntax sugar) is
+**parked** behind the frozen G2 reversal triggers. See `docs/agents/iron-laws.md` before touching
+either.

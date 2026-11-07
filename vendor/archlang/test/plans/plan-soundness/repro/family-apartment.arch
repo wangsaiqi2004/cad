@@ -1,0 +1,62 @@
+# Reconstructed from a published AI-generated plan SVG ("Classic Family Apartment",
+# an ArchCanvas output of 2026-10-12): every element read back from the data-arch-* attributes.
+# (geometry read back from the SVG; hinge/swing approximated from the drawn arcs).
+plan "Classic Family Apartment" {
+  units mm
+  grid 50
+  north up
+
+  wall exterior  thickness 200 { (0,0) (12000,0) (12000,8000) (0,8000) close }
+  wall partition thickness 100 { (3000,0) (3000,8000) }
+  wall partition thickness 100 { (0,4000) (5500,4000) }
+  wall partition thickness 100 { (5500,0) (5500,8000) }
+  wall partition thickness 100 { (3000,6400) (5500,6400) }
+  wall partition thickness 100 { (8750,5000) (8750,8000) }
+
+  room id=r_living   at (5500,0)    size 6500x5000 label "Living Room" uses living
+  room id=r_kitchen  at (0,4000)    size 3000x4000 label "Kitchen"     uses kitchen
+  room id=r_bedroom1 at (0,0)       size 3000x4000 label "Bedroom 1"   uses bedroom
+  room id=r_bedroom2 at (3000,0)    size 2500x4000 label "Bedroom 2"   uses bedroom
+  room id=r_bedroom3 at (5500,5000) size 3250x3000 label "Bedroom 3"   uses bedroom
+  room id=r_bedroom4 at (8750,5000) size 3250x3000 label "Bedroom 4"   uses bedroom
+  room id=r_bathroom1 at (3000,4000) size 2500x2400 label "Bathroom 1" uses bath
+  room id=r_bathroom2 at (3000,6400) size 2500x1600 label "Bathroom 2" uses bath
+
+  door id=d_entry        at (2000,8000) width 900 wall exterior  hinge left swing in
+  door id=d_living_bed2  at (5500,2000) width 800 wall partition hinge left swing in
+  door id=d_bed2_bed1    at (3000,2000) width 800 wall partition hinge left swing in
+  door id=d_bed1_kitchen at (1500,4000) width 800 wall partition hinge left swing in
+  opening id=o_living_bath1 at (5500,4500) width 800 wall partition
+  door id=d_kitchen_bath2 pocket at (3000,7050) width 700 wall partition
+  door id=d_living_bed3  at (5500,6500) width 800 wall partition hinge left swing in
+  door id=d_bed3_bed4    at (8750,6500) width 800 wall partition hinge left swing in
+  door at (5500,5500) width 900 wall partition hinge left swing in
+
+  window id=win_bed1        at (4800,0)     width 1400 wall exterior
+  window id=win_bed2        at (12000,2000) width 1200 wall exterior
+  window id=win_living_top  at (6000,8000)  width 1800 wall exterior
+  window id=win_living_side at (12000,6000) width 1600 wall exterior
+  window id=win_kitchen     at (0,5600)     width 1200 wall exterior
+  window id=win_bed3        at (1600,8000)  width 1200 wall exterior
+  window id=win_bed4        at (4800,8000)  width 1200 wall exterior
+  window at (0,2000) width 1200 wall exterior
+
+  furniture sofa         at (9900,4000)  size 2000x900
+  furniture table        at (5600,100)   size 1600x900
+  furniture shelf        at (11000,100)  size 900x300
+  furniture kitchen_sink at (100,4100)   size 600x800
+  furniture counter      at (100,4950)   size 600x600
+  furniture stove        at (100,5600)   size 600x600
+  furniture fridge       at (100,6250)   size 650x600
+  furniture bed          at (100,100)    size 2000x900
+  furniture wardrobe     at (100,3000)   size 600x900
+  furniture bed          at (3100,3000)  size 2000x900
+  furniture wardrobe     at (3100,100)   size 900x600
+  furniture wardrobe     at (7750,7300)  size 900x600
+  furniture bed          at (10400,5900) size 1500x2000
+  furniture wardrobe     at (8850,5100)  size 1800x600
+  furniture wc           at (3100,5650)  size 400x700
+  furniture basin        at (3550,5900)  size 600x450
+  furniture wc           at (4250,7200)  size 400x700
+  furniture basin        at (4700,7450)  size 600x450
+}

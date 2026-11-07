@@ -1,0 +1,4407 @@
+# ArchLang Language Reference
+
+ArchLang is a small declarative language that compiles to a professional SVG
+floor plan. It is **explicit and parametric**: you give every element exact
+coordinates and sizes in millimetres, so the same source always renders the
+same drawing, and changing one number changes exactly one thing.
+
+It is also a small, pure **scripting language** — values, control flow, functions,
+arrays, and string interpolation — but it stays **expand-time and deterministic**:
+every loop, conditional, and function call is evaluated while the drawing is built
+(there is no runtime, no I/O, no clock), so the same source always produces
+byte-identical output.
+
+The output is professional CAD: layers, line weights, line types, wall poché
+hatches by material, openings that void their wall, dimensions, a north arrow,
+scale bar, and a title block — exportable to **SVG, DXF, PDF, or PNG**. Rooms can
+be placed absolutely or **relative to one another** (`right-of` / `below` / …),
+classified by what they're for (`uses bedroom`), and furnished with fixtures that
+draw real plan symbols — placed by coordinate or snapped **`against`** a wall.
+Plans can `import` components from other modules, select named **themes**, and be
+formatted with `archlang fmt`.
+
+Beyond rendering, ArchLang **reads back** what you wrote: `archlang describe` returns
+the rooms, areas, adjacencies, a modelled **access graph** (what connects to what,
+and how far each room is from the entrance), and **human-circulation** facts (how
+far you walk to each room, the narrowest pinch on the way, and how circuitous the
+route is); `archlang lint` flags habitability problems against advisory profiles. Both
+are pure, text-only, and image-free — see [Analysis: describe & lint](analysis.md).
+
+This reference tracks the current language; for the exact version and per-release
+history see [`CHANGELOG.md`](../CHANGELOG.md).
+
+- **Unit:** millimetres (integers recommended), within ±33,554,432 mm (see
+  [Modelling range](#modelling-range)).
+- **Coordinate system:** origin top-left, **+x** right, **+y** down (matches SVG).
+- **Comments:** `#` to end of line.
+- **Strings:** double-quoted; `\"`, `\\`, `\n` escapes supported, plus `{…}`
+  interpolation (see [Strings & interpolation](#strings--interpolation)).
+
+A program is a single `plan` block:
+
+```
+plan "My Home" {
+  <statements…>
+}
+```
+
+## Plan-level settings
+
+| Statement | Meaning | Default |
+|-----------|---------|---------|
+| `units mm` | Measurement unit (only `mm` in v0.1). | `mm` |
+| `grid <n>` | Snap module in mm. All *built* coordinates round to the nearest multiple (a `dim`'s endpoints do not — a dimension measures, it is not built). `0` disables. | `0` |
+| `paper A4\|A3\|A2\|A1\|A0 [landscape\|portrait]` | The sheet the drawing is issued on. Declaring it makes `scale` **operative** — every annotation size becomes a fixed number of millimetres on that sheet (see [Paper and scale](#paper-and-scale-the-sheet)). Orientation defaults to `landscape`. | none |
+| `scale 1:50 [hidden]` | Drawing scale. On its own, annotation only (a title-block row). **With `paper`, it is the operative scale** every size derives from; omit it and the sheet auto-fits one. `hidden` draws no scale bar: see [Hiding the sheet marks](#hiding-the-sheet-marks). | none |
+| `north up\|down\|left\|right\|<deg> [hidden]` | North direction — where compass north points on the page. Draws the north arrow, and orients the **compass facing** [`describe()` reports for every window](analysis.md#describe--the-semantic-summary) (and therefore what an intent `windows.facing` assertion means): with `north right`, a window on the page's right edge faces `N`. A `<deg>` bearing (clockwise from the top of the page) snaps to the nearest cardinal for that facing — an exact 45° tie rounds clockwise — while the arrow is drawn at the exact bearing. `hidden` draws no arrow and keeps the bearing: see [Hiding the sheet marks](#hiding-the-sheet-marks). | `up` |
+| `site { street north\|south\|east\|west [hemisphere north\|south] }` | Where the building sits relative to its **street**, so a brief can name a direction instead of a letter. Draws nothing and moves nothing: it gives five directions a name (`street`, `back`, `equator_side`, `sunrise_side`, `sunset_side`) that `describe()`, `lint` and an intent's `windows.facing` can all use. See [Site and orientation](#site-and-orientation). | none |
+| `dims auto [overall\|rooms\|walls\|all]` | Auto-draw dimension **chains** without hand-placing each `dim`, in the GB/T 50104 exterior convention — every chain outside the building, measured from the outer wall faces (see [Automatic dimension chains](#automatic-dimension-chains)): `overall` (one outer-face-to-outer-face span per dimensioned facade), `rooms` (the room/partition axis chain), `walls` (one deduped thickness call-out per distinct wall thickness), or `all` (the openings chain + the axis chain + the overall span, and the default when no scope is given). | off |
+| `axes { x at … y at … }` | The plan's **positioning axes** (定位轴线) — declared structural datum lines, drawn dash-dot with a labelled bubble and used as the ticks of the middle dimension chain. See [Positioning axes](#positioning-axes-定位轴线). | none |
+| `schedule rooms` | Draw the **ROOM SCHEDULE** table in the sheet's bottom band — number, name and area per room, closed by a total. Rows are derived from the rooms, never authored. See [Sheet tables](#sheet-tables--room-schedule--legend). | off |
+| `schedule openings` | Tag every door (`D01`…) and window (`W01`…) beside it and draw the **DOOR & WINDOW SCHEDULE** — tag, room(s), width, kind and a hinged door's hand. Derived; composes with `schedule rooms`. See [Sheet tables](#sheet-tables--room-schedule--legend). | off |
+| `legend` | Draw the **LEGEND** table beside the schedule — one row per hatch (wall, ground or room `floor`) and per fixture symbol the drawing actually uses, each with a real swatch. Fully derived; nothing to configure. See [Sheet tables](#sheet-tables--room-schedule--legend). | off |
+| `notes "…" ["…" …]` | The sheet's general **NOTES**, drawn as a numbered table in the same band. Repeated statements append. See [Sheet tables](#sheet-tables--room-schedule--legend). | none |
+| `sheet text { … }` | The sheet's fixed **words** and the **decimal mark** of its drawn numbers, as the plan writes them. See [Sheet text](#sheet-text). | none |
+| `height <mm>` | The building's default **floor-to-floor** storey height. The vertical datum: it draws nothing at all, because a floor plan is a horizontal cut. A `level` may override it and a `wall` may override that. See [Heights (the datum layer)](#heights-the-datum-layer). | `3000` |
+
+### Paper and scale (the sheet)
+
+`scale` has two quite different jobs, and which one it does depends entirely on whether
+the plan also declares `paper`.
+
+**Without `paper`, `scale` is annotation only.** It prints a `SCALE` row in the title
+block and changes nothing else. Every drawn size — room label height, wall line weight,
+hatch pitch, page margin — is a fraction of the drawing's own *reference dimension*
+(the larger of its width and height). That is self-similar, so a small dwelling looks
+right at any zoom; but it does not scale to a large building. A 100 m museum gets 3 m
+room labels, 280 mm wall strokes and 17 m margins, because the annotations grow with the
+building instead of staying fixed on the page.
+
+**With `paper`, `scale` becomes operative** — the way a drawing board works. Every
+annotation size is a constant number of millimetres **on the sheet**, multiplied by the
+scale denominator to land in plan millimetres:
+
+| Annotation | Sheet size |
+|-----------|------------|
+| Room name | 3.5 mm, down to 2 mm where it does not fit |
+| Room area, dimension text | 2.5 mm (a room's area figure steps down with its name, from 2.5 mm) |
+| Furniture / fixture label | 2 mm |
+| Cut wall outline (the heavy pen) | 0.5 mm |
+| Dimensions, glazing, chrome (the thin pen) | 0.18 mm |
+| Poché hatch pitch | 1.2 mm |
+| Page margin | 15 mm per side |
+
+So a 3.5 mm room label is 3.5 mm of ink whether the building is 7 m or 100 m across;
+only how much building fits on the sheet changes.
+
+```arch
+plan "City Museum" {
+  paper A1 landscape   # 841 x 594 mm
+  scale 1:200          # operative: 3.5 mm labels land at 700 plan mm
+  dims auto all
+  # …
+}
+```
+
+Orientation defaults to **`landscape`** — floor plans are wider than they are tall.
+Paper sizes are the ISO 216 series: A4 210 × 297, A3 297 × 420, A2 420 × 594,
+A1 594 × 841, A0 841 × 1189 mm (portrait; `landscape` swaps them).
+
+#### Auto-fit
+
+Declare `paper` and **omit `scale`**, and the sheet picks the *finest* scale that still
+fits, from a fixed list — 1:50, 1:100, 1:200, 1:500. The chosen scale is stamped into the
+title block, the scale bar, and `describe()`:
+
+```arch
+plan "House" {
+  paper A3        # no `scale` — auto-fit chooses one
+}
+```
+
+The fit test is closed-form: the building's **outer-face** extent has to fit the sheet
+minus the page margins, minus a dimension band on each side when `dims auto` is on, minus
+the bottom chrome band (scale bar and title block), and minus the **margin-table row** that
+`schedule rooms` / `legend` occupy below that band. The tables are part of the sheet, so
+asking for a schedule can legitimately be what makes a scale stop fitting — auto-fit then
+steps out to the next coarser one instead of quietly running the table off the paper.
+
+#### When it does not fit
+
+An authored `scale` is **never silently overridden** — a drawing is issued at the scale
+printed in its own title block. If the building does not fit at that scale you get the
+advisory [`W_SCALE_OVERFLOW`](errors.md#w-scale-overflow) and the page grows past the
+sheet so nothing is clipped. Fix it by choosing a coarser scale, a larger sheet, or by
+dropping the `scale` line and letting auto-fit choose.
+
+#### What paper mode changes in the output
+
+- **SVG** — the root carries the true paper size (`width="841mm" height="594mm"`), so the
+  file opens and prints at sheet size and at its declared scale. The `viewBox` becomes
+  the whole sheet in plan millimetres, with the drawing centred on it and the scale bar
+  and title block moved to the sheet's bottom corners. An explicit `--width` still wins.
+- **PDF** — the page is the true ISO size in PostScript points, so `-f pdf` prints 1:200
+  on a real A1.
+- **`describe()`** — gains a [`sheet`](analysis.md#the-sheet) block. It is absent for a
+  plan with no `paper`.
+
+A plan that declares no `paper` renders **byte-for-byte** as it did before this feature
+existed, `scale` included.
+
+### Site and orientation
+
+`north` says which way the *page* points. `site` says which way the *building* points:
+
+```arch static
+site {
+  street south          # the frontage faces compass south — required
+  hemisphere north      # optional; `north` unless you say otherwise
+}
+```
+
+It is a **plan-level setting that draws nothing** and changes no geometry: a plan with a
+`site` block renders byte-for-byte like the same plan without one. What it buys is a
+vocabulary. `street` is a *true compass* direction, so it is read **with** `north`, never
+instead of it, and it gives five directions a name — every one of them a compass letter,
+reported on `archlang describe --json` under `site`:
+
+| Name | Value | Reads `hemisphere`? |
+|------|-------|---------------------|
+| `street` | the direction you declared | no |
+| `back` | its opposite — the garden/rear aspect | no |
+| `equator_side` | `S` in the northern hemisphere, `N` in the southern | **yes** — this is the only thing `hemisphere` decides |
+| `sunrise_side` | `E`, in both hemispheres | no |
+| `sunset_side` | `W`, in both hemispheres | no |
+
+```json
+"site": { "street": "S", "back": "N", "equator_side": "S",
+          "sunrise_side": "E", "sunset_side": "W", "hemisphere": "north" }
+```
+
+Two consumers read those names. An [intent](intent.md)'s `windows.facing` may assert one
+of them instead of a letter — `"facing": "equator_side"` is the same assertion as
+`"facing": "S"` once the site is known — and one advisory lint rule,
+[`W_ROOM_NOT_EQUATOR_FACING`](error-codes.md#w_room_not_equator_facing), reports a
+habitable room whose windows all miss the equator-facing aspect.
+
+> **These names are a drafting heuristic, not a daylight measurement.** "Habitable rooms
+> want the equator-facing aspect" is a rule of thumb; a south window in Reykjavík and one
+> in Singapore are not the same daylight, and ArchLang will never say they are. There is
+> **no sun model, no latitude, no date, no solar hours and no daylight factor** anywhere
+> in the language, by decision — computing any of them means simulating a sky, which
+> breaks determinism and the zero-dependency core. `equator_side` asserts *a window on
+> the equator-facing facade*, and nothing more. The names are spelled `_side` rather than
+> `_sun` precisely so that step stays visible.
+
+Rules, all of them refusals rather than defaults:
+
+- `street` is **required** — a site with no street derives nothing
+  ([`E_SITE_NO_STREET`](error-codes.md)). `hemisphere` is the optional half.
+- **One block per plan** ([`E_SITE_DUP`](error-codes.md)). Repeated `axes` blocks merge
+  because two axis lists append; two `street` values contradict.
+- **Plan level only**, and like `north`, an **imported** module's `site` is ignored — one
+  drawing is issued at one orientation, so an imported wing cannot re-orient the building.
+- `archlang fmt` prints it immediately after `north`, with both fields.
+
+#### The lot line — `boundary` (v1.31)
+
+`site` gained a third field, and it is the only one that **draws**:
+
+```arch static
+site {
+  street south
+  boundary (-4000,-4000) (14000,-4000) (14000,11000) (-4000,11000)
+}
+```
+
+An implicitly-closed ring naming the piece of ground the building sits on. It is drawn as
+a dash-dot **property line** on the `C-PROP` CAD layer — the drafting convention for a
+legal datum, the same line type the [positioning axes](#positioning-axes-定位轴线) use —
+and it **joins the page bounds**, so the sheet contains the lot.
+
+Everything else about `site` is unchanged, and that is a pinned law: a `site` block with
+only `street`/`hemisphere` still renders byte-for-byte like a plan with no `site` at all.
+
+`describe --json`'s `site` object gains two keys when a boundary exists, and neither is
+present without one:
+
+| Key | Meaning |
+|-----|---------|
+| `lot_area_m2` | the **exact shoelace** area of the ring, in m² to 2 dp — never its bounding box |
+| `lot_bbox` | the ring's extent as `{x, y, w, h}`, for framing a viewport |
+
+A splayed or L-shaped lot is measured by its ring; the `lot_bbox` is reported beside it so
+a consumer can tell the two apart, and no number is derived from it.
+
+Two refusals, both the `room polygon` precedent: a ring with fewer than three effective
+vertices is [`E_SITE_BOUNDARY_DEGENERATE`](error-codes.md#e_site_boundary_degenerate) and
+one whose edges cross is
+[`E_SITE_BOUNDARY_SELF_INTERSECT`](error-codes.md#e_site_boundary_self_intersect). A
+refused ring draws nothing at all — no half-valid property line reaches the sheet. Testing a
+ring costs evaluation steps by the square of its vertices, so a `boundary` traced from a survey
+at about 3,000 vertices spends most of the budget and a longer one reaches `E_STEP_LIMIT`: thin
+a long survey outline before pasting it in.
+
+### Accessible metadata (`accTitle`, `accDescr`)
+
+Two optional plan-level keywords supply explicit accessible metadata:
+
+```
+plan "Flat 2B" {
+  accTitle "Two-room flat — accessible floor plan"
+  accDescr "A living room with the entrance and a bedroom off it, joined by an interior door."
+  …
+}
+```
+
+- `accTitle "<text>"` — a human title for the drawing.
+- `accDescr "<text>"` — a one-sentence description of the drawing.
+
+They exist for the accessible SVG (`compile(src, { accessible: true })` /
+`archlang compile --accessible` — see [Compilation result](#compilation-result)): in that
+mode `accTitle` overrides the plan name in the SVG `<title>`, and `accDescr` overrides the
+auto-derived one-sentence caption (`describe().caption`, see [Analysis](analysis.md)) in the
+SVG `<desc>`. **They have no effect on the default (non-accessible) output** — it stays
+byte-identical whether or not they are present; this is metadata only, never geometry.
+
+- Both are **plan-level only**. Writing either inside a `component` body or a control-flow
+  block is [`E_ACC_PLACEMENT`](error-codes.md).
+- Repeating either at plan level is [`W_DUP_ACC_METADATA`](error-codes.md) (a warning; the
+  **last** value wins).
+- `archlang fmt` prints and preserves both.
+
+See [`examples/accessible.arch`](../examples/accessible.arch).
+
+## Values & expressions
+
+Expressions appear anywhere a value is expected (coordinates, sizes, widths,
+thickness, offsets, labels). A value is one of:
+
+| Type | Examples |
+|------|----------|
+| **number** (unitless mm) | `3000`, `12.5`, `WALL + 300` |
+| **boolean** | `true`, `false`, `a < b` |
+| **string** | `"Bed"`, `"Studio {i}"` |
+| **array** | `[1, 2, 3]`, `0..n` (a range) |
+| **function** | `let area(w, h) = w * h` |
+
+```
+room at (0, 0) size (3000) x (3000 - 500)
+furniture bed at (WALL + 300, 300) size 1500x2000
+```
+
+Where a **number** is specifically required (a coordinate, a size, …), a
+non-number value is a type error with a clear diagnostic — it never crashes the
+compile.
+
+### Operators
+
+Lowest-to-highest precedence (use parentheses to override):
+
+| Group | Operators |
+|-------|-----------|
+| logical or | `\|\|` |
+| logical and | `&&` |
+| equality | `==`  `!=` |
+| comparison | `<`  `>`  `<=`  `>=` |
+| range | `a..b` |
+| additive | `+`  `-` |
+| multiplicative | `*`  `/`  `%` |
+| unary | `-x`  `+x`  `!x` |
+| postfix | `arr[i]`  `f(args)` |
+
+- `&&` / `||` **short-circuit** (the right side is skipped when the result is
+  already known).
+- `==` / `!=` compare values of any type (different types are never equal;
+  arrays compare deeply); the ordering operators require numbers.
+- **Numbers are non-negative literals**; write `-x` for negation. Division /
+  modulo by zero is a compile error.
+- `%` is modulo **everywhere except an opening's `on <wall> at <pos>`**, where it
+  is the percent suffix and always ends the expression — parenthesise a remainder
+  there (`at (5000 % 3000)`). See [Door](#door).
+- **Sizes** accept either the `WxH` literal (`4000x3000`) or `<expr> x <expr>`
+  (`(2000+W) x H`). The bare `x` separates width and height.
+
+### Metric unit suffixes
+
+A numeric literal may carry an optional metric unit suffix, folded to
+millimetres by the lexer — so bare numbers still mean millimetres and every
+existing plan is unchanged:
+
+| Written | Value (mm) |
+|---------|-----------|
+| `3` | `3` (bare = mm) |
+| `3mm` | `3` (explicit, a no-op) |
+| `3cm` | `30` |
+| `3m` | `3000` |
+| `3.5m` | `3500` |
+| `40cm` | `400` |
+
+The conversion is exact (decimal-point shifting, never a floating-point
+multiply), so `3.333m` is exactly `3333` and `0.0005m` is exactly `0.5`. The
+suffix must sit **immediately** after the digits with no space (`3m`, not
+`3 m`), and it does not fire when a letter follows it — `3meters` is the number
+`3` followed by the identifier `meters`. Each component of a `WxH` literal may
+carry its own suffix (`3mx4m`, `3.5mx4200`, `30cmx40cm`). There is deliberately
+**no area unit** (`m²`); areas come from `describe()`. The formatter normalises a
+suffixed literal to its millimetre value (`3.5m` → `3500`).
+
+### Imperial input
+
+A length may also be written in feet and inches, in three forms: `12ft`, `6in`
+and `12ft6in` (feet before inches; each part a plain decimal, such as `0.5in` or
+`1.5ft`). The conversion is exact (1 in = 25.4 mm, 1 ft = 12 in) and the literal
+is then **rounded half away from zero to a whole millimetre**:
+
+| Written | Exact (mm) | Value (mm) |
+|---------|-----------|-----------|
+| `12ft` | `3657.6` | `3658` |
+| `6in` | `152.4` | `152` |
+| `12ft6in` | `3810` | `3810` |
+| `1in` | `25.4` | `25` |
+| `1ft1in` | `330.2` | `330` |
+| `0.5in` | `12.7` | `13` |
+
+The rounding applies to each **literal**, before any arithmetic, so a plan
+written in feet holds the same integers a millimetre plan would (`3 * 1in` is
+`75`, not `76.2`; write `3in` for `76`). The suffix follows the metric rules: it
+sits immediately after the digits, does not fire when a letter follows (`6inch` is
+`6` then the identifier `inch`), and either component of a `WxH` literal may carry
+it (`12ftx10ft`). Input only: every output (SVG, `describe()`, `lint()`, the
+formatter) stays in millimetres.
+
+The feet-and-inch marks, glued fractions and inches before feet are refused with
+`E_IMPERIAL_FORM`, whose message names the accepted forms: `12'6"` (`"` opens a
+string and `'` is no token), `1/2in` (`/` is division; a spaced `1 / 2in` is a
+division), `6in12ft` and `12ft6`. The refused literal reads as `0`, like an
+`E_NON_FINITE` one, so the rest of the plan still reports.
+
+### Modelling range
+
+Every coordinate and length a plan resolves to lies within **±33,554,432 mm** (2²⁵ mm,
+about 33.5 km). What is checked: each element's bounds (the points it reports for the page:
+a rectangle's corners, a ring's vertices, a wall's faces) and the coordinates and lengths
+those do not carry (an opening's centre and width, a wall's thickness and arc radii, a
+dimension's offset, a room's `label … at` anchor), every `axes` position, every `site`
+boundary vertex and the `grid`. It is the range inside which the geometry's integer
+orientation test is exact ([ADR 0020](adr/0020-algebraic-core.md)), and far past any
+building. The check runs on the final plan coordinates, after `place` frames, `strip`s and
+relational placement, so a component placed 40 km away is caught although every number
+written in it is small. An element outside the range is reported once, as `E_OUT_OF_RANGE`
+at its statement (its other diagnostics are withdrawn, and a door, window or opening in a
+dropped wall goes with it), and dropped from the plan, so nothing draws or measures it.
+
+The settings that scale a drawn length are held too, so the drawing they produce stays
+inside the range. A wall's hatch `scale` and a theme `lineWeight` are held by what they draw
+on THIS drawing: the pattern tile (the hatch module, a fraction of the drawing's size, × the
+scale) and the heaviest pen (likewise × the weight) must stay inside the range, so a coarse
+`scale 10` on a house is fine and only a tile or pen past 33.5 km is refused. A `north`
+bearing or hatch `angle` must lie within ±33,554,432 degrees, and on a `paper` plan the
+`scale` denominator at most the one that keeps the sheet inside the range (1:28220 on A0,
+1:112977 on A4). Each is `E_OUT_OF_RANGE` at the value. A `lineWeight` passed through
+`compile()`'s options (`theme`, or a registered theme the plan selects) is held to the same
+rule and reported at the `plan "…"` header, since it has no source span. A plan-level setting
+out of range is reported once for the plan, not once per storey page. The bounds are
+`MODEL_RANGE_MM` and its neighbours in `src/num-format.ts`. A number past the floating-point
+range altogether is `E_NON_FINITE`, and a `stair` or `escalator` run longer than about 308 m
+is `E_RUN_TOO_LONG`. A value that draws nothing (a `let` binding no element uses, a label's
+text, a `scale` without `paper`, a storey `level` number) is not held to the range.
+
+### Arrays & ranges
+
+```
+let widths = [3000, 3500, 4000]
+let n = widths[1]              # indexing (0-based; out-of-range is an error)
+for i in 0..3 { … }           # 0..3 is the array [0, 1, 2] (half-open)
+```
+
+### Conditional expression
+
+`if` is also an **expression** that yields a value (the `else` is required):
+
+```
+let w = if compact { 2400 } else { 3000 }
+```
+
+### Strings & interpolation
+
+A string may embed `{ <expr> }`; each hole is evaluated and converted to text:
+
+```
+room at (x, 0) size W x H label "Studio {i + 1}"
+dim (0,0)->(L,0) offset 700 text "{L / 1000} m"
+```
+
+- Literal braces are written `\{` and `\}`.
+- Interpolated text is **escaped at output**, so labels are always XSS-safe.
+
+### Bindings — `let`
+
+Bind a name to a value with `let`; later statements can use it:
+
+```
+let WALL = 200
+let W = 4000
+let H = W - 1000
+room at (0, 0) size W x H
+```
+
+- Evaluated **top to bottom**; a name must be defined before it is used
+  (no forward references).
+- Re-defining a name in the same scope is an error. An inner scope (a component
+  body or a control-flow block) may **shadow** an outer name.
+- Unknown names produce a `did you mean …?` hint.
+
+**Reassignment (deprecated).** Once a name is bound, `name = <expr>` updates it
+(this is how a `while` loop makes progress — see [Control flow](#control-flow)).
+Assigning a name that was never `let`-bound is an error.
+
+```
+let i = 0
+i = i + 1            # reassigns the existing binding
+```
+
+Reassignment breaks the one property every equational tool in ArchLang relies
+on — that a `let` names a value, substitutable wherever it is used — so it is
+**deprecated** (`W_REASSIGN_DEPRECATED`) and will be removed in a future major
+version. It still parses, compiles and renders exactly as before. A
+reassignment inside a `while` body does not raise this on its own — see
+[Control flow](#control-flow) for that loop's own warning and, for the
+canonical counted-loop shape, a `for`-over-a-range rewrite `archlang fix` can
+prove sound (against this file's own expansion) and apply for you.
+
+### Functions
+
+`let NAME(params) = <expr>` defines a pure **value-function** (a closure over the
+names visible where it is defined):
+
+```
+let area(w, h) = w * h
+let scaled(x)  = x * GRID          # captures the outer `GRID`
+room at (0, 0) size area(40, 30) x 100
+```
+
+- A function may call itself; recursion is bounded (deep recursion is reported,
+  not a crash).
+- Calling with the wrong number of arguments is an error.
+- This is distinct from `component`, which emits **elements** rather than
+  returning a value.
+
+### Components
+
+Define a reusable, parameterised sub-plan with `component`, then instantiate it
+by name. A component body may contain elements, `let`s, and calls to earlier
+components (composition).
+
+```
+component bath(x, y) {
+  room at (x, y) size 2000x2000 label "Bath"
+  door at (x + 1000, y) width 700 wall exterior
+}
+
+bath(0, 0)
+bath(3000, 0)
+```
+
+- **Scope:** a component body sees its **parameters**, its own `let`s, and the
+  **plan-level** `let`s (plan scope is global) — but not the caller's locals.
+  For an **imported** component, "the plan" it was written against is its own
+  module: a name none of those bind (nor a built-in) resolves against the
+  module's plan-level `let`s and value-functions, evaluated in the module's own
+  scope. The importing plan's `let` wins when both define a name, and the
+  module's `let`s are not exported — see [imports](#a-module-keeps-its-own-lets).
+- Auto-assigned ids stay unique across instantiations (the whole drawing is
+  numbered per kind), so two `bath(...)` calls yield `room_1`/`room_2`, etc.
+- Infinite recursion is bounded and reported as an error.
+
+See [`examples/parametric.arch`](../examples/parametric.arch) for a worked
+example using all of these.
+
+A bare `bath(0, 0)` call is an **inline macro**: it splices the body into the
+caller's coordinate system and the caller's id space. That is exactly what you
+want for a small parameterised motif, and it is unchanged. When you want a
+*reusable piece of building* instead — a wing, a ward, a unit — use `place`.
+
+### Placing instances — `place` (v1.22)
+
+```
+component wing() {
+  wall id=shell exterior thickness 300 { (0,0) (18000,0) (18000,12000) (0,12000) close }
+  room id=main  at (0,0) size 18000x9000 label "Gallery"  uses living
+  room id=corr  at (0,9000) size 18000x3000 label "Corridor" uses circulation
+  opening id=o1 on shell at 50% width 2400
+}
+
+place wing() as west at (0,0)
+place wing() as east at (42000,0) mirror x
+```
+
+**If you know React, you already know this.** `component` is the component,
+`place … as <name>` is the element, `at`/`rotate`/`mirror` are its props, and
+`west.main` is how the parent reaches a child by name. The component is written
+once, in its **own local coordinates from `(0,0)`**, and knows nothing about
+where it ends up — the `place` supplies that. Composition is the parent's job.
+
+`as` and `at` are both **required**, and deliberately so. An instance that
+cannot be addressed is not a component, and one that lands wherever its literals
+happen to point is the old inline macro (still spelled `wing()`). The grammar
+refuses to blur the two.
+
+**Ids are namespaced.** Every id born inside the instance becomes
+`<instance>.<id>`, and auto-id counters restart per instance — so two instances
+of one component are **order-independent** (`west.wall_1` / `east.wall_1`, never
+`wall_1` / `wall_4`). Dotted names then work in every **reference** position:
+
+```
+door id=d_west at (18000,10500) width 1800 wall west.shell swing into hall
+furniture id=desk desk in west.main centered size 1600x800
+```
+
+```bash
+archlang describe museum.arch --room west.main --json
+```
+
+A dotted name in a **declaration** position (`room id=west.main`, `let west.x`,
+`place … as west.main`) is [`E_DOTTED_DECL`](error-codes.md#e_dotted_decl): the
+namespace belongs to the `place`, so a dotted name can only ever be a reference.
+Reusing an instance name is [`E_DUP_INSTANCE`](error-codes.md#e_dup_instance).
+
+**`rotate` and `mirror` are exact.** `rotate 0|90|180|270` and `mirror x|y` are
+integer isometries — no trigonometry, no floating-point drift, and they compose,
+so a `place` inside a component body just multiplies frames. `mirror x` flips
+the instance left↔right; `mirror y` flips it top↔bottom.
+
+A mirror is **physics, not decoration**: the instance is genuinely reflected, so
+door swings come out mirror-image, an outward-opening fire exit stays outward,
+and a fixture's facing follows. (Handed *glyphs* are re-oriented by quarter-turn
+rather than reflected — reflection is not a drawing primitive — which for
+ArchLang's rectilinear fixture symbols is the same picture.)
+
+**An instance is a closed world — one way.** It resolves entirely in its own
+frame, against its **own** walls and rooms (and those of the instances it places
+itself), and one rigid transform then carries the result into the plan. That is
+what makes `anchor top-left`, `against wall … side left`, `swing into`,
+`right-of` and `hinge left` mean inside a rotated instance exactly what they
+mean when the component is drawn on its own. The consequence to know: **the plan
+can reach into an instance (`wall west.shell`), and so can a component into the
+instances it places, at any depth — but a component cannot reach out of
+itself.** A component that needs to touch its surroundings takes the reference
+as a parameter, or the parent draws the connecting element — as
+`examples/museum-wings.arch` does with its hall doors.
+
+Reaching in is not only by id. Every rule that searches walls or rooms by position
+or category finds the instances a component places, exactly as the same rule at
+the plan level finds the plan's instances: a door, window or opening hosted by
+position or by a category (`wall exterior`), `against wall <category>`,
+`dim faces` / `dim clear`, a curve `dim` naming a wall category, the wall
+height an opening inherits, an `outdoor` rail derived from the walls, and
+`swing into`. An instance's walls come before the component's own, so where a
+child's wall coincides with the component's, the child's hosts the door; and
+`against wall exterior` fails with `E_FURN_AGAINST` once a child adds a second
+exterior wall. Name the wall by id when that matters.
+
+**Analysis still sees one building.** Flattening happens before `lint`,
+`describe()` and the wall union run, so two overlapping instances raise
+`W_ROOM_OVERLAP` across the instance boundary, `dims auto` measures the whole
+composed facade, and the positioning axes pick up instance openings.
+
+**An instance is implicitly a [zone](#zones--wings-and-departments-v122)**, named
+after the instance. Composing by wing therefore *gives* you the grouping:
+`describe().zones`, `archlang describe --zone west` and the grouped room schedule all
+work with no `zone` declaration. (An explicit `zone` around a `place` still nests
+— but note the zone path and the id namespace are separate: wrapping a `place` in
+`zone north` makes the zone `north.west` while the rooms stay `west.*`, because a
+zone is metadata and never renames anything.)
+
+**`describe()` reports the composition:** an `instances[]` block (name,
+component, origin, transform), plus `instance`/`component` on each room and
+fixture, and an `instance` marker in `freedom`. Read it as: the instance's
+placement is the one authored-absolute degree of freedom, and everything inside
+derives from it — so nudging a wing is one edit, not N.
+
+**Plan JSON.** A placed plan is exported *flattened*: every instance row sits in
+`rooms`/`walls`/`openings`/`furniture` under its dotted id, in plan coordinates, and such a
+payload does not round-trip (the dotted ids are `E_DOTTED_DECL` on the way back). The one
+exception is a storey where a placed component derives its walls with `walls from rooms`:
+only there does the payload gain `components` (each component's body, in its own frame and
+names, with the statement as written) and `instances` (`name`, `component`, `at`, `rotate`,
+`mirror`), and every flattened instance row gains `instance: "<name>"`. Every other
+payload is unchanged. The way back prints the root statements, then a
+`component <name>() { … }` per body, then a `place` per instance:
+
+- A marked row is **regenerated from its component; an edit to it is ignored**. Edit the
+  component's `body` or the `instances` entry instead. A marked row's `id` must start with
+  `<name>.` (a dimension has no id), so a root row marked by mistake is refused
+  (`E_JSON_SCHEMA`) rather than dropped.
+- A component that takes parameters comes back **parameterless**: its body is the
+  resolved instance, arguments already applied.
+- The round trip compiles to the same SVG and `describe()`, and to the same `lint()` once
+  each finding's `span`, `fixes` and `relatedSpans` are stripped (the printed source is
+  different text), for a plan whose `place`s **follow** its root statements. A plan that
+  places first comes back in that grouped order, which draws within a layer in another
+  order.
+- Refused ([`E_JSON_DERIVED_IN_INSTANCE`](error-codes.md#e_json_derived_in_instance)): a
+  nested `place`, two instances of one component that resolve to different bodies, and a
+  component that comes in through an `import`.
+
+### Whole-file instantiation — `import "…" as <name>` (v1.22)
+
+```
+import "wing.arch" as wing
+
+place wing() as west at (0,0)
+```
+
+**One `.arch` file authors one room, one wing, one unit.** With `as` instead of
+an item list, `import` binds the module's own top-level **drawable statements**
+as an implicit zero-parameter component — so a file that draws a wing *is* the
+wing component, with no `component` wrapper and no export list.
+
+Two rules follow from "one drawing is issued on one sheet at one scale":
+
+- the module's **plan-level settings** (`units`, `grid`, `paper`, `scale`,
+  `north`, `dims`, `title`, `axes`, `schedule`, `legend`) are **ignored** — the
+  root plan's settings govern. The module keeps them so it still compiles, and
+  reads correctly, on its own;
+- a module's `level` blocks are **dropped** (a storey is a page, and a component
+  is a piece of one page). A module with no drawable body at all warns with
+  [`W_IMPORT_EMPTY_FILE`](error-codes.md#w_import_empty_file) rather than binding
+  silence.
+
+The module's own `component`s stay available to its body, so a file may call its
+private helpers even though the importer knows only the file's name. Parametric
+components keep the named form: `import "lib/fixtures.arch": wc, basin`.
+
+#### A module keeps its own `let`s
+
+A component imported by name
+(`import "m.arch": s1`), or one the whole-file component calls, sees the
+plan-level `let`s and value-functions of the module it was written in, so a
+library component written against a module constant keeps working when it is
+imported:
+
+```
+# m.arch
+plan "m" {
+  units mm
+  let W = 5000
+  component s1() { room id=r at (0,0) size W x 3000 }
+}
+```
+
+`import "m.arch": s1` then `place s1() as g at (0,0)` draws the 5000 mm room,
+exactly as the same component written inline beside a `let W = 5000` would.
+
+- **The module is the last place a name is looked up.** Its parameters, its body's
+  own `let`s, the **importing plan's** `let`s and the built-ins all come first,
+  so where the importer also defines `W`, the importer's wins (as it always has —
+  this rule only gives a meaning to a name that used to be
+  [`E_UNKNOWN_REF`](error-codes.md#e_unknown_ref)), and a module `let` named like
+  a built-in (`min`, `max`, …) does not replace it inside the component.
+- **The module's `let`s are not exported.** The importer's own statements, and
+  components the importer declares, cannot see them.
+- **Each component sees the module it was written in.** A component that `m.arch`
+  itself imports from `n.arch` sees `n.arch`'s `let`s, not `m.arch`'s.
+- **They are the module's top-level bindings, evaluated in the module's scope:**
+  its top-level `let`s (and reassignments, and those inside a top-level `zone`
+  or the control flow that reaches them) as they stand at the end of its top
+  level; a `level` block's `let`s belong to that storey. They are evaluated only
+  when a component first needs one, and a `let` that fails there reports the
+  same diagnostic it does in the module, naming the module's `file`.
+- The whole-file component itself is unchanged: its body runs the module's `let`s
+  as its own statements, as before.
+
+**A diagnostic raised inside an imported body names its file.** Its `span` is
+measured in *that* module, so `Diagnostic.file` says which one, and
+`archlang fix` **refuses** to apply a fix whose edits belong to another file — it
+tells you where the real edit goes instead of splicing foreign byte offsets into
+the importer.
+
+See [`examples/museum-wing.arch`](../examples/museum-wing.arch) (the wing, a
+complete plan in its own right) and
+[`examples/museum-wings.arch`](../examples/museum-wings.arch) (the building that
+places it twice, once mirrored).
+
+## Control flow
+
+`for`, `if`, and `while` **expand** into the element stream while the drawing is
+built — there is no runtime. Each block is its own scope.
+
+```
+for i in 0..COUNT {
+  let x = i * W
+  room at (x, 0) size W x H label "Unit {i + 1}"
+}
+
+if rooms > 1 {
+  wall partition thickness 100 { (W, 0) (W, H) }
+} else {
+  furniture sofa at (300, 300) size 2000x900
+}
+
+let i = 0
+while i < COUNT {
+  column at (i * 600, 0) size 300x300
+  i = i + 1                       # progress (see Reassignment)
+}
+```
+
+- `for x in <array|range>` binds `x` for each item, in order.
+- `if <cond> { … } [else { … }]` expands one branch; the condition must be a
+  boolean.
+- `while <cond> { … }` repeats until the condition is false; it is capped at
+  10,000 iterations (a runaway loop is reported, not hung). Separately, one storey
+  (or the plan, when it has no `level`) may expand at most 5,000 elements: past that
+  `E_ELEMENT_LIMIT` is raised once and expansion stops, so a `while` that creates
+  elements without ever finishing reports `E_ELEMENT_LIMIT`, not `E_WHILE_LIMIT`.
+  Likewise `W_ROOM_OVERLAP` lists the first 200 overlapping room pairs and then one
+  summary warning counting the rest.
+- Two budgets hold what those per-loop and per-storey caps multiply. Evaluation as a
+  whole (every storey, component and import together) is held to 5,000,000 steps,
+  where a step is an expression evaluated, a statement run, a loop iteration, a value
+  or character produced (charged before it is built), a binding copied, a diagnostic
+  raised, a pair of a polygon ring's edges tested, or a few edges read when two polygon
+  or round rooms have overlapping boxes: loops nested in loops, a recursion that
+  calls itself twice, a string that doubles, a polygon of thousands of vertices, or many
+  polygon or round rooms whose boxes overlap stop with `E_STEP_LIMIT` at the statement
+  or the pair of rooms that crossed the budget, in about a second or two. And before
+  anything is drawn, `compile` estimates the drawing over every
+  storey (an upper bound per kind: a room 3 primitives, a door 5, a run one or two lines
+  per tread, a fixture its own symbol, plus one per point of each outline and what
+  `dims auto`, the axes and the tables add): past 300,000 the plan is
+  `E_DRAWING_LIMIT`, which keeps the largest drawing under about 0.35 GB of memory.
+  `describe` and `lint` draw nothing and are not held by it. The largest shipped
+  example spends under 6,000 steps and is estimated at under 5,000; a 24-storey
+  tower of 200 flats a floor is estimated at about 108,000.
+
+**`while` is deprecated** (`W_WHILE_DEPRECATED`) and will be removed in a
+future major version: it is the one construct that needs a reassignment to
+make progress, and `for x in a..b` covers every counted loop `while` is used
+for. It still parses, compiles and renders exactly as before — `compile()`
+never offers a fix for it. The canonical shape above — `let i = 0`
+immediately before `while i < COUNT { …; i = i + 1 }`, with no other
+reassignment in the body — has a fix **`archlang fix` proves and applies**,
+rewriting it to the equivalent, and equally shorter, range form:
+
+```
+for i in 0..COUNT {
+  column at (i * 600, 0) size 300x300
+}
+```
+
+The fix is proved ONLY against this file's own expansion (same SVG,
+`describe()` and `lint()`) — a body that merely looks like this shape, but
+calls a component reading or writing `i`, that never actually ran (inside a
+component this file never instantiates, or a dead `if` branch), or a loop
+already at `while`'s 10,000-iteration cap, is left as a warning with no fix.
+A proven fix at plan level is `machine-applicable`; one inside a `component`
+is `maybe-incorrect` and needs `archlang fix --unsafe`, since the proof cannot
+see how an IMPORTER instantiates it. Anything that does not fit the shape at
+all (a decrementing counter, a second reassignment, a condition other than
+`<`) needs a hand rewrite.
+
+### Re-roll repetition into a loop — `archlang reroll`
+
+Three units written out by hand, at x = 0, 4000, 8000, is exactly what a `for`
+loop already expresses — and `archlang reroll` finds the repetition and offers the
+loop, proven equivalent (twin-compiled: no new diagnostic, byte-identical SVG on
+every storey, matching `describe()`/`lint()`) before it is ever suggested. It
+never rewrites silently (ADR 0005) — run it, review the suggestion, then apply.
+
+```arch static
+room at (0, 0) size 4000x5000 label "Studio"
+room at (4000, 0) size 4000x5000 label "Studio"
+room at (8000, 0) size 4000x5000 label "Studio"
+```
+
+`archlang reroll plan.arch` offers:
+
+```arch static
+for i in 0..3 {
+  room at (i * 4000, 0) size 4000x5000 label "Studio"
+}
+```
+
+It looks for ≥3 CONSECUTIVE statements — in the plan body, a component, a
+`for`/`if`/`while` body, a `level`, or a `zone` — with the same kind and
+structure, where every differing slot is a numeric literal in an EXACT
+arithmetic progression (`vals[0] + j*d === vals[j]`, not merely equal once
+rounded for display — everything else, including a label string, must match
+exactly, and no `#` comment may fall inside the run or trail its last
+statement) and none carries an explicit `id=` (an id can't be generated inside
+a loop). `archlang reroll plan.arch --json` prints each candidate as
+`{ span, replacement, count, loopVar, tokensBefore, tokensAfter }`; `--write`
+applies every non-overlapping suggestion and re-verifies the COMBINED result's
+compiled SVG is byte-identical to the original before writing — `{ ok, wrote,
+target, applied, skipped }`, the same `wrote`/`target` names `archlang fix` uses.
+There is no `--dry-run`/`--backup`: every suggestion is already proven
+byte-for-byte equivalent before it is offered, so a failed re-verify simply
+writes nothing.
+See `archlang help reroll`.
+
+## Built-in functions
+
+A frozen set of pure helpers is always in scope (a `let` of the same name
+shadows one):
+
+| Function | Result |
+|----------|--------|
+| `min(a, b, …)` / `max(a, b, …)` | smallest / largest number |
+| `abs(x)` | absolute value |
+| `sqrt(x)` | square root (negative input is an error) |
+| `floor(x)` / `ceil(x)` / `round(x)` | rounding |
+| `len(x)` | length of an array or string |
+| `str(x)` | value rendered as a string |
+
+```
+column at (max(0, x - GAP), 0) size 300x300
+room at (0,0) size 1000x1000 label "Room {floor(area / 1000000)} m²"
+```
+
+## Set rules
+
+`set <kind>(attr: value, …)` overrides the default for subsequent elements of
+that kind, scoped to the enclosing block. An attribute the element states
+explicitly always wins.
+
+```
+set door(swing: out)             # later doors swing out…
+door at (1000, 0) width 800      # → out
+door at (3000, 0) width 800 swing in   # explicit → in
+```
+
+Currently `door` supports `swing` (`in`/`out`) and `hinge` (`left`/`right`); `set` does not
+take `inward`/`outward`.
+
+## Elements
+
+### Wall
+
+```
+wall <kind> thickness <mm> [material <name> [scale <n>] [angle <deg>]] { (x,y) (x,y) … [close] }
+wall id=<id> <kind> thickness <mm> [material <name> …] { … }
+```
+
+A polyline of ≥2 points, drawn with the given thickness and a poché hatch.
+`close` connects the last point back to the first (use for exterior shells).
+`<kind>` is a free label (e.g. `exterior`, `partition`).
+
+**Every wall — orthogonal, angled or curved — is joined by one pass**, so corners,
+T-junctions and crossings render as a single clean outline with no internal seams and no
+line drawn inside a neighbouring wall's solid. It is closed-form and zero-dependency:
+there is no geometry engine to install, and nothing you install can change the drawing.
+Where two walls of different thickness share a centreline, the thicker one owns the
+overlap — a thin partition drawn along a thick shell disappears into it rather than
+drawing its own faces inside the poché.
+
+**Materials** select the hatch pattern: `poche` (default), `concrete`, `brick`,
+`insulation`, `tile`, `none`. An unknown material warns and uses the default.
+Hatches are **data-driven**: the SVG emits a tiled `<pattern>` and the DXF a real
+`HATCH` entity. Optionally tune the hatch with `scale <n>` (tile-size multiplier,
+default 1; its drawn tile must stay inside the [modelling range](#modelling-range)) and
+`angle <deg>` (extra rotation, default 0):
+
+```
+wall exterior thickness 250 material brick { … }
+wall exterior thickness 250 material brick scale 1.5 angle 30 { … }
+```
+
+**Status** (for a remodel): `status existing|demolish|new`, after `height` and before the
+points or the pairwise form, says what becomes of the wall; `walls from rooms … partition <mm>
+status <s>` gives every wall the statement derives the same status. Absent, a wall is
+`existing`, and a `new` wall is a wall like any other. No fact reads a `demolish` wall: it
+encloses nothing, hosts nothing (a door, window or opening in it is
+`E_OPENING_ON_DEMOLISHED_WALL`), backs no furniture (a piece `against wall <id>` naming it, or
+`against <room>.<edge>` where it is the only wall on the edge, is
+`E_FURN_AGAINST_DEMOLISHED_WALL`; `against wall <category>` names only the walls that stay) and
+counts in no net area, and where it stood between two
+rooms the access graph, circulation and the reachability rules join them across its run.
+`describe --json` adds `wall_status` (the count by status and each wall's status) only on a
+storey that writes one; Plan JSON carries `status` on a wall and on `walls_from_rooms`.
+
+**Drawing a remodel.** A `demolish` wall is drawn as a dashed outline with no poché, beneath
+the walls that stay, so its dashes stop at the face of a standing wall it ran into; the
+standing walls are drawn as the plan after the demolition has them. A `new` wall is drawn as
+any wall. An `open between` of a `walls from rooms … status demolish` statement goes with its
+wall: the dashed outline keeps the gap it cut (the wall as it stands before the works), and no
+opening is drawn there. The sheet measures the plan after the demolition: the `schedule rooms` NET AREA and
+TOTAL count no demolished wall, and `--overlay circulation` walks across where one stood. The
+`legend` adds a `demolished` row (a dashed swatch) when a wall is demolished, and nothing for
+`new`, which looks like any wall. In the DXF a `demolish` wall is on `A-WALL-DEMO` and a `new`
+one on `A-WALL-NEWW`; an `existing` wall, or one with no status, stays on `A-WALL-EXTR` or
+`A-WALL-INTR`. `examples/remodel.arch` is a whole flat drawn this way.
+
+```arch static
+wall id=shell exterior thickness 250 { (0,0) (8000,0) (8000,5000) (0,5000) close }
+wall id=x_kitchen partition thickness 100 status demolish { (3000,0) (3000,5000) }
+wall id=n_study partition thickness 100 status new { (6000,0) (6000,5000) }
+```
+
+### Walls from rooms
+
+```
+walls from rooms exterior <mm> partition <mm> [{
+  except <room> …
+  open [id=<name>] between <A> and <B> [width <mm>]
+  between <A> and <B> thickness <mm>
+}]
+```
+
+One statement derives every wall of the plan (or of the `component` it is written in) from
+the rooms written beside it ([ADR 0028](adr/0028-rooms-primary-derived-walls.md) §3): an
+**exterior ring** on the outline of their union and a **partition** on every edge two rooms
+share. A shared edge with no wall, a room past the shell and walled floor that belongs to no
+room cannot be written this way: the walls follow the rooms.
+
+```arch
+plan "Two rooms" {
+  units mm
+  room id=living at (0,0) size 4000x3000 label "Living" uses living
+  room id=bed at (4000,0) size 3000x3000 label "Bedroom" uses bedroom
+  walls from rooms exterior 200 partition 100
+  door at (3000, 3000) width 900 wall exterior hinge left swing in
+  door at (4000, 1500) width 800 wall partition hinge left swing in
+}
+```
+
+**The rooms must tile one connected floor, exactly.** Every decision is made on the resolved
+coordinates with no tolerance, and each failure refuses, naming the rooms:
+
+| Condition | Code |
+|---|---|
+| A `circle` room, or a `polygon` with an edge neither horizontal nor vertical, in the set | `E_ROOM_NOT_RECTANGLE` (leave it out with `except`) |
+| Two rooms overlap | `E_ROOMS_OVERLAP` |
+| Two parts, rooms touching only at a corner, or a hole (a corridor left as the leftover) | `E_ROOMS_NOT_TILING` |
+| A shared edge shorter than the partition is thick | `E_PARTITION_TOO_SHORT` |
+| A second statement in the same plan or component | `E_WALLS_FROM_ROOMS_DUP` |
+| `except` names no room written beside it | `E_WALL_BETWEEN_ROOM` |
+| A pair clause names a room not written beside it, a `circle` room, a `polygon` with an edge neither horizontal nor vertical, or an excepted room (on the name) | `E_WALL_BETWEEN_ROOM` |
+| `open between` names a pair that shares several edges (the hint quotes the `opening` for each) | `E_OPENING_HOST_AMBIGUOUS` |
+| A pair clause names two rooms that share no edge | `E_WALL_BETWEEN_NOT_ADJACENT` |
+| One pair named by two clauses (in either order of the rooms) | `E_WALL_BETWEEN_DUP` |
+| An authored wall on an edge declared `open`, or a door, window or opening hosted by position on the voided span | `E_WALL_BETWEEN_OPEN` |
+| An `open` width larger than the clear span, or no clear span at all | `E_WALL_BETWEEN_WIDTH` |
+| A clause thickness or width that is not positive | `E_WALL_THICKNESS` / `E_OPENING_WIDTH` |
+| No room to derive from (none written, or every one excepted) | `E_WALLS_FROM_NO_ROOMS` |
+| An authored wall beside it takes the id `exterior` (the derived ring's name) | `E_WALL_ID_RESERVED` |
+| What it would derive (authored walls on its lines split the runs) passes the element budget | `E_ELEMENT_LIMIT` |
+
+A hole is legal when `outdoor` surfaces cover it exactly (a courtyard, which gets a second,
+inner exterior ring) or a `void` covers it exactly (no wall is derived round it). A 1 mm jog
+in the outline is a legal tiling, and the ring follows it.
+
+**An L is one room.** A `room polygon` whose every edge is horizontal or vertical joins the set
+and stays one room, with one stamp and one area. Where it wraps another room the two share
+several edges: each is its own partition, listed in `derived_walls[]` as `liv|bed`, `liv|bed#2`,
+…, numbered by start point, smallest `y`, then `x`. `between … thickness` sets all of them, and
+a door needs a [position that picks one](#openings-by-relation).
+
+**Hosting.** A derived wall has no id an author can type, so openings reach it by the rooms
+([`between <A> and <B>`, `on <room>.<edge>`](#openings-by-relation)), by position
+(`at (x,y)`, the nearest wall) or by category (`wall exterior`, `wall partition`,
+`on exterior at <pos>` when the ring is the only exterior wall). Lint names a derived wall by
+its relation (`the partition between "living" and "bed"`), never by an id.
+
+**Direction**, which `hinge`, `swing in|out`, `at <pos>` and `segment <n>` read: the outer ring
+starts at its vertex with the smallest `y`, then `x`, and runs clockwise on the page (first
+along `+x`); a courtyard ring starts the same way and runs counter-clockwise (first along `+y`),
+so `swing in` opens into the building on both; a partition runs from its end with the smaller
+`y`, then `x`.
+
+**With authored walls.** An authored straight wall lying exactly on a derived line, overlapping
+it, replaces the derived wall over that span: the author's thickness and material win, and
+the rest of the derived run stays. A wall 1 mm off the line is kept beside the derived set.
+Every replaced span is reported in `describe --json`'s `derived_walls[]`, with the id of the
+wall that took it (`dropped[].by`).
+
+**Facts.** `describe --json` gains `derived_walls[]` (one row per derived wall: its internal
+name, the rooms of a partition, the spans an authored wall took) and a `freedom.walls`
+count, both only on a storey that derived a wall. Plan JSON carries the statement as
+`walls_from_rooms`, never the walls it derives. A plan whose `place`d component holds the
+statement carries the component too, in `components`/`instances` (see
+[Placing instances](#placing-instances--place-v122), "Plan JSON"); the few plans that record
+cannot hold are refused (`E_JSON_DERIVED_IN_INSTANCE`) rather than lose those walls.
+A `place`d component derives its own walls in its own frame; a root statement sees only the
+root's rooms.
+
+**Pair clauses.** Each clause names two rooms that share an edge, in either order; a pair
+takes one clause, and every refusal of a clause points at it.
+
+- `between <A> and <B> thickness <t>` gives that one partition its own thickness, judged as a
+  wall's is. An authored wall on the same edge still replaces it.
+- `open between <A> and <B>` makes the two rooms one open-plan space along their shared edge.
+  The partition is still derived and listed in `derived_walls[]`; a leaf-less **opening**
+  voids it across its **clear span**: the edge less, at each end, half the thickness of the
+  thickest wall meeting it there, so each jamb lies on a meeting wall's face (no nib, no
+  `W_OPENING_AT_JUNCTION`). Where walls of different thickness meet one end, the jamb sits on the
+  face of the thickest wall meeting that end; the thinner wall's pier beside it is not a nib. With
+  `width <mm>`, the opening is that wide and centred on the clear span, and the partition stays
+  either side of it. The derived position is exact and is not snapped to `grid`: its centre may
+  fall on a half millimetre, so a hand-placed opening on a coarse grid cannot always reproduce it.
+  `open between` takes no position. For an opening placed along a wall that stays, leave the clause
+  out and write [`opening between <A> and <B> at <pos> width <mm>`](#openings-by-relation): it draws
+  the same hole, keeps the nibs, and the pair can still take a door. Neither form merges the two
+  rooms or moves their areas.
+- Where boundaries that open across their whole clear span meet at one point, the square they would
+  leave there is not drawn. Four at a crossing or three at a T leave the point empty; a `column` is
+  how a plan asks for a post there. With one wall left standing at the point (a boundary that is not
+  open, one with a narrower `width` that stops short of it, or one carrying another opening), that
+  wall ends flush on the point, across its own width. Two walls left meet as walls do, and a wall
+  written by hand, or the ring, touching the point keeps the square.
+- The opening is an ordinary opening: it joins the two rooms in the access graph, appears in
+  `describe --json`'s `openings[]` and in `schedule openings`, and counts toward the drawing and
+  element budgets. Its id is `<A>|<B>:open` (the rooms in source order), which no identifier can
+  spell and no lint hint or fix quotes, unless the clause gives one with `id=`. Plan JSON
+  carries the clauses in `walls_from_rooms.open[]`/`between[]`, never the opening as an
+  `openings[]` row.
+- Nothing else may stand in the opening: an authored wall lying on the open edge, or a door,
+  window or opening hosted by position across the span the derived opening voids (overlapping
+  it; touching its jamb is allowed), is `E_WALL_BETWEEN_OPEN`. The partition a `width` leaves
+  beside the opening is ordinary wall and hosts doors as usual.
+
+```arch
+plan "Open plan" {
+  units mm
+  room id=living at (0,0) size 4000x3000 label "Living" uses living
+  room id=kitchen at (4000,0) size 3000x3000 label "Kitchen" uses kitchen
+  room id=hall at (0,3000) size 7000x1500 label "Hall" uses hall
+  walls from rooms exterior 200 partition 100 {
+    open between living and kitchen
+    between living and hall thickness 150
+  }
+  door at (5500, 4500) width 900 wall exterior hinge left swing in
+  door at (2000, 3000) width 800 wall partition hinge left swing in
+}
+```
+
+### Walls between and around rooms
+
+```
+wall [id=<name>] <category> thickness <mm> [material …] [height <mm>] between <A> and <B>
+wall [id=<name>] <category> thickness <mm> [material …] [height <mm>] around [<A> <B> …]
+```
+
+An authored wall may be written by the rooms instead of by points
+([ADR 0028](adr/0028-rooms-primary-derived-walls.md) §4), for a plan that derives some walls
+and types others. The clause stands where the point list would.
+
+- `between <A> and <B>` stands on the **edge run the two rectangular rooms share**: their
+  facing edges on one line, with positive overlap. Two rooms share at most one run, so
+  nothing is chosen. The wall runs from the run's end with the smaller `y`, then `x`.
+- `around [<A> …]` is **one closed wall on the outline of the listed rooms' union**. It runs
+  clockwise on the page from its vertex with the smallest `y`, then `x`, so `swing in` opens
+  into the building.
+
+The geometry is the one `walls from rooms` derives on the same rooms. The rooms are read as
+a datum is: the room's own plan or component, and a placed instance's room by its dotted name
+(`west.a`). Everything else is the author's: the id, category, thickness, material and
+height. The wall is an ordinary authored wall afterwards. Openings host on it by id
+(`door on p at …`), by `between <A> and <B>` or `on <room>.<edge>`, or by position. Lint
+names it by its id. Beside `walls from rooms`, it takes over the derived span exactly as the
+same wall typed as points does, and the drop is reported. When a room moves or grows, the
+wall follows it.
+
+```arch
+plan "Mixed" {
+  units mm
+  grid 50
+  room id=living at (0,0) size 4000x3000 label "Living" uses living
+  room id=bed at (4000,0) size 3000x3000 label "Bedroom" uses bedroom
+  room id=hall at (0,3000) size 7000x1500 label "Hall" uses hall
+  wall id=shell exterior thickness 200 around [living bed hall]
+  wall id=p partition thickness 100 between living and bed
+  wall id=q partition thickness 100 between hall and living
+  wall id=r partition thickness 100 between bed and hall
+  door id=front on hall.bottom at 1000 from start width 900 hinge left swing in
+  door id=d between living and bed at 800 from end width 800 hinge left swing into bed
+  door id=k on q at 50% width 800
+  window id=w1 on living.top width 1500
+  window id=w2 on bed.top width 1200
+}
+```
+
+| Refused when | Code |
+|---|---|
+| The two rooms, or two listed rooms, overlap; a room listed twice overlaps itself (on the repeated name) | `E_ROOMS_OVERLAP` |
+| `between`: the rooms share no edge (apart, touching only at a corner, or one room twice) | `E_WALL_BETWEEN_NOT_ADJACENT` |
+| A `polygon` or `circle` room (on the name) | `E_ROOM_NOT_RECTANGLE` |
+| `between`: the shared run is shorter than the wall is thick | `E_PARTITION_TOO_SHORT` |
+| `around`: the rooms form two parts, touch at a single point, or enclose any hole | `E_ROOMS_NOT_TILING` |
+| A room that could not be placed or has no size, or a name that is no room (on the name) | `E_DATUM_UNPLACED` / `E_UNKNOWN_REF` |
+| `between` a pair that `walls from rooms` declares `open` | `E_WALL_BETWEEN_OPEN` |
+
+`around` refuses **every** hole, even one an `outdoor` surface or a `void` covers exactly: one
+wall is one ring, so a courtyard needs `walls from rooms` (or typed rings). A refused wall has
+no points: it draws nothing and hosts nothing, and an opening (`on <id>`), a piece of furniture
+(`against wall <id>`) or a `dim radius <id>` naming it is refused with a message saying that the
+wall could not be placed (`E_ATTACH_WALL_REF`, `E_FURN_AGAINST`, `E_DIM_CURVE_REF`). An `around` wall counts 4 per listed room toward
+the element budget, the most vertices its ring can have.
+
+**Facts.** `describe --json` lists each such wall in `derived_walls[]` as written
+(`{ "from": "between", "name": "p", "between": ["living", "bed"] }`, or `"from": "around"` with
+`"around": [ … ]`), and counts it as `relational` in `freedom.walls`. Both keys are present only
+on a storey that has one. Plan JSON exports it as a wall with its resolved points: the round
+trip keeps the geometry and drops the relation, as it does for an opening placed `at axis`.
+
+### Openings by relation
+
+```
+door|opening [id=<name>] … between <A> and <B> at <pos> width <mm> …
+door|window|opening [id=<name>] … on <room>.<edge> [at <pos>] width <mm> …
+window [id=<name>] … on <room>.<edge> at corner <room>.<edge> width <mm> …
+<pos>  :=  center  |  <mm> from start|end  |  <mm> from <room>.<edge>  |  axis <label>
+```
+
+An opening may be placed by the rooms instead of by a wall
+([ADR 0028](adr/0028-rooms-primary-derived-walls.md) §5), which is how it reaches a wall that
+`walls from rooms` derived (such a wall has no id to name).
+
+- `between <A> and <B>` stands in the **one wall body on the edge run the two rooms share**,
+  derived or authored. `<edge>` is `top`, `bottom`, `left` or `right` (the compass words only
+  where a datum may use them).
+- `on <room>.<edge>` stands in the **one exterior wall body on that edge** of the room. An edge
+  can carry several walls, say exterior for part of its length and a partition for the rest. The
+  position is still measured along the whole edge, and the opening stands in an exterior wall
+  when its whole span lands on that wall and no other.
+- `<pos>` is measured **along the run** (or the edge), never along the host wall, and every
+  offset is to the opening's **centre**. The run starts at its end with the smaller `x`
+  (horizontal) or `y` (vertical), whichever way the host wall is drawn.
+  `<mm> from <room>.<edge>` needs an edge perpendicular to the run through one of its ends; the
+  offset runs from that end into the run. `axis <label>` puts the centre where that positioning axis crosses
+  the run. The position snaps to `grid`, as every coordinate does.
+- A **door** and a **cased opening** must write a position (a door is held to an end or a
+  room edge, never centred by default); a **window** on an edge stands at its centre when it
+  writes none. A window is never `between` two rooms (a parse error).
+- Either room of a `between` may be a polygon whose every edge is horizontal or vertical. Where
+  the two share one edge nothing changes. Where they share several, the position must **pick
+  one**, and only `<mm> from <room>.<edge>` can: the edge has to meet that run at an end, and
+  no other run. A rectangle's edges do this, and so does a polygon's side, so of two polygons
+  the way in is `at (x,y)` only for an edge no side reaches. Anything else is refused, and the
+  diagnostic quotes the position that picks each edge.
+- **The nib is enforced, never slid.** A jamb nearer than `max(100 mm, host thickness / 2)` to
+  the face of a wall meeting the host, a meeting wall standing inside the span, or a span past
+  the end of the run or of its wall is refused with `E_OPENING_NIB`, whose hint names the
+  nearest legal position. These are the default values and the measure of
+  [`W_OPENING_AT_JUNCTION`](error-codes.md), including its exemption for a cased opening flush
+  with a meeting wall's face; `compile()` reads no lint profile. An `open between` boundary
+  voided over its whole clear span is no meeting wall, unless the host stops at it with nothing
+  carrying on: a jamb there has no wall beside it. A narrower opening leaves a wall that counts.
+
+```arch
+plan "Rooms first" {
+  units mm
+  grid 50
+  room id=living at (0,0) size 4000x5000 label "Living" uses living
+  room id=bed at (4000,0) size 4000x5000 label "Bedroom" uses bedroom
+  walls from rooms exterior 200 partition 100
+  door id=front on living.bottom at 1000 from start width 900 hinge left swing in
+  door id=d between living and bed at 800 from end width 800 hinge left swing into bed
+  window id=w1 on bed.top width 1500
+  window id=w2 on living.left at 1500 from living.top width 1200
+}
+```
+
+Widen `living` and the partition, its door, the bedroom and its window all move with it, and
+the door keeps its 800 mm from the end of the shared edge.
+
+An L wrapped round a room shares two edges with it, one on `x` 3000 and one on `y` 3000. Each
+edge of the bedroom picks one of them, so this door stands on the edge on `x` 3000, which
+`bed.top` meets at its upper end; `from bed.left` would put it on the other. The bath shares one
+edge with the L, so `at center` is enough there:
+
+```arch
+plan "An L round a room" {
+  units mm
+  grid 50
+  room id=living polygon (0,0) (6000,0) (6000,3000) (3000,3000) (3000,6000) (0,6000) label "Living" uses living
+  room id=bed at (3000,3000) size 3000x3000 label "Bedroom" uses bedroom
+  room id=bath at (6000,0) size 2000x3000 label "Bath" uses bath
+  walls from rooms exterior 200 partition 100
+  door id=d1 between living and bed at 1500 from bed.top width 800 swing into bed
+  door id=d2 between living and bath at center width 800 swing into bath
+  door id=entry at (0,1500) width 1000 wall exterior swing inward
+  window id=w1 at (1500,0) width 1500 wall exterior
+  window id=w2 on bed.bottom width 1200
+}
+```
+
+| Condition | Code |
+|---|---|
+| No position on a door or cased opening; a plain `at <mm>` or `at <pct>%`; an edge parallel to the run, meeting it away from its ends, or a centre line (`cx`/`cy`); an axis parallel to the run, missing it, or not declared; on a pair that shares several edges, an edge that meets none of them at an end | `E_OPENING_DATUM` |
+| The two rooms share no edge (or one room is named twice) | `E_WALL_BETWEEN_NOT_ADJACENT` |
+| No wall on the run; on `on <room>.<edge>`, no exterior wall stands on the edge, whether it carries one wall or several | `E_OPENING_NO_SHARED_WALL` |
+| On `between`, more than one wall body on the run (an authored span beside a derived remainder); on `on <room>.<edge>` with an exterior wall on the edge among several, a span that crosses two of them, stands on a partition, stands on none or lies on two at once (the hint quotes a position on each exterior wall, where one exists); on a pair that shares several edges, a position that does not pick one (`at center`, `from start\|end`, `at axis`, no position, an edge meeting two of them) | `E_OPENING_HOST_AMBIGUOUS` |
+| The pair is declared `open` in `walls from rooms` | `E_WALL_BETWEEN_OPEN` |
+| A jamb too near a meeting wall's face, a wall inside the span, or a span past its run | `E_OPENING_NIB` |
+| `at corner` where the two edges or the walls on them do not make a true corner, or with the window on the other wall missing | `E_WINDOW_CORNER` |
+| A room the plan or component cannot see; a circle, or a polygon with an edge neither horizontal nor vertical | `E_UNKNOWN_REF`, `E_ROOM_NOT_RECTANGLE` |
+| A polygon and a room that overlap | `E_ROOMS_OVERLAP` |
+
+**Facts.** `describe --json` reports such an opening's `placement` as `relational` in
+`freedom` (with an `openings.relational` count, present only when there is one) and its
+placement as written in a `relation` field of its `doors[]`/`windows[]`/`openings[]` row
+(`"between living and bed at 800 from end"`), never the internal name of its host. A `between`
+door or cased opening also reports `centreline_at`, where it landed: the centre of its span on the
+host wall's centreline, in plan millimetres, the point `door at (x,y)` would name. A lint hint
+that moves it quotes the same form, measured from the anchor the author wrote (`from end`, or
+an edge through an end of the run; otherwise from the start). Plan JSON exports it as written
+(`relation: { between | edge, at }`) beside its resolved `x`/`y`, except one placed
+`at axis <label>`: Plan JSON carries no axes, so that one is exported by its `x`/`y` alone. (The opening an
+`open between` clause derives keeps `placement: "absolute"`, so its hand-placed twin stays
+byte-identical.)
+
+**A window round a corner.** Two windows, one on each wall, each placed `at corner` and naming the
+edge the other stands on, meet at the corner with no wall left between them:
+
+```arch
+plan "A corner window" {
+  units mm
+  grid 50
+  room id=living at (0,0) size 5000x4000 label "Living" uses living
+  walls from rooms exterior 200 partition 100
+  door id=entry on living.left at 2000 from start width 900 swing into living
+  window id=n on living.top at corner living.right width 1800
+  window id=e on living.right at corner living.top width 1200
+}
+```
+
+`width` runs from the window's free jamb to the **outer corner**, the other wall's outer face, so it
+is the length of glass on that face. The centre follows from that face and is not snapped to `grid`.
+They stay two windows: each has its own wall, `facing`, tag and row in `schedule openings`, and
+`describe --json` adds `corner_with`, the other's id, to each `windows[]` row. The wall at the corner
+goes with the two cuts, so the net areas do not move, and the drawing mitres their glass, faces and
+sills from the inner corner to the outer one. Each counts its own `width`, so the two overlap by the
+corner in a sum of widths.
+
+It has to be a true corner of the two walls, and anything else is refused with
+[`E_WINDOW_CORNER`](error-codes.md): both edges of one room, meeting at an end; on each, one exterior
+wall that stays, ending exactly on the corner; no third wall and no `column` at the corner; one window
+on each wall, with the same `sill` and `head`, each wider than the other wall is thick. On an L the
+side words name its outermost runs, which meet only at convex corners, so a re-entrant corner has no
+word and is refused. A window `kind` works on either leg. Its marks stand clear of the corner, between
+the free jamb and the other wall's inner face, and the hinge mark of a `casement` or `tilt_turn` stands
+on the free jamb, written or not: a `hinge` naming the corner end is refused. The free jamb
+keeps its nib (`E_OPENING_NIB`, whose hint quotes the widest window that fits). The form reads
+rooms' edges, so it is refused on `on <wall>`, and on a door or a cased opening. Written by `at (x,y)`,
+two such windows are ordinary windows: `W_OPENING_AT_JUNCTION` reports each.
+
+**The same datums on a wall.** `on <wall> at <mm> from start|end`,
+`on <wall> at <mm> from <room>.<edge>` and `on <wall> at axis <label>` read the run of an
+authored wall you name: `from start` measures from its first point, `from end` back from its last; a datum line must cross the wall's straight run at
+exactly one point (a closed ring crossed twice, a wall lying along the line or a curved wall is
+`E_OPENING_DATUM`), and the offset runs from that crossing along the wall's own direction. These
+are ordinary attached openings (`placement: "attached"`): out of range is
+[`E_ATTACH_POS_RANGE`](error-codes.md), and a short nib warns (`W_OPENING_AT_JUNCTION`) as
+it always did, so each draws, describes and lints byte for byte as its `on <wall> at <x>` twin.
+
+### Room
+
+```
+room [id=<id>] at (x,y) size <w>x<h> [label "<text>" [at (x,y)]] [uses <kind>…] [floor <pattern>]
+room [id=<id>] <right-of|left-of|below|above> <ref> [align <edge>] [gap <mm>] size <w>x<h> [label "<text>" [at (x,y)]] [uses <kind>…] [floor <pattern>]
+room [id=<id>] polygon (x,y) (x,y) (x,y) … [label "<text>" [at (x,y)]] [uses <kind>…] [floor <pattern>]
+room [id=<id>] circle at (cx,cy) radius <mm> [label "<text>" [at (x,y)]] [uses <kind>…] [floor <pattern>]
+```
+
+A rectangle — or [any simple polygon](#polygonal-rooms-v1-23), or a
+[circle](#circular-rooms-v1-24). The compiler prints the `label` and the **computed area**
+(m²). Rooms describe space; walls are drawn separately.
+
+**`floor` draws a finish.** `floor tile`, `floor paving`, `floor deck` or `floor concrete` lays a
+hatch over the room, on its own ring, under everything else in it:
+
+```arch
+plan "Finishes" {
+  units mm
+  paper A4
+  scale 1:50
+  legend
+  room id=bath at (0,0) size 2400x3000 label "Bath" uses bath floor tile
+  room id=living right-of bath size 4000x3000 label "Living" uses living floor deck
+  walls from rooms exterior 200 partition 100
+}
+```
+
+| Word | Draws |
+|---|---|
+| `tile` | A small square grid |
+| `paving` | A large square grid, the same slabs an `outdoor paving` draws |
+| `deck` | Boards with staggered joints |
+| `concrete` | A fine speckle |
+
+It is a pattern and not a colour: it follows the `theme`, stays legible under `mono`, reaches DXF as
+a real `HATCH` and earns one [`legend`](#sheet-tables--room-schedule--legend) row per word, which
+`sheet text` can rename (`deck "Parkett"`). It runs with the sheet, so boards do not turn with a
+`place`, as a wall's hatch does not. `tile` and `concrete` paint no background here, so a tiled room
+does not take a wall's tint, and their legend row reads `tile floor`, apart from a wall's `tile`. In a PDF, which has no pattern fills, a floor is a flat tint, as an
+`outdoor` surface is.
+
+A floor is a drawing fact: `describe()` and `lint()` read the plan as if it were not there, and Plan
+JSON lists it in `dropped`. A word that is not one of the four draws no pattern and raises
+`W_UNKNOWN_MATERIAL`, a compile warning that `describe --json` and `validate` report and `lint()` does not.
+
+**Where the name goes.** By default at the room's own centre — the rectangle's, the
+circle's, or [a polygon's area centroid](#polygonal-rooms-v1-23) — and a name that would
+land on furniture, a door swing or a dimension number is nudged clear of it. Pin it
+yourself with `label "…" at (x,y)` and **that point always wins**, on every room form,
+nudge included; it is a plan coordinate, so it means the same thing under a relational
+clause as under `at`. A pin off the room's own floor is advisory
+[`W_ROOM_LABEL_OUTSIDE`](error-codes.md), never an error.
+
+**A name too wide for its room wraps.** When the name does not fit between the room's walls
+on one line at the drawing's label size, and it does fit broken onto several, it is drawn on
+several: the fewest lines that fit, as evenly balanced as possible, broken only at spaces.
+A separator word such as the `/` of `"Living / Kitchen"` stays on the line before the break
+(`Living /` · `Kitchen`); a word is never split, hyphenated, abbreviated or turned.
+The area figure stays directly under the last line, and a `label … at (x,y)` pin still places
+the block. A name that fits on one line is drawn exactly as before. Only the drawing wraps: the
+name in `describe()`, `lint()`, diagnostics, the room schedule and `annotate`'s
+`data-arch-label` is the one-line string you wrote. Fit is judged at the label size, so a name
+that wraps on a display drawing may fit on one line on a sheet, whose text is smaller.
+
+**A label that still does not fit shrinks.** A room's label stands clear when neither its name
+nor its area figure lies over a wall, a door's swing or a furniture, fixture or stair symbol, or
+runs off its floor: what [`W_ANNOTATION_OVERLAP`](error-codes.md) reads. One that does not is
+drawn at the first height that clears it, 3, 2.5 or 2 mm on the sheet, wrapped at a space where
+that helps, at the clear place nearest the room's centre. 2 mm is the furniture-label size, the
+smallest lettering the sheet draws; the choice is this drawing's own, no standard's minimum.
+Without `paper` there is no sheet height to speak of, and the steps run from that drawing's
+room-name size down to its furniture-label size. The area figure stays at its size until the
+name reaches it and then goes down with the name, so it never stands larger than the name. A
+label that fits does not change at all.
+
+A label that clears at no height is drawn in the form that leaves the least of it buried, and
+`W_ANNOTATION_OVERLAP` reports it; one wholly on a piece keeps its size, since a smaller name is
+no less on it. No leader line is drawn. A `label … at (x,y)` pin keeps its size, as it keeps its
+place, and an `outdoor` surface's label and the figure of a room with no name do not shrink. Text
+is never mirrored, so a mirrored `place` may choose a different form or height from its twin.
+
+Width is an estimate covering two faces, character by character, taking the wider of Roboto (what
+the PNG and the PDF draw) and Helvetica Bold (what `Helvetica, Arial` at a name's weight reaches in a
+browser; Arial Bold has the same widths). It is no promise for every font: a host with neither, or a
+theme that names another family, can draw a name wider than this reads.
+
+**Room purpose — `uses` (v1.3).** Tag a room with one or more space kinds so the
+analysis layer knows what it *is* without guessing from the label:
+
+```
+room id=r_living at (0,0)    size 4000x6000 label "Living / Kitchen" uses living kitchen
+room id=r_bath   at (4000,4400) size 3000x1600 label "Bath"         uses bath
+```
+
+The kinds are `living`, `kitchen`, `dining`, `bedroom`, `bath`, `wc`, `hall`,
+`circulation`, `storage`, `utility`, `office`, `entry`, and `garage` (v1.31). This is **authored
+intent**: it overrides the conservative label/id regex that `describe` and `lint`
+fall back to when `uses` is absent (so a room labelled "Master Suite" can still be
+tagged `uses bedroom`). The tags drive lint rules like *bedrooms need a window* and
+*wet rooms need fixtures*, and appear in `describe().rooms[].uses` — see
+[Analysis](analysis.md).
+
+`garage` is the one kind whose own rule measures the room:
+[`W_GARAGE_TOO_NARROW`](error-codes.md) warns when the short side is under 2700 mm per
+parked `car` (an empty garage is measured against one bay), or when the clear depth along the
+line of its `door garage` is under 5000 mm, a parking bay's length (6000 mm under
+`uk-residential-advisory`). A room labelled "Garage"
+classifies as one from its label alone; "Carport" and "Parking" classify through an alias,
+which is advisory [`W_ALIAS_MATCH`](error-codes.md) asking you to pin the tag.
+
+Living and dining rooms classify from their label the same way: "Living", "Living Room" and
+"Lounge" read as `living`, "Dining" as `dining`, and "Kitchen / Living" as `kitchen living`.
+"Family Room" and "Sitting Room" classify through an alias (`W_ALIAS_MATCH` again), and that
+alias yields to any other kind the label names, except dining: "Family Bathroom" is a bath and
+"Family Foyer" an entry, while "Sitting / Dining" is both living and dining.
+
+A label none of those words classifies falls back to a second list: "Store", "Storage",
+"Closet", "Wardrobe", "Pantry" and "Larder" read as `storage`, "Office" and "Study" as `office`,
+"Utility" and "Laundry" as `utility`. "Dressing", "Linen", "Cellar", "Consulting", "Plant",
+"Boiler" and "Nursery" (a `bedroom`; "Day Nursery", a childcare room, stays unclassified) classify
+through an alias, and "Water Closet" is a `wc`. "Guest Room", "Kids Room", "Children's Room" and
+"Master Suite" read as `bedroom`, and a bare "Master" too (an alias) unless the label also names
+a store, office or utility room ("Master Closet" is storage). "Great Room", "Reception Room" and
+"Drawing Room" read as `living`, "Snug" and "Den" through an alias, only when nothing else in
+this list matched ("Den Store" is storage).
+The fallback never adds to a label that already classified: "Kitchen Store" is a kitchen.
+"Balcony", "Terrace", "Studio", "Gallery", "Meeting Room" and "Staff Room" classify to nothing
+(a balcony is an `outdoor` surface, and the others name more than one kind of room), so tag
+them with `uses`; `lint --json` lists rooms left unclassified in its `coverage` block.
+
+**Relational placement (v1.0).** Instead of an absolute `at (x,y)`, a room may be
+positioned **relative to another room** with `right-of` / `left-of` / `below` /
+`above`. The compiler resolves the absolute corner by pure arithmetic in
+dependency order (a topological pass over the references) — it is deterministic
+sugar over absolute coordinates, not an optimizer. The absolute path is the
+default and is unchanged.
+
+- `<ref>` is the `id` of another room.
+- `align <edge>` lines up the cross-axis edges: horizontal placement uses
+  `top|middle|bottom`, vertical placement uses `left|center|right` (default: the
+  leading edge — `top` for horizontal, `left` for vertical).
+- `gap <mm>` is the spacing along the placement axis (default `0`).
+
+```
+room id=living  at (0,0)                        size 5000x4000 label "Living"
+room id=kitchen right-of living align top gap 0 size 3000x4000 label "Kitchen"
+room id=bed     below living    align left gap 0 size 5000x3500 label "Bedroom"
+```
+
+A reference cycle reports [`E_LAYOUT_CYCLE`](error-codes.md) (on the rooms of the cycle only); an unknown
+reference reports `E_LAYOUT_REF`. A room that depends on a room that could not be placed, or on a cycle,
+reports `E_LAYOUT_UNPLACED` naming it. See the dedicated guide page for the placement arithmetic.
+
+**Room-edge datums.** A rectangular room `r` exposes its edge lines and centre as numbers:
+`r.top`, `r.bottom`, `r.left`, `r.right` (`+y` runs down the page, so `top` is the smaller
+`y`) and `r.cx`, `r.cy`. They are read wherever a coordinate or length is: wall points, door,
+window and opening positions, furniture `at`, dimensions, and any arithmetic in them.
+The value snaps to the plan `grid` like any other coordinate, so a `cx` on a half grid snaps
+as the same literal would; a plan written with datums draws, describes and lints byte for
+byte like its twin written with the numbers they stand for.
+
+```
+room id=hall at (0,0) size 4000x3000 label "Hall"
+room id=bed right-of hall size 3000x3000 label "Bed"
+wall exterior thickness 200 { (hall.left, hall.top) (bed.right, bed.top) (bed.right, bed.bottom) (hall.left, hall.bottom) close }
+wall partition thickness 100 { (hall.right, hall.top) (hall.right, hall.bottom) }
+door at (hall.right, hall.cy) width 800
+```
+
+Datums are read from the rooms once every room is placed ([ADR 0028](adr/0028-rooms-primary-derived-walls.md)), so only statements
+that resolve after the rooms can read them. A `let`, a loop bound or condition, a `place`,
+a component argument, a plan setting (`height`, `axes`, the site boundary) and a room's own
+`at`/`size` or relational clause are evaluated earlier, and a datum there reports
+`E_DATUM_BEFORE_ROOMS`; write the datum in the statement that uses it. A function body has no
+room of its own, so `let f() = hall.top` refuses when called; pass the edge in: `f(hall.top)`.
+A positioning axis reads as a datum too, `axis.3`, and is known earlier: see
+[Standing on an axis](#positioning-axes-定位轴线).
+
+- **Compass words.** `north|south|east|west` alias `top|bottom|right|left` only in the root of
+  a plan whose `north` is `up` (the default). Inside a `place`d component, or with any other
+  `north` (a direction or a bearing), they report `E_DATUM_COMPASS`: write the frame word.
+- **Frames.** Inside a component a datum is a word of the component's own frame; a `place …
+  rotate 90` or `mirror x` carries it as it carries the coordinates. From the root,
+  `west.main.top` is the placed room `west.main`'s edge in page words (the last dotted segment
+  is the datum). A component sees only its own rooms. A path that is also an element id
+  inside the instance (an instance `west` holding an element `top`) reports `E_DATUM_NAME`.
+- **A polygon's sides.** On a `polygon` whose every edge is horizontal or vertical, `liv.top`,
+  `bottom`, `left` and `right` are the ring's run on that outermost line, and everything that
+  reads an edge reads that run: an offset, `on liv.left`, `against liv.left`, `segment containing`.
+  `at center` on `on liv.right` is the middle of the run, not of the box. A side of several runs
+  (the prongs of a U) and `cx`, `cy` report `E_ROOM_NOT_RECTANGLE`; a notch edge has no word, so
+  reach it by `at (x,y)`.
+- **No datum.** A `circle` room or a `polygon` with a slanted edge reports `E_ROOM_NOT_RECTANGLE`;
+  a room that could not be placed, or has no positive size, `E_DATUM_UNPLACED`; an unknown room
+  `E_UNKNOWN_REF` with the closest room id as a hint.
+
+### Polygonal rooms (v1.23)
+
+```
+room [id=<id>] polygon (x,y) (x,y) (x,y) … [label "<text>" [at (x,y)]] [uses <kind>…]
+```
+
+Not every room is a rectangle. The `polygon` form gives a room its own **ring** instead
+of `at` + `size`: three or more vertices, in order, **implicitly closed** (do not repeat
+the first point), grid-snapped like every other coordinate. An L-shaped gallery, a
+trapezoid lobby with an angled facade, a chamfered corner — all one statement.
+
+```
+room id=gallery polygon (0,0) (12000,0) (12000,8000) (6000,8000) (6000,14000) (0,14000)
+  label "Gallery"
+room id=lobby polygon (6000,8000) (12000,8000) (12000,9000) (6000,14000)
+  label "Lobby" at (8200,10200) uses entry
+```
+
+**What is exact.** The area is the **shoelace** area of the ring — the gallery above is
+132 m², not the 168 m² its bounding box would claim — and it is the same number in the
+drawn label, `describe().rooms[].area_m2`, the `schedule rooms` table and Plan JSON.
+`describe()` reports the ring as `floor_polygon`; `bbox` remains the **vertex extent**,
+which is also what the resolved room's `at`/`size` are, so a reader written for
+rectangles still sees a truthful box (just not the floor).
+
+**Where the label goes.** At the polygon's **area centroid**, computed closed-form —
+except where a concave ring puts that centroid outside its own floor (a deep C or U, or an
+L with thin legs). There the label falls back to the ring's **pole of inaccessibility**:
+the interior point furthest from any edge, i.e. the middle of the widest place the text can
+sit. The fallback is unreachable whenever the centroid is legal, so a rectangle, a circle
+and every well-behaved ring are labelled exactly as before. You can still pin the anchor
+yourself with `label "…" at (x,y)`, which always wins; a point outside the room is advisory
+[`W_ROOM_LABEL_OUTSIDE`](error-codes.md), never an error.
+
+**The ring must be simple.** Edges that cross (a bow-tie, usually two swapped vertices)
+report [`E_ROOM_POLY_SELF_INTERSECT`](error-codes.md); a ring with fewer than three
+*effective* vertices once duplicate and straight-through points are removed reports
+[`E_ROOM_POLY_DEGENERATE`](error-codes.md). A redundant point sitting on an edge is fine.
+
+**What reads the ring, and what refuses.** Two clauses are arithmetic on a room's edges, and a
+bounding box is not a substitute: `anchor bottom-right` on an L would land a fixture in the
+notch, outside the room. A polygon whose every edge is horizontal or vertical has edges of its
+own, its **sides**: the ring's run on each outermost line. Anything else raises
+[`E_PLACE_POLY`](error-codes.md) and names the way out:
+
+| Clause | With a polygon room |
+| --- | --- |
+| `room … right-of <poly>` (and `left-of`/`below`/`above`) | **Works** on a one-run side: the run's line is where the room stands, and `align` reads the run's ends. `E_PLACE_POLY` on a side of several runs, a circle or a slanted polygon |
+| `furniture … in <poly> anchor <corner>` | **Works** where that corner is a vertex of the ring. `E_PLACE_POLY` in a notch |
+| `furniture … in <poly> anchor top\|bottom\|left\|right` | **Works** on a one-run side, centred on the run, not the box |
+| `furniture … in <poly> centered` / `anchor center` | `E_PLACE_POLY`: the middle of the outline may not be floor |
+| Any anchor whose footprint would leave the ring | `E_PLACE_POLY`: place the piece with `at (x,y)` (plus `rotate`) |
+| `furniture … against wall <id>` | **Works** — a wall is a wall whatever shape the room is |
+| `furniture … at (x,y) in <poly>` | **Works** — an absolute position with declared membership |
+| `walls from rooms`, `door\|opening … between <poly>` | **Works** on a polygon whose every edge is horizontal or vertical — `E_ROOM_NOT_RECTANGLE` on any other |
+| `strip { room … }` | Not applicable — a strip child is a sized rectangle by construction |
+
+Everything else follows the ring, not the box: adjacency is a **shared boundary run**
+between two rooms' edges at any angle, a door or window is attributed to a polygon room
+by its distance to that room's own edges (so an entrance on an angled facade connects the
+room behind it), and the circulation grids test whether a cell centre is **inside the
+polygon**. Two rooms whose boxes overlap but whose floors do not — a room tucked into an
+L's notch — do **not** raise `W_ROOM_OVERLAP`; the check is an exact ring-vs-ring test.
+See [Analysis](analysis.md) for the measured facts and their limits.
+
+One rule keeps its rectangle: the fixture-orientation warning `W_FIXTURE_BACK_TO_ROOM`
+does not fire inside a polygon room, because "which edge is the back?" has no answer where
+the room has no north/south/east/west sides. `archlang repair` likewise declines to push a
+piece into a polygon room and says so in its `unresolved` list, and `archlang suggest` offers
+no door/window candidate *on* a polygon room rather than propose one on an edge the room
+does not have.
+
+### Curved walls — `arc` edges (v1.24)
+
+```
+wall [id=<id>] <category> thickness <mm> [material …] {
+  (x,y) … arc (x,y) radius <mm> [cw|ccw] [major] … [close]
+}
+```
+
+An `arc (x,y) radius R` clause makes the edge **from the previous vertex to this one** a
+circular arc instead of a straight run. Write it where the vertex goes; everything else
+about the wall is unchanged.
+
+```arch
+plan "Bowed facade" {
+  units mm
+  wall id=front exterior thickness 300 {
+    (0,0)
+    (12000,0)
+    arc (24000,12000) radius 12000
+    (24000,24000)
+  }
+  door id=d on front at 60% width 1200
+}
+```
+
+**Which of the two circles.** Two endpoints and a radius describe *four* arcs: two
+candidate circles, and two ways round each. Two optional words pick one, and the defaults
+are the common case:
+
+| Clause | Meaning |
+| --- | --- |
+| *(nothing)* | the **minor** arc turning **`ccw`** as drawn — a shallow bow to the left of travel |
+| `cw` | turn clockwise as drawn (the centre sits to the **right** of the direction of travel) |
+| `ccw` | turn counter-clockwise (centre to the **left**) — the default |
+| `major` | take the **long way round** — the arc greater than a half circle |
+
+"Clockwise" means clockwise **on the sheet**, as the reader sees it. Reverse the two words
+and you get the concave version of the same corner, which is why the aquarium's rounded
+frontage says `cw`: walking the shell south-west, clockwise puts the centre inside the
+building, so the facade bows outward.
+
+**A radius has a minimum.** No circle of radius `R` passes through two points more than
+`2R` apart, so a radius under half the chord is [`E_ARC_RADIUS`](error-codes.md) — with a
+machine-applicable fix that substitutes the minimum. The offending edge stays straight so
+the rest of the plan still draws.
+
+**A closed curve is written as its halves.** There is no "arc back to the start" form: a
+full circle is two `arc` edges, each with its radius visible in the source.
+
+```arch
+plan "Rotunda" {
+  units mm
+  wall id=drum partition thickness 200 {
+    (38000,14000)
+    arc (22000,14000) radius 8000
+    arc (38000,14000) radius 8000
+  }
+}
+```
+
+**Openings on a curve work.** `on <wall> at <pos>` walks the wall by **run length**, and an
+arc contributes its arc length `R·θ` — not its chord — so `at 50%` lands halfway along the
+wall *as walked*. An absolute `at (x,y)` is attributed to the curve by its distance to the
+arc itself. A door's leaf and swing are taken from the **tangent at the doorway**, so
+`hinge left|right` keeps its usual meaning (relative to the direction of travel along the
+wall, which on an arc is the direction the arc turns); a window's panes run along that
+tangent with its jambs radial.
+
+**What a curve looks like.** The two visible faces are emitted as **true arcs** — SVG `A`
+commands, native DXF `ARC` entities — so a curve is never drawn faceted at any zoom. Only
+the poché *fill* is tessellated (a fill has to be a polygon for every backend), at a fixed
+7.5° step. A curved wall goes through the same joinery every other wall does, in closed
+form, so an arc plan's output does not depend on anything being installed. A doorway on a
+curve is a **real hole**: the solid is severed and the jambs run radially, as an architect
+draws them.
+
+**What declines rather than guesses.** `furniture … against wall <id>` on an arc segment
+raises [`E_FURN_AGAINST`](error-codes.md): a curve has no single back direction, so place
+the piece with `at (x,y)` and an explicit `rotate`. An arc edge inside a `room polygon`
+ring is not supported and says so at parse time — no release is promised for it; it is
+tracked in the backlog (`docs/backlog.md` in the
+repository). Use a [circular room](#circular-rooms-v1-24), or a curved wall with a
+straight-edged room behind it.
+
+### Circular rooms (v1.24)
+
+```
+room [id=<id>] circle at (cx,cy) radius <mm> [label "<text>" [at (x,y)]] [uses <kind>…]
+```
+
+A round floor, given by its centre and radius instead of `at` + `size`. A non-positive
+radius is [`E_ROOM_RADIUS`](error-codes.md).
+
+```arch
+plan "Tank" {
+  units mm
+  room id=tank circle at (30000,14000) radius 8000 label "Ocean Rotunda" uses hall
+}
+```
+
+**What is exact.** The area is **πR²**, in closed form — the same number in the drawn
+label, `describe().rooms[].area_m2`, the `schedule rooms` table and Plan JSON. The floor is
+drawn as a real circle, not a polygon. `describe()` reports the exact centre and radius as
+`floor_circle` and leaves `floor_polygon` empty (a 48-vertex ring is an implementation
+detail of the grid layer, not the truth about the floor); `bbox` — and the resolved room's
+`at`/`size` — is the enclosing square, so a reader written for rectangles still sees a
+truthful box.
+
+**What is chordal.** The occupancy and circulation grids, room-vs-room overlap, and door
+attribution work on a 48-sided inscribed ring, exactly the machinery polygon rooms use.
+That is a deliberate split, described in [Analysis](analysis.md#curves-what-is-exact-and-what-is-chordal-v1-24).
+
+**Annulus is not a form.** A ring-shaped gallery around a tank is two rooms and two walls,
+not one room with a hole; there is no doughnut syntax and none is planned.
+
+### Dimensioning a curve (v1.24)
+
+A linear dimension chain cannot describe an arc, so `dims auto` dimensions round things the
+way GB/T 50104 does — and the manual forms are there when you want to place one yourself:
+
+```
+dim radius <wallId> [segment <n>] [offset <mm>] [text "<text>"]
+dim diameter <roomId> [offset <mm>] [text "<text>"]
+```
+
+`dim radius` draws an `R<r>` leader from an arc's centre out to its midpoint; `dim diameter`
+draws a `φ<d>` call-out across a circular room. Both **derive** their geometry and their
+text from the element they name, so the number can never disagree with the drawing. Name a
+wall with several arcs and you must add `segment <n>`; anything unresolvable is
+[`E_DIM_CURVE_REF`](error-codes.md) rather than a guess. A segment selector (`segment north`,
+`segment containing <room>.<edge>`) only ever picks a straight segment, so here it is refused
+with [`E_SEGMENT_SELECT`](error-codes.md).
+
+`dims auto` synthesizes one `R` leader per distinct arc (deduplicated by centre and radius,
+so a circle written as two semicircles gets one call-out) and one `φ` per circular room,
+while the linear chains stay on the straight facades — a curved facade carries no chain and
+no tick. The `φ` call-out sits **on** the diameter, through the centre, which is where a
+room name would otherwise be: move the *name* with `label "…" at (x,y)`, since the compiler
+never relocates a dimension to make room for a label. Arc-length dimensions are not
+implemented.
+
+### Strip (v1.13)
+
+```
+strip <right|left|down|up> at (x,y) gap <mm> [height|width <mm>] {
+  room [id=<id>] size <main>[x<cross>] [label "<text>"] [uses <kind>…]
+  …
+}
+```
+
+A **row or column of rooms** laid out end to end. `<dir>` is the fill axis; each
+room's main-axis offset is the running sum of the previous rooms' extents plus
+`gap`, and the shared cross dimension is the strip's `height` (for a horizontal
+`right`/`left` strip) or `width` (for a vertical `down`/`up` strip). A room gives
+its **main-axis extent** with `size <main>`, and may override the shared cross with
+`size <main>x<cross>`. Declaration order is fill order.
+
+`strip` is pure sugar: it expands to ordinary absolute-placed rooms during resolve,
+so everything downstream — walls, doors, relational references **to** the strip's
+rooms — is unchanged. It is a **plan-level block only** (nesting it inside a
+component, control-flow block, or another strip is `E_STRIP_NEST`); a room that
+supplies no cross dimension while the strip supplies none is `E_STRIP_SIZE`.
+
+```
+strip down at (4000,0) gap 0 width 3000 {
+  room id=r_bed  size 3000 label "Bedroom" uses bedroom
+  room id=r_hall size 1400 label "Hall"    uses hall
+  room id=r_bath size 1600 label "Bath"    uses bath
+}
+```
+
+### Door
+
+```
+door [id=<id>] [<kind>] at (x,y) width <mm> [wall <ref>] [hinge left|right|near start|end] [swing in|out|inward|outward|into <room>] [slide left|right] [open <0..1>]
+door [id=<id>] [<kind>] on <wall> at <pos> width <mm> [hinge …] [swing …] [slide …] [open …]
+```
+
+Drawn as an opening in the host wall, the open leaf as a thin **slab** (about 40 mm,
+never more than 6% of the door's width) standing at its hinge jamb, and the
+quarter-circle swing as a **solid** fine arc — on a plan a dash means above the cut
+plane or hidden, and the path a leaf sweeps at floor level is neither.
+`wall <ref>` pins the door to a wall by `id` or `kind`; otherwise the nearest
+wall hosts it. `hinge` is relative to the wall's direction. Defaults: `hinge
+left`, `swing in`.
+
+**Which way `in` and `out` open.** `swing in|out` is relative to the wall's
+**drawn direction**: `in` puts the leaf on the right-hand side of travel along the
+wall as seen on the page (y grows downward), `out` on the left-hand side. So a
+south wall drawn west to east, `{ (0,4000) (6000,4000) }`, under a building
+above it, opens a `swing out` door **into** the building. An author thinking in
+building terms writes the building-relative word instead:
+
+- `swing inward` opens the leaf towards the one face of the host wall that has
+  floor (the inside of the building, on an exterior wall); `swing outward` opens
+  it away. Each resolves to the `in` or `out` it means, so the drawing,
+  `describe()` and `lint()` are exactly those of that twin.
+- A wall with floor on both faces (between two rooms) or on neither has no
+  inside: [`E_SWING_SIDE`](error-codes.md#e_swing_side). Name the room instead,
+  with `swing into <room>`.
+
+```arch static
+wall id=w_s exterior thickness 200 { (0,4000) (6000,4000) }
+door id=fire on w_s at 50% width 900 swing outward   # away from the building, however w_s was drawn
+```
+
+**Wall attachment (v1.13).** Instead of `at (x,y)`, place the opening **on** a
+named wall at a position along it: `<pos>` is a percentage of the wall's length
+(`40%`), an absolute distance in millimetres from the wall's start (`1200`), or
+`center`. The point is computed by walking the wall's polyline, so the door is
+pinned to that wall by construction (it can never be reported "off wall"). An
+unknown/ambiguous wall is [`E_ATTACH_WALL_REF`](error-codes.md); a position past
+the wall is `E_ATTACH_POS_RANGE`.
+
+**`<pos>` is an expression (v1.27.0).** It takes the same arithmetic every other
+numeric slot does — literals, `let` bindings, unit suffixes, calls — so a
+generated run of openings can place itself along the wall instead of falling back
+to `at (x,y)` and hand-computing each coordinate:
+
+```arch
+plan "Bays" {
+  units mm
+  let bay = 900
+  wall id=w1 exterior thickness 200 { (0,0) (6000,0) (6000,4000) (0,4000) close }
+  room id=r1 at (0,0) size 6000x4000 uses living
+  for i in 0..4 {
+    window on w1 at bay * i + 600 width 700
+  }
+}
+```
+
+One thing to know about `%` here: inside `<pos>` it is the **percent suffix**, so
+it always *ends* the expression rather than meaning modulo. `on w1 at 5000 % 3000`
+is a parse error; write `on w1 at (5000 % 3000)` if you want the remainder.
+Anywhere else in the language `%` is still the modulo operator. A position that
+evaluates to a value outside the wall run — or to something that is not a finite
+number at all — is `E_ATTACH_POS_RANGE`.
+
+**Room-directed swing & vertex hinge (v1.13).**
+- `swing into <room>` picks `in`/`out` so the leaf opens toward that room's side
+  of the host wall. If the room doesn't border the wall it warns
+  `W_SWING_ROOM_NOT_ADJACENT` and falls back to the default.
+- `hinge near start|end` hinges the leaf at the door-segment end nearer the host
+  wall's start/end vertex — independent of the wall's traversal wording.
+
+```
+door on w_south at 2000 width 1000 hinge near start swing into r_living
+```
+
+#### Door kinds (v1.25)
+
+A bare **kind** word may lead the statement, after any `id=` — the same shape as
+`room polygon` / `room circle` / `dim faces`:
+
+| kind | what is drawn in the reveal | swing arc? |
+| --- | --- | --- |
+| `hinged` *(default)* | leaf slab + solid quarter-circle swing arc | yes |
+| `sliding` | two bypass panels on two fine tracks | no |
+| `barn` | a surface-hung panel on its **dashed** top-hung track, which overruns the far jamb | no |
+| `bifold` | two folding leaves, the fold hinge and the **dashed** head track | no |
+| `pocket` | a panel and the **dashed** (hidden) wall cavity it slides into | no |
+| `garage` *(v1.31)* | a sectional panel in the reveal, plus its **dashed** overhead projection | no |
+| `double` | two leaf slabs, each half the width, hung on the two jambs and closing onto each other at the centre, each with its solid swing arc | yes, two |
+| `glazed_sliding` | one fixed and one moving glass panel, drawn in the window's glazing ink, with an arrow on the moving panel | no |
+
+Every panel is a slab drawn with the same pen as a hinged leaf, and a dash is never
+decoration: it marks what is above the cut plane (a track, a parked garage panel) or
+hidden inside the wall (a pocket's cavity).
+
+`hinged` is the default **and writing it is identical to omitting it** — a plan
+that names no kind compiles to exactly the bytes it always did.
+
+**Only a hinged or `double` door has a swing arc**; a `double` door has two, one per leaf,
+and every rule that reads a swing (`W_SWING_OBSTRUCTED`, `W_LEAF_ACROSS_DOORWAY`, the clear
+zones, `repair`, `finish`) reads each leaf as drawn. A swinging leaf wider than 1219 mm
+(48 in) is [`W_LEAF_TOO_WIDE`](error-codes.md#w_leaf_too_wide): a wide doorway is a `double`
+door, whose leaves are each half its width. For every other kind the leaf sweeps
+nothing, so [`W_SWING_OBSTRUCTED`](error-codes.md#w_swing_obstructed) cannot apply
+to it — which is why that warning's remedies now name them. The rules that measure
+the *doorway* rather than the leaf are unchanged for every kind: you still walk
+through it, so `W_DOORWAY_BLOCKED` and `W_DOOR_CLEARANCE` still fire, and a door of
+any kind connects the same two rooms in `describe --json`.
+
+**`swing` means something different per kind.** It is deliberately reused rather
+than joined by a second handed keyword, because "which normal side of the wall" is
+genuinely the same property in each case — and it is the one handed rule already
+proved correct under `place … mirror`:
+
+| kind | `swing in\|out` selects |
+| --- | --- |
+| `hinged`, `double` | which side of the wall the leaf (both leaves) sweeps to |
+| `barn` | which **face** of the wall the panel hangs on |
+| `bifold` | which **face** the panels fold toward |
+| `sliding`, `pocket` | *not accepted* — the panel stays in the plane of the wall, or inside it |
+| `garage` | *not accepted* — the panel parks overhead **inside**, and which side that is is derived from which face has floor |
+
+**`slide left\|right`** is which way the panel travels to open, read along the host
+wall's traversal direction exactly as `hinge` is (so a mirrored `place` carries it
+correctly with no flip). Default `left`. **`open <0..1>`** is how far the panel is
+**drawn** open — 0 closed, 1 fully open, default 0.5. It is a drawing fact and
+nothing else: no measurement, no lint rule and no `describe --json` field reads it,
+so a door cannot be made to satisfy a check by being drawn ajar. Outside `[0,1]` it
+is [`E_DOOR_OPEN_RANGE`](error-codes.md#e_door_open_range) with a clamping fix.
+
+**A `garage` door takes no clause at all**, and each refusal is its own argument. `hinge`
+and `slide` because the leaf travels **up**, not around a jamb and not along the wall.
+`swing` because the panel parks overhead *inside the building*, and which side that is is a
+fact about the plan rather than a choice: the resolver probes one wall thickness off each
+face and asks which side has floor — the same poly-aware rule `swing into <room>` uses, so it
+is right on a courtyard and on a concave room. (When neither side is a room — a garage door in
+a garden wall — the projection falls back to the wall's own `+normal` side.) And `open`
+because a sectional door retracts **vertically, out of the plan's cut plane**: there is no
+intermediate position a plan can draw, so a clause that changed nothing would be silent-error
+design.
+
+The overhead projection is a rectangle the width of the opening and half that deep, capped at
+1200 mm so a wide double door does not throw a two-metre dashed band across the cars. It is
+**dashed**, which is the drawing's standing convention for anything above the cut plane —
+the same statement an `upper_cabinet`, a [`roof`](#roof) eaves line and a [`void`](#void)
+make.
+
+A `glazed_sliding` door is a terrace or patio door. It takes the `slide` and `open` clauses of
+the sliding family, and it counts as a door in the access graph, the schedule and `describe`.
+`slide` says which way the moving panel goes; left out, it is `left`, as for every sliding kind.
+A person passes through the one panel that moves, so [`W_DOOR_CLEARANCE`](error-codes.md#w_door_clearance)
+and the route width read **half** the door's `width`, the nominal share of one panel of two, as they
+read one leaf of a `double` door.
+
+**What `width` means.** On every kind, `width` is the **structural opening**: the gap cut through
+the wall from jamb to jamb, along the wall's line. It is the figure `describe --json` reports. It
+is not the moving leaf and not the clear glass. A `sliding` or `glazed_sliding` panel is drawn at
+55% of `width`, so the two overlap by 10% when closed, and on the drawing a panel pushed fully open
+leaves 45% of `width`. Lint does not read that 45%. It reads a nominal figure, as it does for any
+door: half the `width` for `glazed_sliding`, and the whole `width` for `sliding`, which it has always
+read that way. ArchLang models no frame, so it has no clear-glass figure. A window's `width` is the
+same gap.
+
+**Other clauses are refused, not ignored.** `hinge` is hinged-only (a `double` door has a
+leaf on each jamb, so there is no side to choose) and `slide`/`open` are sliding-family-only; the wrong pairing is
+[`E_DOOR_KIND_CLAUSE`](error-codes.md#e_door_kind_clause) with a machine-applicable
+fix that deletes the clause. A sliding-family or `garage` door on a wall whose hosting
+edge is an `arc` is [`E_DOOR_KIND_CURVED`](error-codes.md#e_door_kind_curved) — a straight panel
+on a straight track has no meaning on a curved reveal, and drawing one anyway would
+be a wrong drawing with no diagnostic. A `double` door is accepted there, as a hinged one
+is: both leaves are taken from the tangent at the doorway's centre. Clause order follows the grammar line above.
+
+A `pocket` door needs its own width plus end clearance of clear wall past the
+slide-side jamb, or [`W_POCKET_RUN`](error-codes.md#w_pocket_run) — measured, and
+truncated at any other opening inside the run, because a panel cannot slide through
+a window either.
+
+**Every kind** — a jamb is a jamb — must leave at least the wall's own thickness of
+wall between it and a **corner**, or
+[`W_DOOR_NEAR_CORNER`](error-codes.md#w_door_near_corner). The drawing is correct
+either way (the nib is drawn, and mitred into the neighbouring run); what the warning
+says is that at page scale a sliver shorter than the wall is deep stops reading as
+wall and reads as a chamfer on the corner, and has no returned face to carry a frame
+and architrave. A corner means the run **ends** there and the wall goes somewhere
+else, so a wall's free end, a redundant collinear vertex, a partition teeing into a
+run that carries straight past it, and a **tangent** arc/straight hand-over are none
+of them corners. On a curve the nib is an **arc length**, not a chord, measured at
+the wall's centreline between the radial jambs.
+
+The same holds where a wall **tees into or crosses** the run, or meets it at a corner, for
+doors, windows and cased openings alike: a jamb must leave at least the larger of 100 mm and
+half the wall's thickness between it and the meeting wall's **face**, and no wall may stand
+inside the span, or [`W_OPENING_AT_JUNCTION`](error-codes.md#w_opening_at_junction). (A door
+`W_DOOR_NEAR_CORNER` reports is that warning's alone at the corner: one defect, one
+warning.) Two openings on one run may not share wall or leave less than a 100 mm mullion
+between them ([`W_OPENING_OVERLAP`](error-codes.md#w_opening_overlap)), and a door or cased
+opening whose side spans two rooms, each by at least a jamb's nib, is
+[`W_CONNECTOR_AMBIGUOUS`](error-codes.md#w_connector_ambiguous): which room it opens into
+is then a guess. Each warning quotes only moves it has checked along the run.
+
+```arch
+plan "Door kinds" {
+  units mm
+  wall exterior thickness 200 { (0,0) (14000,0) (14000,5000) (0,5000) close }
+  wall id=p1 partition thickness 100 { (4000,0) (4000,5000) }
+  wall id=p2 partition thickness 100 { (9000,0) (9000,5000) }
+  room id=west   at (0,0)    size 4000x5000 label "West"
+  room id=middle at (4000,0) size 5000x5000 label "Middle"
+  room id=east   at (9000,0) size 5000x5000 label "East"
+  door id=front on exterior at 5% width 1000 swing in
+  door sliding  on p1 at 25% width 1400
+  door pocket   on p1 at 75% width 900  slide left open 0.4
+  door barn     on p2 at 30% width 1100 swing out slide left
+  door bifold   on p2 at 70% width 1500 swing in  slide right
+  door garage   on exterior at 58% width 2400
+}
+```
+
+### Window
+
+```
+window [id=<id>] [<kind>] at (x,y) width <mm> [wall <ref>] [hinge left|right]
+window [id=<id>] [<kind>] on <wall> at <pos> width <mm> [hinge left|right]
+```
+
+An opening drawn the way a window block is: both wall faces carried across it,
+**double glazing** (two panes centred in the wall, a quarter of its thickness apart),
+and a **sill** standing proud of the exterior face. Which face is exterior is read off
+the plan, never guessed: one wall thickness off the wall's centreline on each side (half
+a thickness clear of each face), the side with no room floor — and no `void`, which is
+inside the building too — is outside: the same probe a `garage` door makes to find its
+floor side. A window with the inside on both sides (an interior window, or one onto a
+void) or on neither (a free-standing wall) has no outside and draws no sill. The `on <wall> at <pos>` attachment form works exactly as
+for doors. Two windows can run round a corner: see [Openings by relation](#openings-by-relation).
+
+#### Window kinds
+
+A bare **kind** word may lead the statement, after any `id=`, as on a door. A window with no
+kind word says nothing about how it opens, and draws as above.
+
+| kind | the window | what is drawn |
+| --- | --- | --- |
+| `fixed` | a pane that does not open | one glass line on the wall's centreline instead of two |
+| `casement` | a sash hinged on one jamb | both glass lines and a chevron with its point on the hinged jamb |
+| `tilt` | a sash hinged along its foot | both glass lines and a small circle at mid-span |
+| `tilt_turn` | a sash that does both, sold as tilt and turn | both glass lines, the chevron and the circle |
+| `sliding` | a sash that slides along the wall | both glass lines and a two-headed arrow at mid-span |
+
+`hinge left|right` names the hinged jamb of a `casement` or `tilt_turn` window. It reads along the
+wall's direction, as a door's `hinge` does, and follows a mirrored `place` the same way. Leave it
+out when the plan you are copying does not say: the chevron then stands on both jambs, so the
+drawing states no hand. Nothing supplies a side for you, not a default and not `set`. On any other
+window the clause is [`E_WINDOW_KIND_CLAUSE`](error-codes.md#e_window_kind_clause), with a
+machine-applicable fix that deletes it.
+
+The kind reaches `describe --json` as `windows[].kind`, the TYPE column of
+`schedule openings`, a row of the `legend` and Plan JSON (`window_kind`, and `hinge` beside it). Every mark stays inside the wall's thickness and the opening's width, so a
+kind moves nothing else on the sheet. A kind reads no height: a `fixed` window draws the same at
+`sill 0` and `sill 900`. A `fixed` or `tilt` window is no way onto a balcony, whatever its sill
+([`W_BALCONY_NO_DOOR`](error-codes.md#w_balcony_no_door)).
+
+```arch
+plan "Window kinds" {
+  units mm
+  schedule openings
+  legend
+  room id=a at (0,0) size 6000x4000 label "Living" uses living
+  walls from rooms exterior 300 partition 100
+  door on a.left at center width 1000 swing into a
+  window tilt_turn on a.top at 1500 from start width 1500 hinge left sill 900
+  window fixed on a.top at 4500 from start width 1500 sill 900
+  door glazed_sliding on a.bottom at center width 2400 slide right
+}
+```
+
+### Opening (v1.3)
+
+```
+opening [id=<id>] at (x,y) width <mm> [wall <ref>]
+opening [id=<id>] on <wall> at <pos> width <mm>
+```
+
+A **cased, leaf-less gap** — it voids the wall like a door does, but draws no leaf
+and no swing arc and no glazing. Use it where two spaces flow into one another
+without a door: a living room into a hall, an open-plan kitchen, a wide cased
+passage. Like a door, an `opening` **connects two spaces** in the
+[access graph](analysis.md) — but because there is no leaf to subtract, its clear
+width equals its nominal width (a door loses ~60 mm to the leaf and stop). It also
+takes the `on <wall> at <pos>` attachment form.
+
+It is drawn the way an architect draws a cased opening: the wall solid is genuinely
+severed, with the floor continuous through the passage and **only the capped jambs**
+drawn. Nothing bridges the gap — no lintel line, no cover. It lives on the CAD layer
+`A-DOOR`, not `A-GLAZ`.
+
+```
+opening id=o_living at (4000,3700) width 900 wall partition   # living ↔ hall, no door
+opening on w_part at 50% width 900                            # centred on the partition
+```
+
+### Furniture
+
+```
+furniture <kind> [id=<id>] at (x,y) size <w>x<h> [label "<text>"] [rotate 0|90|180|270] [in <room>]
+furniture <kind> [id=<id>] against wall <ref> [segment <n>|<selector>] [offset <mm>] [side left|right] [size <along>x<depth>] [label "<text>"] [in <room>]
+furniture <kind> [id=<id>] in <room> centered [size <w>x<h>] [label …] [rotate …]
+furniture <kind> [id=<id>] in <room> anchor <a> [flush] [inset <mm>] [size <w>x<h>] [label …] [rotate …]
+furniture <kind> [id=<id>] against <room>.<edge> [offset <mm>] [size <along>x<depth>] [label …]
+… [rotate 0|90|180|270 | facing <id>] [mirror] [clear front <mm>] [clear sides <mm>] [in <room>]
+```
+
+A piece of furniture or a built-in fixture. Every **catalogued** kind draws a real
+plan symbol — a WC with a cistern, a bed with a headboard, a wardrobe with its hanging
+rail and hangers — and ignores any `label`. Any other kind falls back to a schematic
+**labelled rectangle**, which is the escape hatch for something ArchLang has no
+symbol for. The catalogue is `archlang manifest --json`'s `fixtureCategories`, and every
+kind is documented with its symbol, footprint and facing in
+[Furniture & Fixtures](furniture.md).
+
+**`mirror` swaps one piece's left and right.** A `sofa_l` drawn with its chaise on the left comes
+out with it on the right, and the piece's back stays where `rotate`, `facing`, `against` or an
+`anchor` put it:
+
+```arch
+plan "Two sofas" {
+  units mm
+  room id=a at (0,0) size 6000x4000 uses living
+  walls from rooms exterior 300 partition 100
+  furniture sofa_l in a anchor top-left flush size 2600x1800
+  furniture sofa_l in a anchor top-right flush size 2600x1800 mirror
+}
+```
+
+The word takes no axis, because it works in the symbol's own frame: with `rotate 90`, a page axis
+would turn the back too. It sits among `rotate` and `facing`, in either order, and reads the same
+bit a reflecting `place` does, so a mirrored piece inside a `place … mirror` draws the plain
+symbol. A symbol with a vertical mirror axis has no left and right to swap and keeps its exact
+bytes, so a plain `table` does not change. `describe()` and `lint()` do not move, except the `hand`
+in `--facts symmetry`. Plan JSON carries it as `mirror: true`.
+
+A piece can be placed three ways: absolutely with `at (x,y)` (optionally turned with
+`rotate`), snapped **`against wall <ref>`** so its back sits on the wall and its
+rotation is derived for you, or **relative to a room** (v1.13). A kind with a
+catalogued footprint placed `against wall` may **omit `size`** and take it (e.g.
+`furniture wc against wall w1 in bath`) — `offset` is where the piece's **centre**
+lands along the wall run; `at` and room-relative placement, and any kind with no
+catalogued footprint, still need an explicit `size`. `in <room>` records which room
+owns the piece (used by the lint rules).
+
+**Segment selectors.** On a wall of several segments, `segment <n>` (0-based, in the wall's
+direction) says which one the piece backs onto. A selector can stand in its place and resolves to
+exactly that number, so the plan draws, describes and lints as if the number were written:
+
+- `segment north|south|east|west` picks the straight segment of a **closed** wall whose outward
+  face, the side away from the floor the ring encloses, looks that way (north is up the page).
+  On a courtyard ring that `walls from rooms` derived, the floor is outside the ring, so its
+  outward faces look into the court. An authored closed wall is read the same way as any other
+  closed wall: its floor is the side it encloses, even when it was drawn round a courtyard. An
+  open wall has no floor side, so a compass word on it is refused. As with datums, the words
+  are legal only in the root of a plan whose `north` is `up`; inside a placed component, or
+  under any other `north`, they are [`E_DATUM_COMPASS`](error-codes.md).
+- `segment containing <room>.<edge>` picks the straight segment whose centreline lies on that
+  room edge's line and overlaps the edge. It works on open walls and inside components (in the
+  component's own words). The edge is read as a datum, so a circle, a slanted polygon or an
+  unplaced room is refused as a datum is, and a polygon's side reads its one run.
+
+A selector that matches no segment, or several, is [`E_SEGMENT_SELECT`](error-codes.md), and the
+message lists the candidate numbers. A derived wall is reached only the way `segment <n>` reaches
+it, through its category (`against wall exterior` when the outer ring is the only exterior
+wall). After `segment`, a bare compass word is always the selector; to use a variable with that
+name as the number, write it in parentheses: `segment (east)`.
+
+**Relations (ADR 0029).** Three clauses say what a piece is *for*, and the compiler derives or
+checks the rest in closed form; it never searches for a layout.
+
+- `against <room>.<edge> [offset <mm>]` backs the piece onto a room's own edge, which is how
+  furniture reaches a wall `walls from rooms` derived (that wall has no id). The back lies on the
+  room-side face of the one wall standing on that edge line, or on the edge line when none does;
+  `offset` runs from the edge's start corner (`top`/`bottom` from `left`, `left`/`right` from `top`)
+  to the piece's centre and defaults to the midpoint. The rotation is derived; `size` is
+  along × depth and may be omitted for a catalogued kind. A wall beside the line, a part-covered
+  span, two thicknesses or a run declared `open between` is [`E_FURN_AGAINST`](error-codes.md).
+- `facing <id>` derives the quarter-turn: of the four turns, the one whose **front ray** (from the
+  middle of the front edge, outward; `rotate 0` puts the back to the north) enters the target
+  nearest. The target is another piece, a rectangular room, or a door, window or opening of the
+  same plan or component, and may come later in the source. No hit is
+  [`E_FACING_MISS`](error-codes.md), two equally near is `E_FACING_TIE`, and `facing` beside
+  `rotate` or `against` is `E_FACING_CONFLICT`. A symmetric kind (a table) cannot face anything
+  (`E_FACING_SYMMETRIC`), and a turn that would put a catalogued piece's back on its short side is
+  `E_FACING_TRANSPOSED`. `facing` never moves the piece.
+- `clear front <mm>` and `clear sides <mm>` declare a depth to keep free in front, or along both
+  edges beside the back. They draw nothing; `describe()` reports the measured free depth and lint
+  warns when a solid piece, a wall body or a door swing stands inside it
+  (`W_FURN_CLEAR_FRONT`, `W_FURN_CLEAR_SIDES`). Nothing has a default, and a catalogued
+  clearance is a floor: a `clear front` shallower than it does not silence `W_FURN_CLEARANCE`.
+
+Each clause shows in `describe()` only when written (`relation`, `facing`, `clear`). Undeclared,
+lint still reports a chair at a table or desk in the same room drawn with its back to it
+([`W_SEAT_FACING_AWAY`](error-codes.md)).
+
+**Room-relative placement (v1.13).** `in <room> centered` centres the fixture in
+that room's box; `in <room> anchor <a> [inset <mm>]` snaps it to a corner or edge.
+The anchor `<a>` is one of `top-left`, `top`, `top-right`, `left`, `center`,
+`right`, `bottom-left`, `bottom`, `bottom-right`; `inset` (default `0`) pulls it in
+from the referenced edge(s). The `in <room>` here both positions **and** owns the
+fixture. An unknown room, or a relational room that could not be placed, is
+[`E_PLACE_REF`](error-codes.md).
+
+**`flush` — measure from the wall face, not the centerline.** A room's rectangle is
+drawn on wall **centerlines**, so `anchor bottom` with `inset 0` puts the piece's back
+half a wall thickness *inside* the solid (a `W_FURNITURE_WALL_COLLISION`) — the reason
+you would otherwise hand-write `inset 100` for a 200 mm wall you never named. Adding
+`flush` re-bases `inset` (still defaulting to `0`) onto the **inner face** of the wall
+behind each anchored edge: centerline + thickness / 2, toward the room. So
+`anchor bottom flush` sits on the plaster, and `anchor bottom flush inset 50` sits
+50 mm off it.
+
+The rule is per edge and independent, so a corner anchor can be flush on one edge and
+room-referenced on the other, and an anchored edge with **no** wall behind it simply
+keeps the room-rectangle reference (there is no face to measure from). `flush` is a
+position rule only — it composes with the derived rotation below, and it needs an
+anchored edge: on `centered` (or the equivalent `anchor center`) it is
+[`E_FURN_FLUSH`](error-codes.md). It comes before `inset`, which it re-bases.
+
+An anchor also **derives the rotation** of a wall-requiring fixture you did not turn
+by hand: the anchored edge names the wall its back should face. It is derived only
+when that answer is unique — the edge must be walled, and the footprint's aspect must
+allow it as the back — and an explicit `rotate` always wins. A fixture left facing the
+room is [`W_FIXTURE_BACK_TO_ROOM`](error-codes.md), with a `rotate` fix. See
+[Furniture & fixtures](furniture.md).
+
+```
+furniture bed  in r_bed    anchor top-left inset 300 size 1500x2000 label "Bed"
+furniture sofa in r_living centered                  size 2000x900  label "Sofa"
+furniture wc   in r_bath   anchor bottom flush       size 400x700   # back on the wall face
+```
+
+The full placement rules, the fixture symbol catalogue, and the
+fixture-aware lint checks live on the dedicated **[Furniture & fixtures](furniture.md)**
+page. Standard fixtures are also importable components at typical residential sizes:
+
+```
+import "lib/fixtures.arch": wc, basin, shower
+wc(6200, 4600)
+```
+
+### Dimension
+
+```
+dim [faces|clear] (x1,y1)->(x2,y2) [offset <mm>] [text "<override>"]
+```
+
+A dimension line offset perpendicular from the measured segment, with tick
+marks and a label. Without `text`, the measured length (mm) is shown. Endpoints
+are measured verbatim (never grid-snapped) and a zero `offset` draws the line on
+the measured segment itself, with no witness lines.
+
+**Which side it lands on is the endpoint ORDER.** The offset runs along the *left
+normal* of from→to, so `dim (0,6000)->(7000,6000) offset 500` reads below the
+plan while the same pair reversed reads above it. Getting this backwards pushes
+the line into the building, across labels and poché — the advisory
+[`W_DIM_INSIDE`](error-codes.md), whose machine-applicable fix swaps the two
+endpoints for you. The swap mirrors the line *across the segment being measured*,
+so it is offered only when that actually reaches the outside: a dimension whose
+run cuts through the plan reads inside either way, and keeps the warning with no
+automatic edit.
+
+The number rides just outside its line, on the side the offset points, so a negative
+`offset` puts the line *and* its number on the right normal: `dim a->b offset -k` draws
+exactly what `dim b->a offset k` draws.
+
+**A `text` that reads as a length must agree with the line.** When the whole text is a
+number with an optional `mm`, `cm` or `m` (`4000`, `4,000`, `3.5 m`), lint reads it at its
+own written precision and warns when the measured span, rounded to that last digit, is a
+different number ([`W_DIM_TEXT_MISMATCH`](error-codes.md)). So `4000` stands for
+3999.5–4000.5 mm and `3.5 m` for 3450–3550 mm, and copying the number the drawing would print
+never warns. Any other text (`VARIES`, `EQ`, `2300 clear`, `R9000`) is not checked.
+
+#### `faces` / `clear` — let the walls place the endpoints
+
+A room rectangle's edges are wall **centerlines**, so a hand-written overall dim
+between two room corners is short by half a wall thickness at each end — the
+classic "the drawing says 10000 but the building is 10300" mistake (and the
+`text` override written to match it is wrong the moment the wall changes).
+
+Both forms push each endpoint along the measurement axis, away from the other
+one, onto the face of the wall that endpoint runs into:
+
+| Form | Each endpoint lands on | Measures |
+|------|------------------------|----------|
+| `dim faces …` | the **outer** face | the outside-to-outside span |
+| `dim clear …` | the **inner** face | the clear (free) width between the walls |
+
+```arch
+plan "Faces" {
+  units mm
+  wall exterior thickness 200 { (0,0) (5000,0) (5000,4000) (0,4000) close }
+  room id=r at (0,0) size 5000x4000 label "Studio"
+  dim faces (0,4000)->(5000,4000) offset 600   # prints 5200, not 5000
+  dim clear (0,2000)->(5000,2000) offset 0     # prints 4800 — the clear width
+}
+```
+
+The wall is found as the nearest wall segment *perpendicular to the dimension's
+own direction* (at a corner, only the wall the measurement runs into can bound
+it). The projection is closed-form and idempotent — an endpoint already on the
+outer face stays put — and an endpoint with no wall across the axis keeps its
+written coordinate and raises the advisory `W_DIM_NO_WALL`.
+
+#### Automatic dimension chains
+
+`dims auto …` (see [Plan-level settings](#plan-level-settings)) draws the whole
+exterior dimensioning for you, in the GB/T 50104 convention: parallel **chains**
+on the facades, all outside the building, all measured from the outer wall faces,
+stepping outward from the wall.
+
+| Chain | Slot | Ticks |
+|-------|------|-------|
+| openings | innermost | every opening edge on that facade, between the two outer corners — so the chain reads corner · pier · opening · pier · corner |
+| axis | middle | the declared [positioning axes](#positioning-axes-定位轴线) on that direction, when the plan has any — the GB/T axis chain proper. Otherwise the sorted unique room-boundary coordinates on that axis (the partition axes — the classic `4000 · 3000` room chain) |
+| overall | outermost | one span, outer face to outer face |
+
+`dims auto rooms` emits just the axis chain, `dims auto overall` just the overall
+span, and `dims auto all` all three (plus the `walls` thickness call-outs). The
+bottom and left facades are always dimensioned; the top and right are added when
+`all` finds openings of their own to chain there. A chain with fewer than two
+distinct ticks is skipped, and nothing is ever drawn inside the building.
+Dimensioning is presentation only: it never changes `describe()` or the resolved
+plan.
+
+A facade is read from its **outline**, not from one wall line. On a stepped facade,
+openings on every leg that is outermost at the opening's position join the same
+chain, and the chains are offset from the outermost face. Some openings no chain can
+measure: one on a curved or angled wall, or one on a face that is not the outline,
+such as a courtyard. For `dims auto all`, `lint()` reports each such opening on the
+outside of the building as
+[`W_OPENING_NOT_DIMENSIONED`](error-codes.md#w_opening_not_dimensioned), so you can
+dimension it by hand. A hand-written `dim` with an endpoint on the opening clears it.
+
+### Column
+
+```
+column [id=<id>] at (x,y) size <w>x<h>
+```
+
+A solid structural column (filled square). Useful for grids of columns in
+larger plans. `at` is the **top-left corner**, like a room's — the opening elements
+(`door`, `window`, `opening`) are the ones whose `at` is a centre, because they sit on a
+wall.
+
+### Vertical circulation — `stair`, `elevator`, `escalator` (v1.21)
+
+```
+stair     [id=<id>] at (x,y) size <w>x<h> dir up|down [width <mm>]
+stair     [id=<id>] dir up|down width <mm> { flight … landing … flight … }
+elevator  [id=<id>] at (x,y) size <w>x<h>
+escalator [id=<id>] at (x,y) size <w>x<h> dir up|down
+```
+
+Three elements that draw the conventional plan symbols — and, in a multi-storey plan, the
+only thing that joins two floors.
+
+| | drawn as | `dir` | CAD layer |
+| --- | --- | --- | --- |
+| `stair` | tread lines at a 280 mm nominal going, a mid-flight **break line** (the paired-diagonal cut, with the treads it crosses omitted) and a direction arrow labelled `UP`/`DN` | required | `A-FLOR-STRS` |
+| `elevator` | the car rectangle with crossed diagonals | — a lift serves every storey it appears on | `A-FLOR-EVTR` |
+| `escalator` | parallel chevrons pointing the way of travel, plus the same `UP`/`DN` arrow | required | `A-FLOR-STRS` |
+
+`at` is the footprint's **top-left corner** (as for `room` and `furniture`). They draw on
+the same pass as furniture, under the wall poché.
+
+**Which way the run reads.** Two rules compose.
+
+1. *Geometry.* The flight lies along the footprint's **long axis**, and a **rising** flight
+   starts at the end of that axis with the **larger coordinate**: the bottom end of a
+   portrait footprint, the right end of a landscape one. So a `dir up` arrow points north
+   (or west).
+2. *`dir`.* You meet a **descending** flight at its head, not its foot, so a `dir down` run
+   is entered from the **opposite** end and its arrow points the other way. That is what
+   makes one shaft read correctly on both storeys — the `UP` on the floor below and the
+   `DN` on the floor above point in opposite directions, as a drawing set should, with no
+   cross-level inference beyond the shared id.
+
+The geometric half is a **fixed drafting convention, not a search for the nearest door** —
+it is the same answer in the renderer and in the analysis layer, on every storey, whatever
+else the plan contains. A flight genuinely approached from the north or the west therefore
+draws its arrow the wrong way round in v1; swap the footprint's authored coordinates, or
+wait for the `entry <edge>` clause a later release can add without changing this default.
+Inside a `place`d component the rule is read in the component's own frame and carried by
+the `rotate`/`mirror`, so a turned or mirrored run is entered from the image of the end it
+was authored with, and a mirrored stair's break line is drawn mirrored.
+
+**`width` (stairs only)** is the FLIGHT width measured across the run. It defaults to the
+footprint's cross-axis extent, and may not exceed it
+([`E_STAIR_WIDTH`](error-codes.md#e_stair_width)). A straight stair draws **one flight**: a
+narrower `width` centres the flight band in the footprint and leaves the remainder undrawn.
+
+**A turning stair** is one `stair` of authored pieces:
+
+```arch static
+stair id=s dir up width 1000 {
+  flight at (2630,1100) size 1000x1530
+  landing at (2630,100) size 1000x1000
+  flight at (1100,100) size 1530x1000
+}
+```
+
+Pieces alternate, starting and ending with a `flight`, and each touches the next along the
+flight's whole `width`, which the block must state. Nothing lays them out: pieces that do not
+make one stair are refused ([`E_STAIR_PIECES`](error-codes.md#e_stair_pieces)), never moved.
+Pieces are in **climbing order on every storey**: to draw the storey above, copy the block and
+change only `dir`. `dir up` boards the first flight's foot and `dir down` the last flight's head.
+A flight's direction comes from what it touches, never from its long side, so a square flight or
+one running along its short side reads correctly. `flight` and `landing` mean something only
+inside the block, so `room id=landing` is still a room.
+
+It draws one `UP` or `DN`, one walking line through every piece, one arrowhead and one break
+line, and the floor it wraps round stays floor: every reader takes the pieces, never the bounding
+box. A storey height moves none of this: treads stay at the nominal going. `describe()` adds
+`flights[]`, `landings[]` and `turn`, and lint reads the run as the sum of the flights, with **one
+going fewer per landing**, because a flight ends on its landing as the top flight ends on the
+floor above. So at 2750 mm, under the default limits, one landing needs 11 goings of 220 mm:
+2420 mm of flights, not the 2640 mm of a straight flight
+([`W_STAIR_TOO_STEEP`](error-codes.md#w_stair_too_steep)). The flights must also hold those goings
+whole, because every going of a stair is the same: 1210 + 1210 mm is 2420 mm and holds 5 + 5, one
+short, and the warning says so.
+
+Lint measures the foot, the head, the head a flight from below arrives at, which is the lower stop's
+last flight's, and each **landing between the flights**, which must run the flight's `width` along
+each flight that meets it ([`W_STAIR_NO_LANDING`](error-codes.md#w_stair_no_landing), at least
+1200 mm in a building other than a dwelling). It is read along each flight in turn, never as the
+length of the walking line, on the stop the climb starts from, so a shaft reports it once. At a
+corner the landing cannot be shorter than `width`, because each flight meets it whole, so only a
+wall across it or that 1200 mm can report there. On a storey a block rises from, the climb spreads
+over the flights with the landings level, so its high end is passed under as a flight's is, and a
+landing with less than 2 m beneath it stands in the way whole.
+
+Where a block's stops do not match, the mismatch is the report
+([`W_SHAFT_FOOTPRINT_MISMATCH`](error-codes.md#w_shaft_footprint_mismatch)): that head is not read,
+each stop stands as what it says, a stop that comes down as a stairwell and one that rises as a
+stair rising from its floor, and the coverage report says `block-stair`.
+
+**Winders.** A quarter-turn landing whose size is exactly `width` × `width` may end in
+`winders <n>`, a whole number from 2 to 8: the landing is then drawn as `n` tapered steps fanning
+from its inner corner (the corner its entry and exit sides share) at equal angles, the walking line
+crosses it as one chord, and lint counts each winder as one going instead of the one going a level
+landing replaces. It is not measured as a landing to stand on. A winder is geometry only: no going
+at the walking line or at the narrow end is checked against any standard, and there is no true
+helical (spiral) stair.
+
+```arch static
+stair id=s dir up width 1000 {
+  flight at (1195, 145) size 2700x1000
+  landing at (3895, 145) size 1000x1000 winders 4
+  flight at (3895, 1145) size 1000x560
+}
+```
+
+On a half-turn landing, or one larger than the flights, `winders` is refused (`E_STAIR_PIECES`);
+draw that turn as a level landing. All of this is arithmetic on what the plan says, not a statement that a
+stair complies with anything.
+
+**What it does to circulation.** The footprint obstructs the
+[navigation grid](analysis.md#circulation--how-a-person-walks-the-plan) exactly like a piece
+of furniture — you cannot walk over a lift shaft — **except** that the body-radius halo is
+lifted outside its entry edge(s), so the landing you cross to reach the flight stays
+walkable. A stair has one entry edge (the arrow's tail, so it moves with `dir`), an
+escalator has both narrow ends (you step on at one and off at the other), a lift car is
+entered from its south edge.
+
+**Vertical identity.** In a plan made of [`level` blocks](#levels--a-multi-storey-building-v121),
+a run carrying the **same id on two storeys is one shaft**. That single rule buys three
+things:
+
+- `describe()` reports it under `vertical.connections` (see
+  [analysis.md](analysis.md#vertical-circulation--the-building-graph-v121));
+- the upper storey is **reachable** — a floor with no exterior door of its own no longer
+  raises `W_NO_ENTRANCE`, because you arrive in the room the shaft lands in (provided the
+  room the shaft starts from is itself reachable: a stair in a door-less store leads nowhere);
+- `validate --graph` counts it as a connector between the rooms it lands in on each floor.
+
+Nothing is inferred from geometry: two flights at the same coordinates with different ids
+are two different shafts. A run whose id appears on exactly one storey of a multi-storey
+plan is [`W_STAIR_UNMATCHED`](error-codes.md#w_stair_unmatched) — advisory, so a top-floor
+flight to a roof hatch simply carries the warning.
+
+A turning stair joins storeys the same way, by its id, and each stop draws the same block: the same
+flights and landings in the same order, at the same `width`. Change one piece on one storey and
+[`W_SHAFT_FOOTPRINT_MISMATCH`](error-codes.md#w_shaft_footprint_mismatch) names it. A straight
+flight over or under a block is always that warning; if it really is two stairs, give them two ids.
+Where a block climbs on from a storey you arrive at the head of its last flight and board the foot
+of its first, and those two ends can stand in two rooms.
+
+```arch
+plan "Two-storey" {
+  units mm
+  level 1 "Ground" {
+    wall id=shell exterior thickness 200 { (0,0) (6000,0) (6000,6000) (0,6000) close }
+    room id=hall at (0,0) size 6000x6000 label "Hall" uses hall
+    door id=front on shell at 15000 width 1000 swing into hall
+    stair id=stair at (500,2000) size 900x2600 dir up
+  }
+  level 2 "First" {
+    wall id=shell exterior thickness 200 { (0,0) (6000,0) (6000,6000) (0,6000) close }
+    room id=landing at (0,0) size 6000x6000 label "Landing" uses circulation
+    window id=w on shell at 3000 width 1200
+    stair id=stair at (500,2000) size 900x2600 dir down
+  }
+}
+```
+
+### Roof — the eaves projection line (v1.29)
+
+```
+roof overhang <mm> [wall <id>]
+roof polygon (x,y) (x,y) (x,y) …
+```
+
+One dashed outline of what oversails the plan, on the `A-ROOF` CAD layer. Two spellings of
+the same element, exactly as `room` has `at`+`size` / `polygon` / `circle` — the word after
+`roof` picks which, and there is no form that takes both.
+
+**`roof overhang` derives the outline from a closed wall ring.** Each face is pushed out
+`thickness / 2 + <mm>` along **its own outward normal**, and the corners are re-cut by exact
+line–line intersection (a mitre). Two consequences worth stating:
+
+- It is closed form at **any angle**. Orientation comes from the ring's shoelace sign, not
+  from a bounding box or a "topmost vertex" guess, so an oblique or hexagonal plan gets a
+  true parallel outline rather than a fitted approximation. A rectilinear plan's corners
+  come out exact.
+- It **moves when the walls move**. There is no second set of coordinates to keep in step,
+  which is the whole reason the sugar exists.
+
+Which ring? The one named by `wall <id>`, or — with no clause — the plan's single closed
+wall of category `exterior`. If the plan has none, or more than one, that is
+[`E_ROOF_AMBIGUOUS`](error-codes.md#e_roof_ambiguous) rather than a guess: name the wall, or
+state the outline yourself.
+
+**`roof polygon` takes the ring verbatim**, implicitly closed (no repeated last vertex), for
+the roof whose edge is not the building's — a hip cut back over a terrace, a porch canopy, a
+monopitch that oversails one facade only.
+
+**It refuses rather than approximating.** An `arc` edge on the ring is
+[`E_ROOF_CURVED`](error-codes.md#e_roof_curved): offsetting a curve is a different
+construction, and faceting it would put a tessellation in the one place a reader is entitled
+to read a true parallel. An outline that crosses itself — a bow-tie ring, or an overhang wide
+enough to swallow a notch in the wall it follows — is
+[`E_ROOF_SELF_INTERSECT`](error-codes.md#e_roof_self_intersect). Use `roof polygon` for
+either.
+
+| refusal | when |
+| --- | --- |
+| [`E_ROOF_OVERHANG`](error-codes.md#e_roof_overhang) | the projection is zero or negative |
+| [`E_ROOF_AMBIGUOUS`](error-codes.md#e_roof_ambiguous) | no closed `exterior` wall to infer from, or several |
+| [`E_ROOF_WALL`](error-codes.md#e_roof_wall) | `wall <id>` is unknown, or is not a closed ring |
+| [`E_ROOF_CURVED`](error-codes.md#e_roof_curved) | the ring has an `arc` edge |
+| [`E_ROOF_SELF_INTERSECT`](error-codes.md#e_roof_self_intersect) | the outline crosses itself |
+| [`E_ROOF_POLY_DEGENERATE`](error-codes.md#e_roof_poly_degenerate) | fewer than 3 effective vertices after duplicates and collinear points are dropped |
+| [`E_ROOF_PLACEMENT`](error-codes.md#e_roof_placement) | written inside a `component` body |
+
+**It is drawing-only, by decision.** There is no `describe()` key, no lint rule, no Plan JSON
+projection and no schedule row — a plan view of an overhang carries no pitch, no ridge and no
+fall, so none of those could be honest about it, and a `roof` in `describe()` would invite a
+reader to compute a roof area from a horizontal projection. The one thing it *does* join is
+the drawing **bounds**: the page (and, on a `paper` plan, the auto-fit scale) has to contain
+the eaves. In a multi-storey plan it draws on the storey it is declared in.
+
+`roof` is a plan-level (or `level`-level) statement. Inside a `component` it is
+[`E_ROOF_PLACEMENT`](error-codes.md#e_roof_placement): a roof belongs to a building, not to a
+reusable part of one, and two `place`d copies would each derive an outline and draw two roofs.
+
+```arch
+plan "Bungalow" {
+  units mm
+  north up
+
+  wall id=shell exterior thickness 200 { (0,0) (9000,0) (9000,6000) (0,6000) close }
+  room id=r1 at (0,0) size 9000x6000 label "House" uses living
+  door id=front on shell at 4500 width 900
+
+  roof overhang 600
+}
+```
+
+### Void — a hole in the floor (v1.29)
+
+```
+void [id=<id>] at (x,y) size <w>x<h> [rail top|bottom|left|right|all|none …]
+void [id=<id>] polygon (x,y) (x,y) (x,y) (x,y) … [rail all|none|<n> …]
+```
+
+A stair well, a double-height living room, an atrium: the part of this storey's floor plate
+where there is no floor. Drawn as the conventional dashed rectangle crossed by both
+diagonals, on the `A-FLOR-OVHD` CAD layer. `at` is the **top-left corner**, like a room's.
+
+Three behaviours that are invisible from the syntax:
+
+- **It obstructs circulation.** You cannot walk across a hole, so the
+  [navigation grid](analysis.md#circulation--how-a-person-walks-the-plan) blocks the cells
+  inside it — but the body-radius halo is lifted on **every** edge, because you can stand at
+  the railing. (A `stair` lifts its halo only outside its entry edges; a void lifts all four.)
+- **It does not reduce the room's area.** That number is the floor area of the *room*, and it
+  is what `describe()`, `schedule rooms` and the drawn area label all report; deducting a well
+  from it would leave the drawing and the table disagreeing about a figure neither measures.
+  `describe --json` lists every void under `voids[]` with `id`, `at`, `size` and the room it
+  falls in, which is where a net figure comes from.
+- **The room it belongs to is found from the room's FLOOR, not its bounding box.** A void in
+  the notch of a U-shaped `room polygon` is inside that room's box and outside its floor, and
+  is reported as belonging to no room (`"room": null`).
+
+A non-positive extent is [`E_VOID_SIZE`](error-codes.md#e_void_size). Inside a `component` it
+is allowed and transforms exactly, like a `column`.
+
+**An L-shaped void** is a `polygon`: an implicitly closed ring whose every edge is horizontal or
+vertical (an L, a U, a notch). It is cut into the cells of the grid its own corners make (an L
+has three: the corner square and its two arms), and draws one dashed outline with the two
+diagonals of each cell, so no cross runs outside the hole and the drawing turns with the void
+under `place`. The checks written on rectangles (the walking grid, the stair and furniture
+checks, `finish`) read those cells; `walls from rooms` and the window-sill probe read the ring;
+none reads the ring's bounding box, except the deprecated axonometric view. In the 3D preview a
+polygon void is cut exactly out of a rectangular room's floor, but inside a polygon room only one
+cell is cut and the rest are listed as not cut (`void-not-cut-non-rect`). `describe --json` adds
+the ring as `polygon` and its exact `area_m2`, and gives the room that holds most of the void. A
+slanted edge, a crossing ring or fewer than four corners is
+[`E_VOID_POLY`](error-codes.md#e_void_poly): split a slanted hole into rectangle voids.
+`keep stacked` refuses a polygon void, as it refuses a polygon room.
+
+**A railing** is `rail`, and only where it is written: a void with no `rail` has none. A
+rectangle names its sides, as an [`outdoor balcony`](#outdoor--ground-outside-the-building-v1-31)
+does. A polygon numbers its edges: edge `n` runs from point `n` to point `n+1`, counted from 0
+like a wall's `segment <n>` (the last edge closes the ring). Numbers, not side words, because an
+L has two edges facing the same way. Leave out the edge a stair arrives across and the edges
+that stand on a wall. Each railed edge draws the balcony's railing symbol (two thin lines with
+posts) on the hole's side of the slab edge, on the `A-FLOR-HRAL` CAD layer, and `describe --json`
+reports `rail`. A side word on a ring, a number on a rectangle, or a number that is not one of
+the ring's edges is [`E_VOID_RAIL`](error-codes.md#e_void_rail). As on a balcony, a `none` among
+the words wins, then an `all`. The railing draws a plan symbol
+only: it has no height, makes no structural or guarding claim, and does not change the walk (a
+void lifts its walking halo on every edge either way).
+
+```arch
+plan "Landing" {
+  units mm
+  north up
+
+  wall id=shell exterior thickness 200 { (0,0) (6000,0) (6000,5000) (0,5000) close }
+  room id=landing at (0,0) size 6000x5000 label "Landing" uses circulation
+  door id=d on shell at 3000 width 900
+
+  void id=gallery at (600,600) size 1800x2400
+}
+```
+
+An upper landing over an L-shaped stair well: the well's foot, edge 4, is where the stair
+arrives and is left open; edges 0 and 5 stand on the walls.
+
+```arch
+plan "Railed well" {
+  units mm
+  north up
+
+  wall id=shell exterior thickness 200 { (0,0) (6000,0) (6000,5000) (0,5000) close }
+  room id=landing at (0,0) size 6000x5000 label "Landing" uses circulation
+  door id=d on shell at 14000 width 900
+
+  void id=well polygon (100,100) (3100,100) (3100,1100) (1100,1100) (1100,4100) (100,4100) rail 1 2 3
+}
+```
+
+### Outdoor — ground outside the building (v1.31)
+
+```
+outdoor [id=<id>] <kind> at (x,y) size <w>x<h> [label "…"] [rail <edges>]
+outdoor [id=<id>] <kind> polygon (x,y) (x,y) (x,y) … [label "…"]
+```
+
+The ground a building sits on: a lawn, a planting bed, paving, a deck, gravel, water, a
+driveway, a patio, or a balcony. Nine kinds, each drawn as a **scale-aware material hatch
+over a flat tint** (a `balcony`: tint and railing, no hatch).
+
+| Kind | Hatch | CAD layer |
+|------|-------|-----------|
+| `lawn` | sparse turf tufts — the palest ground | `L-PLNT` |
+| `planting` | a mulch stipple of bark chips and crumbs | `L-PLNT` |
+| `paving` | a square slab joint grid (600 mm at 1:100) | `L-SITE` |
+| `patio` | the same slab grid (a patio *is* paved — one material, one legend row) | `L-SITE` |
+| `deck` | boards (150 mm at 1:100) with staggered butt joints | `L-SITE` |
+| `gravel` | scattered stones as small rings, with grit | `L-SITE` |
+| `water` | gentle waves, alternate lines out of phase | `L-SITE` |
+| `driveway` | a fine, sparse bitumen speckle | `L-SITE` |
+| `balcony` | no hatch — a plain tint and a railing | `A-FLOR-BALC` |
+
+Three CAD layers, not one, because a CAD user freezes by trade: planting is the landscape
+architect's, hard landscape is the site's, and a balcony is part of the building's floor
+plate rather than of the site at all.
+
+**The hatches are scale-aware.** Every pattern dimension steps off the drawing's reference
+dimension, so a pattern is the same size *on the sheet* at 1:50 and at 1:200 — which is
+what a drafting hatch is for. (Fixed pixel sizes, the obvious shortcut, dissolve or clot
+as the scale changes.) Every ground stroke is the drawing's finest pen — the `extraThin` width
+the symbols' detail uses — so the ground is the palest layer of the plan. The irregular
+patterns (`lawn`, `planting`, `gravel`, `driveway`) come from frozen tables, never a random
+number: `compile()` is deterministic.
+
+#### It is not a room, and it obstructs nothing
+
+Both halves matter, and both are invisible from the syntax:
+
+- **Not a room.** A ground surface never appears in `describe().rooms`, in
+  `totals.floor_area_m2`, in the drawn `schedule rooms` table, in the access graph, in
+  `input_graph`, in the circulation model or in [Plan JSON](../schemas/plan.schema.json).
+  A terrace is not floor area, and quietly adding the garden to a dwelling's floor figure
+  would be wrong in the one number every consumer trusts. Its own area is reported
+  separately (below), and a reader who wants plot coverage adds the two having decided
+  that is what it means. It is also what makes a [`door garage`](#door-kinds-v1-25) come
+  out right: that kind derives which side its panel parks on by probing which face has
+  *floor*, and the face outside a garage door is usually an `outdoor driveway` — which is
+  ground, so the answer is still the garage.
+- **Not an obstacle.** It contributes nothing to the navigation grid and nothing to any
+  clearance rule. You can walk on a lawn — and on the water, which is a deliberate v1
+  simplification rather than an oversight: a pond with a bridge over it would need the
+  same answer, so the whole question is deferred by name in `docs/backlog.md` (§4.5).
+
+What it *is* part of is the drawing: it joins the page bounds. On a plan with **no**
+`paper`, every stroke and font is sized from the drawing's own extent, so putting a garden
+round a house rescales the line weights — exactly as a far-flung `column` or a
+`roof overhang` already does. **A site plan wants a `paper` declaration.**
+
+#### Two spellings
+
+`at (x,y) size <w>x<h>` for the rectangle most terraces are; `polygon (x,y) …` for the ring
+most garden edges are, taken verbatim and implicitly closed. Never both — the parser takes
+whichever word follows the kind, exactly as `room` does.
+
+Everything measured comes from the **shape**, never the bounding box: the area is the exact
+shoelace, and the drawn label sits at the ring's pole of inaccessibility, so a concave
+terrace's name lands on the terrace.
+
+#### The label
+
+`label "…"` draws the name **and the area beneath it**, the way a room's does. An
+unlabelled surface draws neither — background ground is background, and stamping a figure
+on every patch of it would bury a site plan in numbers nobody asked for.
+
+#### Balconies and the railing
+
+A `balcony` is rectangle-only, and it rails **every edge with no wall along it** — derived,
+so the common case needs no clause at all. The question is asked at each edge's own
+midpoint: an edge is against a wall when it lies within half that wall's thickness of the
+wall's centreline, which accepts both authoring conventions (drawing the balcony to the
+centreline, or to the outer face).
+
+`rail <edges>` overrides the derivation outright. The words are `top`, `bottom`, `left`,
+`right` — repeatable, or comma-separated — plus `all` and `none`, the two whole-rectangle
+answers. `rail none` is a real instruction (a Juliet slab drawn without its balustrade),
+not the same as omitting the clause.
+
+Each railed edge draws the slab edge, an inner rail line just inside it, and its posts. Where
+two railed edges meet at a corner, each inner rail stops on the other's line, so the corner
+closes cleanly instead of the two rails crossing in a small square.
+
+On any other kind, `rail` is [`E_OUTDOOR_RAIL`](error-codes.md#e_outdoor_rail) — refused,
+never silently ignored.
+
+#### Facts and rules
+
+`describe --json` gains `outdoor[]` and `totals.outdoor_area_m2`, both only when the plan
+declares a surface:
+
+```json
+"outdoor": [
+  { "id": "g", "kind": "lawn", "label": "Garden", "area_m2": 396,
+    "bbox": { "x": -6000, "y": -6000, "w": 22000, "h": 18000 } },
+  { "id": "b", "kind": "balcony", "area_m2": 4.5,
+    "bbox": { "x": 2000, "y": 5000, "w": 3000, "h": 1500 },
+    "rail": ["bottom", "left", "right"] }
+],
+"totals": { "rooms": 2, "doors": 2, "windows": 1,
+            "floor_area_m2": 84, "outdoor_area_m2": 400.5 }
+```
+
+Two advisory rules:
+[`W_OUTDOOR_OVERLAPS_ROOM`](error-codes.md#w_outdoor_overlaps_room) (ground laid over a
+room's floor — double-counted by anything adding the two totals; a surface merely *abutting*
+the house does not trip it) and
+[`W_BALCONY_NO_DOOR`](error-codes.md#w_balcony_no_door) (a balcony with no door **or
+window** within a wall thickness of any edge; a window whose authored `sill` is above 0 does not
+count, one with no `sill` clause does).
+
+Refusals: [`E_OUTDOOR_SIZE`](error-codes.md#e_outdoor_size),
+[`E_OUTDOOR_POLY_DEGENERATE`](error-codes.md#e_outdoor_poly_degenerate) (which also covers
+a `balcony` given a ring — a railing is derived per named edge, and a ring has none) and
+[`E_OUTDOOR_POLY_SELF_INTERSECT`](error-codes.md#e_outdoor_poly_self_intersect).
+
+With `legend`, each ground material used adds a row with a real swatch, beside the wall
+materials. Inside a `component` both spellings are allowed and transform exactly — a placed
+wing may carry its own terrace, and under `mirror` the rail edges move with it.
+
+`examples/garden-house.arch` is the worked example: twelve surfaces across eight of the nine
+kinds, on a sheet, with the fixtures and the fence below.
+
+```arch
+plan "Cottage and garden" {
+  units mm
+  north up
+  paper A3 landscape
+  scale 1:100
+
+  site {
+    street south
+    boundary (-6000,-6000) (18000,-6000) (18000,14000) (-6000,14000)
+  }
+
+  outdoor lawn at (-5000,-5000) size 22000x18000 label "Garden"
+  outdoor driveway at (-5000,7000) size 6000x4000 label "Drive"
+  outdoor paving polygon (0,-3000) (9000,-3000) (9000,0) (0,0) label "Forecourt"
+  outdoor water at (11000,8000) size 5000x3000 label "Pond"
+
+  wall id=shell exterior thickness 250 { (0,0) (9000,0) (9000,6000) (0,6000) close }
+  room id=liv at (0,0) size 5000x6000 label "Living" uses living
+  room id=kit right-of liv gap 0 size 4000x6000 label "Kitchen" uses kitchen
+  door id=front on shell at 15% width 1000
+  door id=back on shell at 65% width 900
+
+  outdoor balcony at (0,6000) size 3000x1500 label "Terrace"
+
+  fence post { (-6000,-6000) (18000,-6000) }
+}
+```
+
+### Fence — a boundary line on the ground (v1.31)
+
+```
+fence [id=<id>] [picket|panel|post] { (x,y) (x,y) … [close] }
+```
+
+A posted boundary line, drawn on `L-SITE` above the ground fills and below the building.
+The style word **leads** — the `door pocket` / `room polygon` shape — and defaults to
+`picket`; a trailing `… style picket` would be ambiguous with the `style <kind> { … }`
+plan statement.
+
+| Style | Draws |
+|-------|-------|
+| `picket` | one line, densely posted |
+| `panel` | a double line with cross ticks |
+| `post` | one line, sparsely posted |
+
+The post pitch is derived per segment from that segment's own length and clamped, so two
+identical fences draw identically wherever they sit on the sheet. Where two runs meet, the
+corner gets ONE post tick along the bisector in every style, rather than two crossing ones, and a
+`panel`'s double line is mitred; a turn sharper than about 139° keeps each run's own square end.
+
+**A fence is not a thin wall.** It has no thickness and no poché, it **hosts no opening**
+(`door on <fence>` finds no such wall, because a fence is not in the wall list at all), it
+never appears in `describe().walls`, and it takes no part in the access graph, the
+navigation grid or any clearance rule. A gate is a real thing and it is deferred by name
+rather than approximated by letting a door host onto a fence — which would drag a garden
+into the room-connectivity graph and make it a room's neighbour.
+
+What it does is draw and measure. `describe --json` gains `fences[]` when the plan
+declares one:
+
+```json
+"fences": [ { "id": "f", "style": "picket", "length_mm": 42000, "closed": true } ]
+```
+
+`length_mm` is summed along the segments, plus the closing one when the run is `close`d —
+a diagonal run is measured exactly, not by its bounding box. It joins the page bounds, so
+a fence at the edge of the lot is not clipped away.
+
+An `arc` edge inside a fence body is
+[`E_FENCE_CURVED`](error-codes.md#e_fence_curved): the post pitch, the panel offset and the
+reported length are all measured along a **straight** run, so faceting a curve would
+silently measure the facets. Write short straight runs instead. (The clause is parsed and
+then refused rather than failed at the keyword, so the refusal is one diagnostic and not a
+cascade — the radius would otherwise be read as the next vertex.)
+
+`examples/garden-house.arch` uses both of the styles that read at a domestic scale: a `panel`
+enclosure round the pool — which is the drawing saying what the model does not, since ground
+obstructs nothing, water included — and a `picket` street frontage that stops either side of
+the path and the drive.
+
+### Title block
+
+```
+title {
+  project "<name>"
+  drawn_by "<name>"
+  date "<date>"
+  number "<drawing number>"
+  revision "<revision>"
+}
+```
+
+Rendered as a title block in the lower-right corner (with `scale` if set). Every field is
+optional and draws one row only when written; `number` and `revision` draw `DRAWING NO.`
+and `REVISION` rows after `DATE`. They draw only — `describe()` does not report them —
+and Plan JSON carries them in `title` like the other three.
+
+#### Hiding the sheet marks
+
+A detail often wants none of the sheet's marks, and a plan with nothing authored still draws a
+north arrow and a scale bar. A trailing `hidden` takes one mark off the sheet and leaves its fact
+alone:
+
+```arch
+plan "Bath detail" {
+  units mm
+  paper A4
+  scale 1:20 hidden
+  north 30 hidden
+  title hidden
+  room id=bath at (0,0) size 3000x2200 label "Bath" uses bath
+  walls from rooms exterior 200 partition 100
+}
+```
+
+| Written | What goes | What stays |
+|---|---|---|
+| `north hidden`, `north 30 hidden` | The north arrow | The bearing, and every compass fact read from it |
+| `scale hidden`, `scale 1:20 hidden` | The scale bar | The operative scale, and the title block's `SCALE` row |
+| `title hidden` | The whole title block, stamped `SCALE` and `LEVEL` rows included | A `title { … }` block, which stays in the source |
+
+Each is free of the others. A band with nothing left in it is not reserved, so a hidden scale bar
+and title block give their height back to the drawing: the fit, the auto-chosen scale and
+`W_SCALE_OVERFLOW` all read the sheet as drawn, and `W_TITLE_OVERFLOW` does not judge a block that
+is not drawn. `describe()` reads the same but for the sheet: where a freed band lets the auto scale fit
+finer, or a plan fit at a written scale, `scale`, `sheet.scale_denominator` and `sheet.fits` say so.
+Plan JSON lists the word in `dropped`, and `archlang finish` adds no title to a plan that says `title hidden`. The three are plan-level and apply to every page
+of a plan with `level` blocks.
+
+### Positioning axes (定位轴线)
+
+```
+axes {
+  x at 0, 6000, 12000, 18000
+  y at 0, 8000, 16000
+}
+```
+
+An architectural drawing is not dimensioned from the paper edge — it is dimensioned
+from a named grid of **structural datum lines**. `axes` declares that grid, in the
+GB/T 50001 convention: `x` positions are vertical axes, `y` positions horizontal
+ones, both in mm in the same coordinate space as everything else.
+
+Each axis draws as a thin **dash-dot** line spanning the drawing with a short
+protrusion past each end, tagged with a **circled label** at the bottom end (`x`
+axes) or the left end (`y` axes) — placed outside any dimension chains, exactly where
+a draughtsman puts it. The nodes go on the `axes` render pass and land on the CAD
+layer **`A-GRID`**, so a DXF consumer can freeze the datum grid on its own.
+
+**Labels are derived, never authored.** They fall out of sorted position, so
+inserting an axis in the middle renumbers everything after it:
+
+| Direction | Reading order | Labels |
+|-----------|---------------|--------|
+| `x` (vertical axes) | left to right (ascending `x`) | `1`, `2`, `3`, … |
+| `y` (horizontal axes) | **bottom to top** — and `+y` points DOWN, so descending `y` | `A`, `B`, `C`, … |
+
+- The letter sequence **skips `I`, `O` and `Z`** (they misread as `1`, `0` and `2` at
+  drawing scale), giving 23 letters `A…Y`. Past the 23rd axis it continues `AA`, `AB`,
+  … `AY`, `BA`, … — GB/T 50001 §6.2 permits either a doubled letter or a
+  letter-with-subscript once the alphabet runs out; ArchLang takes the doubled form
+  and continues it lexicographically, so no label ever repeats and no subscript glyph
+  is needed. There is deliberately **no label syntax** in v1.20; a future release may
+  add an explicit override.
+- Positions are **expressions**, like every other coordinate — `let BAY = 6000` then
+  `x at 0, BAY, 2 * BAY` is legal — and are **grid-snapped** by `grid <n>` (an
+  off-grid datum would not line up with the rooms it dimensions).
+- Positions are **sorted and deduped**: declaring the same datum twice collapses
+  silently. That is declarative idempotence, not an error.
+- Rows may appear in either order and repeat, and repeated `axes` blocks merge (both
+  lists append), like `theme`.
+- **The axes are what you declare — never what the compiler infers.** ArchLang does not
+  guess your structural grid from the walls (see [ADR 0005](adr/0005-no-invisible-architect.md)).
+- With `dims auto rooms` or `dims auto all`, the **middle dimension chain measures the
+  axes** instead of the room boundaries — the GB/T axis chain (轴线间距). The switch is
+  per direction: declaring only `x` axes leaves the vertical facades' chains on room
+  boundaries. The chain stays outside the building at the same offset; only the ticks
+  move.
+- `describe()` reports them as facts (`axes.x` / `axes.y`, in label order — see
+  [Analysis](analysis.md)). No axis becomes an element or gets an id.
+
+**One grid for every storey.** On a plan with `level` blocks the one `axes` block serves
+every storey. There is no per-storey grid, and `axes` inside a `level` is a parse error. A
+`let` written inside a `level` does reach the block, because each storey evaluates it, so
+two storeys could come out on two grids:
+[`W_AXES_DIFFER`](error-codes.md#w_axes_differ) says so, once, at the block.
+
+**Standing on an axis.** `axis.3` and `axis.B` read an axis by its label, as a coordinate
+in plan millimetres, the position the axis is drawn at. They are datums, like `hall.top`:
+
+```arch
+plan "Two floors on one grid" {
+  units mm
+  axes { x at 0, 6000, 12000 y at 0, 5000 }
+  level 1 {
+    wall id=g2 partition thickness 200 { (axis.2, axis.A) (axis.2, axis.B) }
+    column id=c at (axis.3 - 200, axis.B - 200) size 400x400
+    keep on axis 2 g2
+    keep on axis 3 c
+    keep on axis B c
+  }
+  level 2 {
+    wall id=g2 partition thickness 200 { (axis.2, axis.A) (axis.2, axis.B) }
+    column id=c at (axis.3 - 200, axis.B - 200) size 400x400
+    keep on axis 2 g2
+    keep on axis 3 c
+    keep on axis B c
+  }
+}
+```
+
+- Any statement of the plan or a storey may read one: a room's `at` and `size`, a wall's
+  points, a column, furniture, a dimension. A label the plan does not declare is
+  [`E_UNKNOWN_REF`](error-codes.md#e_unknown_ref), at the datum.
+- A `let`, a loop bound, a condition, a `place … at`, a `strip … at`, a component argument and a
+  plan setting are read before the axes exist, because the axes read the plan's `let`s:
+  [`E_DATUM_BEFORE_ROOMS`](error-codes.md#e_datum_before_rooms). Share a `let` with the `axes`
+  block there, as in `let BAY = 6000` with `x at 0, BAY, 2 * BAY`.
+- A statement inside a `place`d component is refused too: its coordinates are its own frame's,
+  and the same component must draw the same at every placement. What crosses a frame is the
+  check: `keep on axis 2 wing.c`, written on the storey, reads the placed column in plan
+  coordinates under any turn or mirror.
+- `at axis.2` on an opening stands on the axis, the same as `at axis 2`. `from` and `%` measure
+  along the wall, so `at axis.2 from end` is refused. So is arithmetic on an axis there,
+  `at axis.2 + 500` (and under `from` or `%`):
+  [`E_OPENING_DATUM`](error-codes.md#e_opening_datum). An axis is a plan coordinate and a
+  position along a wall is a distance along it, so the sum would land on the axis only on a
+  wall that starts at 0. The hint gives `at axis 2`, and, on a wall the coordinate crosses
+  once, the distance that reaches it: on a wall from `(1000,0)`, `at axis.2 + 500` with
+  axis 2 at x = 3000 is `at 2500`.
+
+### Sheet tables — room schedule & legend
+
+```
+plan "Clinic" {
+  units mm
+  dims auto all
+  schedule rooms      # the ROOM SCHEDULE table
+  schedule openings   # door/window tags + the DOOR & WINDOW SCHEDULE
+  legend              # the LEGEND table, derived from the plan
+  notes "Do not scale from this drawing."   # the NOTES table
+  # … walls, rooms, fixtures …
+}
+```
+
+A finished sheet is not only the drawing: it carries tabular blocks in the margin that
+let a reader audit the plan without measuring it. Both are **opt-in**, both draw in a
+second row **below** the scale bar and title block (so they never cross a dimension
+chain or an axis bubble), and the page grows to contain them. A plan that sets neither
+renders exactly as before.
+
+**`schedule rooms`** draws the room schedule (房间明细表):
+
+| Column | Contents |
+|--------|----------|
+| `NO.` | 1-based **source order**, zero-padded to a uniform width (`01`…`09`, `001`…`100`). |
+| `NAME` | The room's `label`, falling back to its `id` when unlabelled. |
+| `AREA (CENTRELINE, m²)` | The room's area on wall centrelines, to two decimals — the same number `describe()` reports as `rooms[].area_m2`. |
+| `NET AREA (m²)` | The room's net internal area, the floor no wall stands on: its area less every wall band inside it, to two decimals — `describe()`'s `rooms[].net_area_m2`. `-` when that is omitted, and then the net TOTAL is `-` too. |
+
+A final **`TOTAL`** row closes the table with the same numbers as
+`describe().totals.floor_area_m2` and `.net_floor_area_m2`, so the drawn table and the JSON
+can never disagree.
+The keyword takes a subject — `rooms` or `openings` — and an unknown one is a parse error
+with a did-you-mean, never a silently ignored word. The two subjects compose: write both
+and both tables draw.
+
+**`schedule rooms net`** also changes the room stamp. Each room is stamped with the NET AREA column's figure, to one decimal, followed by `net`: `10.4 m² net`. It is the figure `describe()` reports as `rooms[].net_area_m2`, read from the same rows as the table, so the stamp and the table cannot disagree. A room with no net figure (the table shows `-`) keeps its centreline stamp, with no `net`, and so does a room no wall touches (nothing was deducted, so `net` would claim too much). The one decimal is rounded from the table's two, a tie up: 9.45 stamps `9.5`. Without the word the stamp is the centreline area, as before. `net` belongs to `rooms` only. `describe()` does not change; the longer stamp is placed and shrunk like any label, and `W_ANNOTATION_OVERLAP` reports one that cannot be cleared.
+
+```arch
+plan "Net stamp" {
+  units mm
+  paper A4 landscape
+  scale 1:50
+  schedule rooms net
+  room id=living at (0,0) size 3000x4000 label "Living"
+  room id=bed at (3000,0) size 3000x4000 label "Bed"
+  walls from rooms exterior 300 partition 100
+}
+```
+
+**`schedule openings`** tags every door `D01, D02, …` and every window `W01, W02, …`
+(element order, per storey) and draws the **DOOR & WINDOW SCHEDULE**:
+
+| Column | Contents |
+|--------|----------|
+| `TAG` | The tag drawn beside the opening. |
+| `ROOM(S)` | The room(s) it opens onto, by name — a door's are `describe().doors[].between`, `exterior` for the outside; a window lists the room it serves (`describe().windows[].room`) and, on a wall between two rooms, the other one too. Clipped to the column with `...`. |
+| `WIDTH` | The nominal width in mm. |
+| `TYPE` | A door's kind (`hinged`, `sliding`, …); a window's kind, or `window` for a window with none. |
+| `HAND` | A hinged door's hand, by the EN 12519 / DIN 107 convention: stand on the side it opens into (the pull side), face it, and the hinge is on your `left` or `right`. North American (ANSI/BHMA) handing is read from the other side, so an inswing door reads the other way there. Read off the drawn leaf, so it does not depend on which way the wall's points run; `-` for anything else. |
+
+A tag's position comes from the opening's own wall: a window's first place is just inside,
+off the face that has floor (so clear of the dimension chains outside); a door's sits beside
+the doorway, past the hinge jamb (or, for a sliding kind, the jamb opposite where the
+panel parks) and off a face with floor, so it is out of the passage and outside the
+leaf's quarter-disc. A tag must also be clear of everything else on the storey — every
+opening as far as it draws, every wall's poché, the furniture, dimension and axis lines and
+every tag already placed — so when its first place is taken it tries the other jamb, then
+the other face, then one tag-depth further out, and takes the first place that is clear.
+If none is, two tags still never overlap: it takes the first place clear of the other tags
+(which may be over other ink), and only if there is none, its first place. A tag reaches
+the outside face of an exterior wall only when that place is clear of the dimension chains
+and everything else. A room's name
+under a tag is moved by the label pass instead, once it is buried far enough.
+
+**`notes "…"`** draws the sheet's general notes as a numbered **NOTES** table in source
+order; a statement may carry several strings and repeated statements append. The text
+column is a fixed width: a note wraps onto further unnumbered lines at its spaces (a `\n`
+always breaks), so long text makes the table taller, never wider, and the sheet fit counts
+every wrapped line. Past 200 wrapped lines the plan is refused with `E_DRAWING_LIMIT`.
+
+**`legend`** draws a legend derived closed-form from the drawing:
+
+- one row per distinct **wall hatch** in use, its swatch filled with the very pattern
+  the walls are filled with (`brick`, `poche`, …), in the Scene's stable order;
+- one row per **fixture category** actually placed that has a plan symbol (`wc`,
+  `basin`, `shower`, …), its swatch drawn with the real glyph, in catalog order;
+- a `demolished` row after the materials, its swatch a dashed outline, only when the storey
+  draws a `status demolish` wall (see [Wall](#wall), its status);
+- one row per **window kind** in use and one for a `glazed_sliding` door, after the fixtures,
+  each swatch the real symbol. The other door kinds have no row.
+
+Nothing is listed that is not drawn, and a category that renders as a plain labelled
+rectangle gets no row (there is no symbol to explain). There is nothing to configure beyond
+its words ([`sheet text`](#sheet-text)) — which is the point:
+the legend cannot drift from the drawing.
+
+The tables sit side by side in one row — room schedule, door & window schedule, legend,
+notes — and the sheet fit reserves the tallest. All of them, and the tags, are ordinary
+`annotations`-pass primitives on the CAD layer **`A-ANNO`**, so
+SVG, PNG, PDF and DXF all draw them from one implementation; the ASCII plan (`-f txt`)
+has no sheet chrome and still has none. Every size derives from the drawing's size
+system, so the tables scale with the sheet. `describe()` reports the room schedule as
+`schedule[]` (see [Analysis](analysis.md)); `legend`, `schedule openings` and `notes` are
+pure rendering and add no field — every fact they show is already in `describe()`
+(`furniture`, `doors`, `windows`) or the source.
+
+### Sheet text
+
+```
+sheet text {
+  decimal ","
+  <key> "<word>"
+  …
+}
+```
+
+Every fixed word on a sheet is English, and every number has a decimal point. `sheet text` replaces
+them, so a plan can be handed to someone who reads another language. A key you do not write keeps
+its English word, so a table can be as short as the words a plan draws. A plan with no `sheet text`
+draws exactly what it drew before.
+
+ArchLang ships no translations. There is no `locale` setting: the words are yours, and the compiler
+never reads a language from the machine it runs on, so one source draws the same bytes everywhere.
+
+The block below is a German starting point, written by this project and not reviewed by a German
+drafter. It covers the fixed words of a plain sheet. Read it before a buyer does.
+
+```arch
+plan "Haus" {
+  units mm
+  paper A3
+  dims auto rooms
+  sheet text {
+    decimal ","
+    project "PROJEKT"
+    drawn_by "GEZEICHNET"
+    date "DATUM"
+    number "ZEICHNUNGS-NR."
+    revision "INDEX"
+    scale "MASSSTAB"
+    level "GESCHOSS"
+    room_schedule "RAUMBUCH"
+    no "NR."
+    name "RAUM"
+    area "FLÄCHE BIS WANDACHSE (m²)"
+    net_area "NETTOFLÄCHE (m²)"
+    subtotal "ZWISCHENSUMME"
+    total "SUMME"
+    no_zone "(ohne Zone)"
+    opening_schedule "TÜREN UND FENSTER"
+    tag "POS."
+    rooms "RAUM"
+    width "BREITE"
+    type "ART"
+    hand "ANSCHLAG"
+    left "links"
+    right "rechts"
+    exterior "außen"
+    window "Fenster"
+    legend "LEGENDE"
+    demolished "Abbruch"
+    notes "HINWEISE"
+    net "netto"
+    up "HOCH"
+    down "AB"
+    hinged "Drehtür"
+    poche "Wand"
+  }
+  title { project "Haus am See" date "2026-11-02" }
+  schedule rooms net
+  schedule openings
+  legend
+  room id=wohnen at (0,0) size 4500x4000 label "Wohnen"
+  room id=bad right-of wohnen size 2500x4000 label "Bad"
+  walls from rooms exterior 300 partition 100
+  door on wohnen.bottom at center width 1000 swing into wohnen
+  door between wohnen and bad at center width 800 swing into bad
+  window on wohnen.top width 1500
+}
+```
+
+**The keys.** A door kind (`hinged`, `glazed_sliding`), a window kind (`casement`), a wall or ground
+material (`brick`, `grass`) and a fixture category (`sofa`, `bed`) are each their own key, in the
+spelling the language uses, and replace that word in the door and window schedule and the legend. An
+authored window kind or `glazed_sliding` stands alone in the legend, where the English reads
+`casement window`: German compounds, so a word and a word would be wrong. The other keys:
+
+| Keys | The English they replace | Where |
+|---|---|---|
+| `project` `drawn_by` `date` `number` `revision` | `PROJECT` `DRAWN BY` `DATE` `DRAWING NO.` `REVISION` | Title block captions |
+| `scale` `level` | `SCALE` `LEVEL` | Title block captions the sheet stamps itself |
+| `room_schedule` `no` `name` `area` `net_area` | `ROOM SCHEDULE` `NO.` `NAME` `AREA (CENTRELINE, m²)` `NET AREA (m²)` | The room schedule's caption and headings |
+| `subtotal` `total` `no_zone` | `SUBTOTAL` `TOTAL` `(no zone)` | Its closing rows, and the heading over rooms in no `zone` |
+| `opening_schedule` `tag` `rooms` `width` `type` `hand` | `DOOR & WINDOW SCHEDULE` `TAG` `ROOM(S)` `WIDTH` `TYPE` `HAND` | The door and window schedule's caption and headings |
+| `left` `right` `exterior` `window` | `left` `right` `exterior` `window` | Its cells: a hand, the outside, a window with no kind |
+| `legend` `demolished` `floor` `notes` | `LEGEND` `demolished` `floor` `NOTES` | The legend's and the notes' captions, the row of a demolished wall, and the word after a `tile` or `concrete` floor's row |
+| `net` `up` `down` `north` | `net` `UP` `DN` `N` | In the drawing: the net stamp's word, a stair's or escalator's word, the north arrow's letter |
+
+The door and window tags (`D01`, `W01`), the axis bubbles and `m²` are handles and units, and have
+no key. What you wrote yourself, such as a room's `label`, a `notes` line or a title value, is
+already in your language and is never changed.
+
+**`decimal ","`** prints every drawn number with a comma: the room and `outdoor` stamps, every cell of
+the room schedule, dimension numbers and the `R` and `φ` call-outs, the door and window schedule's
+widths, a scale or angle in a legend row (`Mauerwerk x1,5`), the scale bar (`0,5 m`) and the `SCALE` row
+(`1:12,5`). `decimal "."` is the default. A number you wrote inside a string is yours, so
+`dim … text "1.5 m"` and `notes "Stand 1.5"` keep their point.
+
+**What it never reaches.** `describe()` does not read the block and its numbers keep their point, as
+do Plan JSON and every coordinate. `lint()` messages stay English. A DXF's numeric fields keep their
+point; its `TEXT` entities are drawn text, so they carry the comma as the SVG does. The accessible
+`<title>` and `<desc>`, the CLI's messages and the review sheet stay English, and the deprecated `--view`
+draws no sheet. Plan JSON has no field for the block: an export reports it in `dropped`, the words
+counted under `sheet text` and the mark on a `decimal mark` row of its own.
+
+**Fit.** A table column widens for a word you wrote, so a longer word is not clipped, and the page
+grows with it as it does for any table. The title block has a fixed width: a caption and value that
+no longer fit their row raise [`W_TITLE_OVERFLOW`](error-codes.md). A longer word in a stamp is placed and
+shrunk like a longer room name, and `W_ANNOTATION_OVERLAP` reads it as it is drawn.
+
+**Refused**, each as `E_PARSE`: an unknown key (with a did-you-mean), a key written twice, a second
+block, an empty word, a block with no entry, a line break or other control character,
+more than 40 UTF-16 units (6 for `north`, `up` and `down`, which sit in a fixed spot), and a `decimal`
+that is not `","` or `"."`.
+
+A module's `sheet text` is not imported, as a module's `title` is not: settings come from the root
+plan. It is a plan-level statement, written once, outside any `level`, `component` or block; inside
+one it is refused, and says so.
+
+## Keep — declared invariants, checked and never solved
+
+A `keep` states what an edit must not break. The compiler measures it against the resolved plan
+and reports a signed residual in millimetres; it **never moves anything** to make it hold, and it
+draws nothing (ADR 0033).
+
+```arch static
+keep align <d> <d> [<d> …]                  # one line: every residual v(dᵢ) − v(d₁) is 0
+keep equal width|depth <t> <t> [<t> …]      # one extent: m(tᵢ) − m(t₁) is 0
+keep offset <x> from <d> <mm>               # (v(x) − v(d)) − mm is 0
+keep min clear <room> <mm>                  # clear span − mm ≥ 0
+keep on axis <label> <wall|column>          # v(wall) − v(axis) is 0; a column at its centre
+keep stacked <id> on levels <n> <n> [<n> …] # the footprint's four edges, storey against storey
+keep fixed <d> at <mm>                      # v(d) − mm is 0
+```
+
+Each form may end with a grade, `hard` (the default), `soft` or `advisory`.
+
+**Datums.** A `<d>` is a line: a rectangular room's `left`, `right`, `top`, `bottom`, `cx` or
+`cy` (or a compass word where room datums take one), `axis <label>` from the plan's `axes`, or
+a straight wall read as its centreline (`p`, or `p segment 1` for one segment of a longer wall).
+A vertical line's value is an x, a horizontal one's a y (`+y` down). A keep reads a datum as an
+expression in the plan would, grid-snapped; the keep's own `<mm>` is never snapped. The
+residual, the difference of what the keep compares, goes on the 0.001 mm lattice once
+(`sign(v)·round(|v|·1000)`) and is compared exactly, at twice its value when a centre line is
+one side. Targets are **authored ids** only: an auto id (`room_3`) renumbers when an
+earlier element is named, and a keep is the statement that must survive edits.
+
+**What each form measures.**
+- `align` and `on axis`: the datums' positions; the reported residual is the largest, at that
+  target (`+` = right of / below the first). A column has no line of its own, so `on axis` reads
+  it at its centre across the axis, and two keeps hold it on a crossing; no other form reads one.
+- `equal`: a rectangular room's width (x extent) or depth (y extent), or an opening's width.
+- `offset`: `<x>` is a datum parallel to `<d>`, an opening read at its centre, or a piece of
+  furniture read at its footprint's centre, on `<d>`'s normal axis.
+- `min clear`: along each axis, the widest free interval of the room between the bodies
+  (centreline ± t/2) of the straight wall segments that meet the room and span its whole other
+  extent; the smaller of the two. Spanning is read on the joined outline: runs on one line (same
+  centreline and thickness) count as one; parallel runs whose bodies touch or overlap, along and
+  across (two thicknesses end to end, a lining on a wall), are one body, however many there are;
+  and a run whose end lies inside a perpendicular wall's body reaches the far face of the body that
+  wall belongs to, so a partition that stops at the shell's inner face, or anywhere inside it, spans
+  the room between the walls it meets, and one that stops short of every body does not. Only
+  straight horizontal and vertical walls carry a run: a run that ends in an oblique or curved wall
+  is not carried. A wall's height is never read. A segment that meets the room and is not read is
+  counted (`skipped_walls`), with why (`skipped`: `not_spanning`, `ends_in_curved_or_oblique`,
+  `curved`, `oblique`); an arc meets the room when the box around its extreme points, ± half its
+  thickness, does.
+- `stacked`: the element's resolved `at` + `size` rectangle (a rectangular room, a stair, a lift,
+  an escalator or a void) on each listed storey, edge by edge against the first. On a turning stair
+  that is the bounding box of its pieces; `W_SHAFT_FOOTPRINT_MISMATCH` compares the pieces.
+- `fixed`: the datum against the stated value.
+
+**Grades.** A broken `hard` keep is `W_KEEP_VIOLATED`, a compile-channel warning: it fails
+`validate --strict` (plain `validate` still exits 0), `validate --json`'s `next` names it with the
+other compile warnings, and `finish`, `furnish`, `repair` and `fix` refuse a rewrite that
+breaks one. A broken `soft` keep is named by `next` in its `intent` tier and never gates. An
+`advisory` keep is only reported. No grade caps the taste score, and `lint()` never reads a keep.
+
+**Where results appear.** `describe --json` appends `keeps[]` (one row per keep, every storey's
+by level then the plan's: the statement, form, grade, targets, `holds`, `residual_mm`, and `at`,
+`measured_mm`, `residuals`, `skipped_walls` and `skipped` where they apply), and `validate --json` appends
+`keeps` before `next`. Both keys are present only when the plan declares a keep.
+
+`archlang impact` (`--set NAME=value` or `--against old.arch`) adds a `keeps` section after
+`diagnostics` when either side declares a keep: each keep is matched across the two versions by
+its storey, its text and its place among keeps of the same text (so a keep a `for` loop repeats
+is told apart by order), and listed under `broke` (broken after, and held before or its residual
+moved), `healed`, `held` (held on both sides while a target it names changed, or its residual
+moved), `added` or `removed`, with its residual before and after, the targets whose position or
+size changed on its own storey, its `occurrence` among keeps of its text and its span; the rest
+count in `unchanged_count`. A keep whose grade an edit changed carries `grade: { before, after }`,
+and counts as `broke` when it is a broken hard keep after, or `healed` when it was one before. A broken hard keep is reported there once:
+its `W_KEEP_VIOLATED` is not also counted under `diagnostics`.
+
+**Locks, without syntax.** `archlang impact new.arch --against old.arch --lock shell,entry,w1`
+names elements that must not change between the two versions; it adds nothing to the language.
+Each locked element that moved (an opening also when it slid along an unchanged wall), resized,
+was re-hosted, re-thickened, changed its door swing or another resolved field, vanished or
+appeared is an `E_LOCKED_ELEMENT_CHANGED` under `lock.violations` (`--json`), with its span on
+each side it exists on, and the command exits 2. A relabel is not a change. A lock names an
+element by the `id=` its author wrote: an assigned id such as `window_2` shifts when a statement
+is inserted ahead of it, so a lock on one, on a name neither version carries, or on an element
+above the lowest storey (which `impact` does not compare yet) is refused with `E_LOCK_UNNAMED`
+and also exits 2. A lock also works with `--set`.
+
+`describe --facts depends` adds `depends.keeps[]` (every keep on the top-level `depends`, a
+storey's own on its `levels[]` entry): the targets, `constrains` (the `let`s and parameters that can move or remove it: what the
+targets' positions read through their dependencies, the keep's own value, the `if`/`for`/`while`
+conditions around the keep and its targets, and the `let`s those read in turn), `locked: true`
+when there are none (a `--set` then cannot move it through anything `--facts depends` records; a
+position found by a search, such as `flush`, is not recorded), `equations` or `bounds`, and three
+facts decided from the declarations alone: `implied` (an equality the statements before it
+already make hold, such as `keep align a.right b.left` beside `room b right-of a`, with the
+statements that imply it under `by`), `redundant` (every equality implied; a `min clear`
+another on the same room outdoes), reported as `redundant_by_weaker` when what implies it
+includes a keep of a weaker grade, and `conflicts` (an equality that cannot hold together with
+what came before, with the gap in mm; a gap of one lattice unit, 0.001 mm, is claimed neither
+way). A relation is implied by a room or wall written with `id=` only, and only when it survives
+grid snapping: an edge, never a centre, and every literal it reads a multiple of the plan's
+`grid` on the 0.001 mm lattice.
+
+**Plan JSON carries no keeps.** `compile -f json` exports the plan without them (as it exports no
+axes) and says so with a note on stderr naming how many it left out; `planToJson()` returns the
+count as `droppedKeeps`. The `.arch` source is the only home of a keep.
+
+**What else Plan JSON leaves out.** The same report covers every clause the format has no field
+for. `compile -f json` prints one `note:` on stderr per clause, exits as it would have, and adds
+`dropped[]` to the `--json` envelope; `planToJson()` returns the same rows as `dropped`. A plan that
+drops nothing has no note and no key. A row is `clause`, `count`, and where they apply `ids` (who
+carries it), `text` (the clause in words) and `level` (the storey that holds it; with `--level`
+only that storey's rows and the plan-wide ones are reported; keeps are plan-wide, so every
+storey's keeps are reported on each `--level` export).
+
+A wall's `arc` and the `paper` are carried, and a document still says `version: 1`: the format only
+grows. A core older than the one that added them reads such a document without a word, as the chord
+and with no sheet, because it ignores keys it does not know.
+
+| `clause` | What leaves |
+|---|---|
+| `keep` | every `keep` |
+| `poche hatch` | `scale` or `angle` on a wall of the default `poche` material |
+| `circle` | a circular room: the document keeps its 48-sided polygon |
+| `label at` | a room's `label … at` position |
+| `column order` | a `column` written before a `furniture`: the document lists them after, so the same shapes draw in another order |
+| `stair`, `elevator`, `escalator`, `roof`, `void`, `outdoor`, `fence` | the whole element |
+| `zone` | a `zone` block (its contents are exported) |
+| `level` | a storey's number and name: each storey is its own document |
+| `axes`, `site boundary`, `schedule rooms`, `schedule openings`, `legend`, `notes` | the statement |
+| `theme`, `style` | paint |
+| `accTitle`, `accDescr` | the accessible title and description |
+
+**Where a keep may stand.** In the plan or a `level` block, inside `for`, `if` and `zone`. Not
+inside a `component` (it would be checked once per instance, in its own frame): `E_KEEP_PLACEMENT`.
+`stacked` compares storeys, so it sits at the root of a multi-storey plan; every other form sits
+in the storey it measures. Refusals are compile errors: `E_KEEP_TARGET` (unknown, auto-id'd or
+unplaced target, undeclared axis, missing level), `E_KEEP_MEASURE` (no such measure: a polygon or
+circle room, mixed orientations, a curved or multi-segment wall, an opening's depth),
+`E_KEEP_SELF` (a target compared with itself), `E_KEEP_VALUE` (a length outside the modelling
+range, a `min clear` ≤ 0, a fractional level) and `E_KEEP_LIMIT` (more than 1,000 keeps, or more
+than 64 targets in one). Two keeps that contradict each other are both legal: both are measured,
+at least one reports, nothing moves.
+
+**Parsing.** Only `keep` is reserved; its form and grade words mean what they mean only after it.
+A grade word at the end of a form that is otherwise complete is the grade, never a target, so
+`keep align a.left b.left soft` is soft; where the form still needs its value, the word is read as
+the value, so `keep fixed a.left at hard` reads `hard` as a name. A value (`<mm>`, a level) is the
+longest complete expression, so write `on levels -1 1` or `on levels 1 (-1)`: `on levels 1 -1` reads as one level,
+`1 - 1`.
+
+```arch
+plan "Widen" {
+  units mm
+  let AW = 4500
+  wall id=shell exterior thickness 200 { (0,0) (8000,0) (8000,5000) (0,5000) close }
+  wall id=p partition thickness 100 { (4000,0) (4000,5000) }
+  room id=a at (0,0) size AW x 5000 label "Living"
+  room id=b right-of a align top gap 0 size 4000x5000 label "Bed"
+  keep align a.right b.left p
+}
+```
+
+Widened to 4500, the living room's right edge and the bedroom placed `right-of` it move, and the
+partition written at fixed coordinates does not: `W_KEEP_VIOLATED`, residual −500 mm at `p`.
+
+## Levels — a multi-storey building (v1.21)
+
+```
+plan "Two-storey house" {
+  units mm
+  paper A3 landscape        # settings are SHARED: one building, one sheet, one scale
+  dims auto all
+  let W = 8000
+
+  level 1 "Ground floor" {
+    wall id=shell exterior thickness 200 { (0,0) (W,0) (W,7000) (0,7000) close }
+    room id=hall at (0,0) size 2200x7000 label "Hall" uses hall
+    stair id=stair at (100,1500) size 900x2600 dir up
+  }
+
+  level 2 "First floor" {
+    wall id=shell exterior thickness 200 { (0,0) (W,0) (W,7000) (0,7000) close }
+    room id=landing at (0,0) size 2200x4600 label "Landing" uses circulation
+    stair id=stair at (100,1500) size 900x2600 dir down
+  }
+}
+```
+
+A `level` block is **one storey**, and a storey is **one complete drawing**: its own
+walls, rooms, dimension chains, axes, schedule and title block. `examples/two-storey.arch`
+is the worked version of the sketch above.
+
+**A plan is either single-storey or entirely levels.** Anything that draws belongs to
+exactly one storey, so a `room`/`wall`/`door`/`for`/`strip`/component call sitting *beside*
+a `level` block has no floor to belong to — that is
+[`E_LEVEL_MIX`](error-codes.md#e_level_mix), reported on the offending statement. What
+stays outside (and applies to **every** level):
+
+- every plan **setting** — `units`, `grid`, `paper`, `scale`, `north`, `dims auto`,
+  `title`, `axes`, `schedule`, `legend`, `theme`/`style`, `accTitle`/`accDescr`;
+- **declarations** — `component` and `import`;
+- the **plan-global scope** — `let` bindings and `set` defaults.
+
+So `let W = 8000` written once is the same `W` on every floor, and one `component` can be
+called from each level.
+
+**Numbering.** Level numbers are integers and must be unique
+([`E_LEVEL_DUP`](error-codes.md#e_level_dup)). `0` and negatives are legal — `level -1
+"Basement"` — and storeys are drawn in **ascending** order, so the lowest level is page 1.
+The optional name (`level 1 "Ground floor"`) is stamped into the title block as a `LEVEL`
+row and reported by `describe()`. A `level` inside a block, a component, or another level
+is [`E_LEVEL_NEST`](error-codes.md#e_level_nest) — to repeat content on several storeys,
+put it in a `component` and call it from each.
+
+**Ids are unique WITHIN a level**, not across the building. The same id on two storeys is
+legal and means **vertical identity** — the `stair` above is the same shaft on both floors,
+and a riser, a duct or a column keeps its name as it goes up. Since v1.21 that identity is
+**operative** for the three [vertical-circulation
+elements](#vertical-circulation--stair-elevator-escalator-v121): a `stair`/`elevator`/
+`escalator` with one id on two storeys is a shaft, so the upper floor is reachable through
+it and needs no exterior door of its own — provided the room the shaft stands in on the
+storey it comes from is itself reachable (a stair in a door-less store leads nowhere). (For
+every other element the shared id is still just a name.)
+
+**One building, one sheet.** `paper`/`scale` are resolved **once for the whole building**,
+from the largest storey: auto-fit cannot hand the small top floor a finer scale than the
+ground floor, and `W_SCALE_OVERFLOW` is raised once for the building rather than once per
+page. Every page is therefore the same paper at the same scale — a drawing set.
+
+**What comes out.** `compile()` returns `pages[]` — `{ level, name?, svg, scene }` per
+storey, ascending — and `svg`/`scene`/`ast` keep meaning **page 1** (the lowest storey), so
+a level-unaware consumer still gets a complete drawing. On the CLI:
+
+```bash
+archlang compile house.arch                          # writes house.L1.svg, house.L2.svg …
+archlang compile house.arch -o house.svg --json      # …and reports outputs[] + pages[]
+archlang compile house.arch --json                   # check only: WRITES NOTHING (no -o), reports written:false
+archlang compile house.arch -o "storey-{level}.svg"  # {level} names each file: storey-1.svg, storey-2.svg … (a plan with no `level` blocks refuses it)
+archlang compile house.arch --level 2 -o upper.svg   # just that storey, to the plain target
+archlang compile house.arch --level 1 -o -           # `-o -` streams ONE drawing, so it needs --level
+archlang describe house.arch --json                  # top-level facts = lowest storey, plus levels[]
+archlang describe house.arch --level 2 --json        # read one storey (a display filter)
+archlang preview house.arch --level 2 -o upper.png   # look at one storey
+```
+
+Every format works per level (`-f svg|dxf|txt|json|pdf|png` each write `<stem>.L<level>.<ext>`);
+a multi-page PDF is deliberately not built — one file per storey is one drawing per sheet.
+`md` and `batch` render the lowest storey. Diagnostics aggregate across storeys and each
+carries a `level`, so `lint`/`validate` gate on the whole building while still saying which
+floor a warning is about; `archlang repair` walks into every level and tags its changes the same
+way.
+
+## Heights (the datum layer)
+
+A floor plan is a horizontal cut through a building, so until v1.35 ArchLang had no third
+dimension at all: a wall had a thickness and no height, a window a width and no sill. It has
+one now, and it is deliberately a **datum rather than a feature**.
+
+**Nothing here changes the drawing.** A plan that puts a height on every wall renders
+byte-for-byte identically to the same plan without them. Heights are *facts* — for
+`describe --json`, for Plan JSON, and for the views that will read them later.
+
+```arch
+plan "Heights" {
+  units mm
+  height 2700
+  wall id=shell exterior thickness 200 { (0,0) (6000,0) (6000,4000) (0,4000) close }
+  wall id=parapet exterior thickness 100 height 1100 { (0,5000) (6000,5000) }
+  room id=r1 at (0,0) size 6000x4000 label "Living" uses living
+  door id=d on shell at 20% width 900 head 2100
+  window id=w on shell at 60% width 1500 sill 600 head 2400
+  opening id=o on shell at 85% width 1000
+}
+```
+
+### The six defaults
+
+| Thing | Default | Where it comes from |
+|-------|---------|---------------------|
+| storey floor-to-floor | `3000` | The common drawn residential figure. GB 50352-2019 §5.2 puts floor-to-floor at 2800 mm and clear height at not less than 2400; 3000 is what a plan is read at once a slab and a finish are allowed for. |
+| door `head` | `2100` | A 2000 mm leaf on a 100 mm frame — the ordinary door. |
+| window `sill` | `900` | GB 50352-2019 requires a residential external window sill to be **at least** 900 mm above the floor, so 900 is the floor of the convention. |
+| window `head` | `2100` | Heads align with doors on an ordinary elevation. Equal to the door head on purpose. |
+| cased-opening `head` | the host wall's own height | A leaf-less opening is drawn full height unless you say otherwise. This one is a **rule, not a constant**: in a 2200 mm parapet the default is 2200. |
+| maximum | `100000` | A cap so a typo is refused rather than accepted. Anything taller is `E_HEIGHT_RANGE`. |
+
+Read them from the compiler rather than copying them: `archlang manifest --json` publishes them
+under `datum`. **A plan that authors no height reports none** (see the gate below), so the
+manifest is the only place to learn what the compiler would have used.
+
+### The three places `height` may be written
+
+The chain is **wall → level → plan → 3000**, innermost wins.
+
+- `height <expr>` as a **plan setting**, beside `units`/`grid`/`paper`/`scale`.
+- `level <n> ["Name"] height <expr> { … }` — in the level's **header**, after the optional
+  name. It cannot go in the body: a plan-level setting sitting there is `E_LEVEL_MIX`.
+- `wall … thickness <mm> [material …] height <expr> { … }` — last before the wall's body.
+
+All three take a full **expression**, exactly as `thickness` does, so `let h = 3200` once and
+`height h` everywhere. None of them is grid-snapped: `grid` snaps plan coordinates so rooms
+line up with each other, and a height shares no axis with them.
+
+### `sill` and `head` on an opening
+
+Both trail every clause the statement already had, and `sill` precedes `head`:
+
+- `window … [sill <expr>] [head <expr>]`
+- `door … [head <expr>]` — after `open`, if there is one.
+- `opening … [head <expr>]`
+
+Only a window takes a `sill`. A door and a cased opening start at the floor, so a clause that
+could only ever be written `sill 0` is not in the language. On a window, `sill 0` *is* legal
+and means a floor-length window — it is the one height that may be zero. Heights draw nothing, but
+two lint rules read this one:
+[`W_BALCONY_NO_DOOR`](error-codes.md#w_balcony_no_door) and
+[`W_FURNITURE_OVER_WINDOW`](error-codes.md#w_furniture_over_window).
+
+### Elevation, and why it accumulates
+
+`describe --json` reports a storey's `elevation`: its floor above the building's **lowest**
+floor. It is the sum of the heights of the storeys below, **not** `level × storey_height`.
+The two agree on a building whose storeys share one height, and disagree on exactly the plans
+that bothered to write `level … height`: a 3600 mm ground floor puts the first floor at 3600
+however tall the floors above it are. A single-storey plan, and the ground storey of any plan,
+is `0`.
+
+### The gate: heights are reported only when you write one
+
+`describe --json` and Plan JSON emit height keys **only when the source authored at least one
+`height`, `sill` or `head` clause** — anywhere in the plan: a wall, a storey, an opening, an
+imported module. This is the `doors[].kind` rule (present only when it is not the default)
+applied to a whole block, and it is what makes the byte-identity law total: every plan written
+before this layer describes exactly as it did.
+
+When the gate is open, `describe --json` gains:
+
+- a top-level `heights` block — `storey_height`, `elevation`, and `walls[]` with each wall's
+  resolved height (walls have no summary array of their own, so the datum lives here);
+- `head` on each entry of `doors[]` and `openings[]`, and `sill`/`head` on each of `windows[]`.
+
+Plan JSON gains `storey_height` at the top, `height` on each wall (a **vertical** height, not
+a plan extent like a room's `height`), and `sill`/`head` on the openings. All of it round-trips
+through `compile --from-json`.
+
+### The three refusals
+
+Each **refuses rather than clamping** — the `E_ROOF_*` precedent. A refused clause still falls
+back to its inherited default, so a consumer downstream of a failed compile never meets a
+nonsense number.
+
+| Code | When |
+|------|------|
+| `E_HEIGHT_RANGE` | A `height`, `sill` or `head` at zero or below, or above 100 m. A window `sill` of exactly 0 is legal and excluded. |
+| `E_SILL_ABOVE_HEAD` | A window whose `sill` is at or above its `head` — there is no opening between them. |
+| `E_OPENING_ABOVE_WALL` | An opening whose `head` exceeds its **host wall's** height. Measured against the wall, not the storey: 2400 is fine in a 3000 storey and wrong in a 2200 parapet. |
+
+One thing the range check deliberately does **not** catch is a unit slip. `height 3` is three
+millimetres, which is inside the range; the plausible intent is three metres, and a compiler
+that guessed would be inventing a number nobody wrote. The range guards the ends; the units
+are yours.
+
+## Zones — wings and departments (v1.22)
+
+```
+plan "Museum" {
+  units mm
+  schedule rooms
+
+  zone west "West wing" {
+    room id=lobby at (0,0) size 4000x8000 label "Lobby" uses hall
+
+    zone galleries "West galleries" {
+      room id=gal_a at (4000,0) size 4000x4000 label "Gallery A"
+      room id=gal_b at (4000,4000) size 4000x4000 label "Gallery B"
+    }
+  }
+
+  zone east "East wing" {
+    room id=office at (8000,0) size 4000x4000 label "Office" uses office
+    room id=store  at (8000,4000) size 4000x4000 label "Store" uses storage
+  }
+}
+```
+
+A `zone` block groups statements into a **wing, a department, a phase** — whatever
+organisational unit the brief talks about. It is the answer to "how big is the west wing?"
+on a building too large to hold in your head.
+
+**A zone has zero geometric semantics.** Everything inside it resolves *exactly* as if the
+`zone … { }` wrapper were deleted: the same coordinates, the same ids, the same auto-id
+numbering, the same output bytes. Deleting every zone from a plan cannot change its
+drawing — that law is pinned by a byte-identity test. Two consequences worth stating
+plainly:
+
+- **A zone is not a scope.** A `let` or a `set` written inside one is visible after the
+  closing brace, exactly as it would be without the braces. (This is *why* the byte-identity
+  law is total rather than approximate.)
+- **A zone draws nothing** — no outline, no tint, no label on the drawing. The only place it
+  becomes visible is the room schedule (below) and `describe()`.
+
+**Membership is declared, never inferred.** A room is in the west wing because you wrote it
+inside `zone west`, not because the compiler noticed it sits on the west side. ArchLang
+reports facts and never plays architect ([ADR 0005](adr/0005-no-invisible-architect.md)) — a
+zone is you telling it something it could not know.
+
+**Zones nest, and the path is the identity.** `gal_a` above is in `west.galleries`; its
+*innermost* zone is the one it belongs to directly. Membership then **rolls up**: the
+`west` zone reports `lobby`, `gal_a` and `gal_b`. So zone areas deliberately overlap when
+zones nest — summing them is not the plan total, and `totals.floor_area_m2` remains the one
+whole-plan figure.
+
+**Where a zone is legal.** Anywhere a statement is: at plan level, inside a `level` block,
+inside a `for`/`if`/`while` body, inside a `component`. A zone is scoped to the storey it is
+written on, so the same zone id on two levels is two separate groups. (A `level` inside a
+zone is still [`E_LEVEL_NEST`](error-codes.md#e_level_nest), and a `zone` sitting beside the
+level blocks of a multi-storey plan is [`E_LEVEL_MIX`](error-codes.md#e_level_mix) like any
+other drawable statement — it belongs to a floor.) Re-declaring the same path merges into
+the zone already declared; the first declaration's label wins.
+
+**Reading the grouping back.** `describe()` gains a `zones[]` block — see
+[Analysis](analysis.md#zones--the-declared-grouping) — and the CLI can read one wing at a
+time:
+
+```bash
+archlang describe museum.arch --json                        # rooms + zones[]: every wing, its rooms, its area
+archlang describe museum.arch --zone west --json            # just the west wing (nested zones roll up)
+archlang describe museum.arch --zone west.galleries --json  # just the nested one, by its dotted path
+archlang describe museum.arch --select zones --json         # the grouping alone
+```
+
+`--zone` is a **display filter** like `--room`/`--level`: `ok`, the diagnostics and the exit
+code always come from the whole plan, so reading one wing can never make a broken building
+look sound.
+
+**With `schedule rooms`,** the drawn table groups its rows by zone — a heading row per
+zone, a `SUBTOTAL` closing each group, and the usual `TOTAL` closing the table. The schedule
+groups on the **innermost** zone, so every room appears exactly once and the subtotals add
+up to the total (unlike `describe().zones`, which rolls up). Rooms outside every zone get a
+trailing `(no zone)` group. A plan with no zones draws the flat table, byte for byte as
+before.
+
+## Theming
+
+A `theme { … }` directive overrides colours, line weight, and font. Resolution
+order (later wins): built-in defaults → the `theme` directive →
+`CompileOptions.theme` (programmatic).
+
+```
+theme {
+  background: "#1e2127"
+  wall:       "#e8e8e8"   # wall outline
+  wallFill:   "#3a3f4b"   # poché base
+  wallHatch:  "#5a6172"   # poché lines
+  room:       "#272b33"
+  roomLabel:  "#f0f0f0"
+  dim:        "#6cb6ff"
+  annotation: "#cfd3da"
+  font:       "Georgia, serif"
+  lineWeight: 1.3          # multiplier on all stroke widths
+}
+```
+
+Friendly keys (`wall`, `room`, `furniture`, `wallFill`, `wallHatch`, `door`,
+`window`, `background`) alias the canonical theme fields; you can also use the
+canonical names (`wallStroke`, `roomFill`, …). Unknown keys warn and are
+ignored. Colours are strings, `lineWeight` is a number, `font` is a CSS
+`font-family`. Programmatic overrides use the canonical field names:
+
+```ts
+compile(src, { theme: { wallStroke: "#0000ff", lineWeight: 0.5 } });
+```
+
+See [`examples/themed.arch`](../examples/themed.arch).
+
+### Named themes
+
+`theme <name>` starts from a built-in palette, and a block after the name overrides single keys
+of it (`theme blueprint { wall: "#ffffff" }`):
+
+| Name | Look |
+|---|---|
+| `blueprint` | white linework on cyanotype blue |
+| `mono` | pure black on white, for line prints |
+| `dark` | a dark screen palette |
+| `presentation` | warm paper and a serif face, for slides and client decks |
+| `rendered` | a presentation board: warm paper, a clean sans face, and every fixture symbol filled with a soft tint of what it is made of |
+
+Under `rendered` a symbol's body takes the tint of its family's material, and a second part (a
+sofa's cushions, a sink's bowl, a hot tub's water, a car's glass, a bicycle's tyres) the tint of
+a second material where the family has one. The materials are `wood`, `wood_dark`, `fabric`,
+`cushion`, `linen`, `wool`, `ceramic`, `stone`, `metal`, `glass`, `appliance`, `screen`, `paint`,
+`rubber`, `foliage`, `bark`, `soil` and `water`. The material is a fact about the family (`sofa`
+is fabric whatever its label), so the same table can drive a 3D model; it is exported as
+`FIXTURE_FAMILY_MATERIALS`. The tints are pale on purpose: the outlines still lead, at 3:1 or more
+on every tint. A rug and the pieces drawn dashed overhead (an upper cabinet, a range hood, a
+pergola) stay unfilled, so nothing beneath them is hidden. Planting takes the `foliage` tint, so
+under `rendered` the `lawn` key colours the lawn surfaces but not a tree, shrub, hedge or plant.
+Overriding the furniture fill (`theme rendered { furniture: "#eeeeee" }` or
+`style furniture { fill: … }`) replaces the tints with that one colour. A theme draws only:
+`describe()` and `lint()` are the same under every theme.
+
+```arch static
+plan "Flat" {
+  theme rendered
+  paper A3 landscape
+  scale 1:50
+  # … rooms, walls, furniture …
+}
+```
+
+## Analysis: `describe` & `lint`
+
+ArchLang doesn't just draw a plan — it can **read it back as facts**. Two pure
+functions (also surfaced as `archlang describe` / `archlang lint`) turn source into
+machine-readable, image-free output:
+
+- **`describe(source)`** → a semantic summary: every room with its `uses`, area,
+  bounding box and `adjacent` rooms; what each door, window, and opening connects;
+  the furniture; a modelled **access graph** (entrances, per-room reachability,
+  door-hop depth from the entrance, and the clear-width bottleneck on the way in);
+  and a **circulation** model — see [Circulation](#circulation) below.
+- **`lint(source)`** → advisory `W_*` warnings about habitability (a room with no
+  way in, a windowless bedroom, a too-small room, a door leaf sweeping onto a
+  fixture, a wet room reached only through a bedroom, a walk that squeezes too
+  narrow — `W_PATH_TOO_NARROW` — or wanders far from a straight line —
+  `W_CIRCUITOUS_PATH`…). Pick a ruleset with `--profile`:
+
+  ```
+  archlang lint plan.arch --profile residential-basic        # the default's ≥700 mm doors, ≥4 m² rooms (WC 1.1, bath 2.0; store/hall none), every plan judged as a dwelling
+  archlang lint plan.arch --profile accessibility-advisory   # stricter: ≥850 mm doors, ≥5 m² every room, swing clearance
+  archlang lint plan.arch --profile uk-residential-advisory  # also cn-, us-: room areas and widths by use, read from each source as advice
+  ```
+
+  Profiles are **advisory soundness checks, never a building-code guarantee.** The
+  programmatic form is `lint(src, { profile })`; the names come from
+  `LINT_PROFILES` (see `src/lint.ts`).
+
+These are deliberately **facts and advice, not an auto-arranger** — ArchLang never
+moves your geometry behind your back (see
+[ADR 0005](adr/0005-no-invisible-architect.md)). The full output shapes, the access
+graph, and the complete rule list are documented on the
+**[Analysis: describe & lint](analysis.md)** page; every code is in the
+[error catalog](error-codes.md).
+
+### Circulation
+
+`describe(source).circulation` models how a person actually **walks** the plan.
+Distances are measured on a nav grid whose free cells are eroded by a body radius,
+so a walk only passes where a person really fits (through doors and cased openings,
+not through furniture pinches). It is `null` when the plan has no modelled exterior
+entrance — there is nothing to measure a walk from — otherwise a `CirculationModel`. A
+storey with no exterior door that a `stair`/`elevator`/`escalator` reaches from a reachable
+storey is walked from that run instead: its walks start at the landing at the head of the
+flight a person arrived by, and `entranceId` is the run's id (see [Analysis](analysis.md)).
+The top-level `circulation` repeats `levels[0]`'s, so a plan whose lowest storey is reached
+only by a shaft (a basement) has a shaft-walked top-level model too.
+
+```ts
+interface CirculationModel {
+  entranceId: string;   // the first entrance in source order
+  cellSizeMm: number;   // nav-grid quantum every distance is rounded to (coarse)
+  bodyRadiusMm: number; // obstacles were inflated by this
+  rooms: {              // one entry per room reachable from any entrance
+    roomId: string;
+    walkDistanceMm: number;        // NEAREST entrance → room, over the eroded grid
+    bottleneckClearWidthMm: number;// narrowest unavoidable clear width, widest way in from any entrance
+    detourRatio: number;           // walkDistance ÷ straight-line from its own entrance (≥ ~1)
+    entranceId?: string;           // that nearest entrance — only when the plan has several
+  }[];
+  routes: {             // key functional routes (kitchen→living, bedroom→bath)
+    fromRoomId: string; toRoomId: string;
+    walkDistanceMm: number; bottleneckClearWidthMm: number; detourRatio: number;
+  }[];
+}
+```
+
+Two advisory lint rules read this model (see [ADR 0008](adr/0008-circulation-as-facts.md)):
+
+- **`W_PATH_TOO_NARROW`** — a walk pinches below `minPathClearWidthMm` (default
+  **700 mm**; the `accessibility-advisory` profile raises it to **900 mm**).
+- **`W_CIRCUITOUS_PATH`** — a room's `detourRatio` exceeds `maxDetourRatio`
+  (**3.0×**), i.e. it's reached the long way round.
+
+The same model backs an **opt-in render overlay** (see
+[`overlays`](#compilation-result) below) — the entrance→room walks (each from the room's
+nearest entrance), their pinch markers, and key routes drawn on top of the plan.
+
+### Authoring order — the stages
+
+A plan is checked, and best written, in six stages, lowest-frequency decisions first:
+`brief → rooms → walls → openings → fixtures → drafting`. `validate --stage <name>` judges the plan
+as far as that stage and no further; advance when `at_stage.clean`. The stage of each element kind
+is fixed by the compiler:
+
+| Stage | What it holds | Element kinds |
+|---|---|---|
+| `brief` | the frame: plan name and units, `site`, `level`s, `let`s, `keep`s on the brief's numbers, and the plan-level `axes`, `grid` and `north` | (plan-level, no element kind) |
+| `rooms` | the room graph on a grid, with the footprints that hold their place above every partition | `room`, `stair`, `elevator`, `escalator`, `void`, `outdoor` |
+| `walls` | the enclosure, derived (`walls from rooms`) or written | `wall`, `walls`, `column`, `roof`, `fence` |
+| `openings` | everything cut into a wall | `door`, `window`, `opening` |
+| `fixtures` | fixtures and furniture | `furniture` |
+| `drafting` | the sheet: dimensions, labels, schedule, legend, title; every finding counts and taste is reported | `dim` |
+
+Inside a stage the order that reads best is: in `walls`, columns, then the exterior walls
+(`category exterior`), then the interior ones, then fences (a `roof` is in this stage too); in
+`openings`, doors, then windows, then plain openings; in `fixtures`, the catalogued fixtures of wet rooms and kitchens,
+then loose furniture. Source order decides within a group. These sub-orders are guidance only: the
+compiler checks the six stages and does not rank anything inside one.
+
+Why this order:
+
+- **Rooms first** ([ADR 0028](adr/0028-rooms-primary-derived-walls.md)). A room is declared with its
+  place and size, and the walls can be derived from the rooms (`walls from rooms`), so rooms come
+  before any wall. Writing walls first stays legal.
+- **Exterior before interior.** The envelope fixes the building's extent; partitions subdivide what it
+  encloses.
+- **Openings after walls.** A door or window is cut into a wall that already exists, and the door
+  graph (entrances, adjacency, reachability) cannot be judged earlier.
+- **Fixtures before loose furniture.** Fixtures are tied to particular walls and to their room's use;
+  loose furniture is then placed in the space they leave.
+- **Drafting last.** Dimensions, labels and the sheet describe a plan that is otherwise settled.
+
+This is the order the language checks in, and it matches common teaching practice for drawing a
+plan; no standard prescribes it. It is a different thing from paint order, which is how the drawing
+layers stack in the SVG; paint order is set by the renderer and is unchanged.
+
+### Correcting a plan — `archlang repair`
+
+Because lint reports rather than rearranges, ArchLang ships an **explicit,
+opt-in** source-to-source corrector: `archlang repair plan.arch -o fixed.arch` emits new
+`.arch` with furniture pushed out of walls, off doorway approaches and door swings,
+overlaps separated, and stray fixtures relocated into their room and snapped to a
+wall — plus a change log (see [ADR 0006](adr/0006-solver-as-explicit-transform.md)).
+It is deterministic and never guesses topology: it will **not** add a door or window
+(that is a design choice), and a **circulation guard** declines any furniture move
+that would newly pinch a walk below the lint threshold (reporting it in `unresolved`
+instead). Use [`SKILL.md`](https://github.com/chanmeng666/archlang/blob/main/skills/archlang/SKILL.md) for the full repair-then-gate loop.
+
+**It reads every furniture statement, and never goes quiet.** The scan walks *into*
+`for` / `while` / `if` bodies and component definitions, so scripted pieces are no
+longer invisible to it, and it rewrites a placement **in the form you wrote it**:
+
+| How the piece is written | What repair rewrites |
+|---|---|
+| `at (x,y)` with literal coordinates | the `at` point |
+| `in <room> anchor <a> [flush] [inset N]` | the `inset`, minimally — in the wall-face frame when the placement is `flush` |
+| the same, when the move runs across the anchored axis | the whole placement becomes an absolute `at`, carrying the `rotate` the anchor had *derived* |
+| a statement with **more than one** resolved instance (a `for` body, a component used twice) | nothing — reported |
+| expression coordinates / an expression `inset` | nothing — reported (rewriting would discard your arithmetic) |
+| `against wall <id> …` | nothing — the wall is authoritative; reported |
+
+Anything in the last three rows is still *accounted for*: if a mover or orientation
+pass flags it, the piece appears in `unresolved` with the fault **and** the reason it
+was left alone (naming the `for`/component and the resolved piece ids for a scripted
+statement) — so a scripted collision can never read as a clean run. Every entry, change
+or note, carries the statement's byte `span`. A wall-anchored fixture is also an
+*obstacle*: a movable piece placed after it is separated off it.
+
+### Completing the drawing — `archlang finish`
+
+A sound plan is not yet a complete drawing. Rooms may hold no furniture, and `paper`, `scale`,
+`dims auto`, `title`, `schedule rooms` and `legend` are all optional. `archlang finish plan.arch`
+adds what the plan lacks, as a second **explicit, opt-in** source-to-source transform.
+`compile` never does this on its own. It runs two stages, and `--only furnish` or
+`--only sheet` runs one:
+
+1. **`furnish`** puts furniture in each rectangular room that holds none, by the room's use
+   ([ADR 0025](adr/0025-furnish-as-explicit-transform.md)), storey by storey on a plan with `level`
+   blocks, each storey's statements inside its own block. The pieces per use, the placement
+   forms and the limits are in [Furniture & Fixtures](furniture.md).
+2. **`sheet`** adds the sheet statements ([ADR 0024](adr/0024-finish-as-explicit-transform.md)).
+   It runs second because the legend lists the furniture.
+
+The sheet stage fills only what is missing and deletes nothing:
+
+| Statement | Added when | What is written |
+|---|---|---|
+| `paper` + `scale` | the plan has neither | the finest of 1:50, 1:100, 1:200, 1:500 that fits a sheet from A4 to A1, on the smallest such sheet, landscape first; A0 only when A4 to A1 hold nothing |
+| `paper` | the plan has only a `scale` | the smallest sheet that holds the drawing at that scale |
+| `scale` | the plan has only a `paper` | the finest standard scale at which the drawing fits that paper |
+| `dims auto` | the plan has no `dims auto` and no `dim` line | `all`, or `overall` when the short facade is under 60 mm on paper |
+| `schedule rooms` | the plan has no `schedule` and has rooms | `schedule rooms` |
+| `legend` | the plan has no `legend` and has a material or a fixture to list | `legend` |
+| `title` | the plan has no `title` and has a name | `title { project "<the plan's name>" }`, with no date and no author |
+
+An authored `dim`, `axes`, `north` or title block is never rewritten. The fit is the compiler's
+own rule (the one behind `describe().sheet.fits`), measured on the largest storey of a
+multi-storey plan. Comments and formatting survive, because the statements are inserted into
+the source rather than the plan being re-printed.
+
+An authored sheet is kept. If the drawing would not fit it with every statement added,
+`finish` leaves out the tables first, then `dims auto`, then the title, and names each one in
+`unresolved`. `--reissue` lets it replace `paper` and `scale` instead (and nothing else).
+
+Run it after lint is clean. The result is checked before it is returned: it never has a
+compile error, or a diagnostic code under any lint profile, that the plan did not have, on any
+storey. A sheet statement that would break that is left out and named in `unresolved` with the `codes`
+it would have raised, and the rest are still written. `dims auto all` steps down to
+`dims auto overall` first, for example when an opening on an angled or curved wall is on no
+chain (`W_OPENING_NOT_DIMENSIONED`), and is left out only when that is refused too. Nothing is
+changed only when no statement passes on its own. Running it twice changes nothing the second
+time. Like `archlang fix` it
+rewrites the file in place, prints the diff on stderr, and takes `--dry-run`, `--backup` and
+`-o`. From the library: `finish(source, { reissue?, only?, world? })` returns
+`{ source, changes, unresolved, changed }`. A `furnish` change carries the `room` it was written
+for, and every room left empty, one the furnish table has no row for included, is an `unresolved`
+note with that `room` (and the blocking `codes`, when a diagnostic blocked it). The first kind also
+carries `scope: "outside-table"`: it asks nothing of the author unless the room should hold
+furniture, and `scope`, never `reason`, is what tells it from a note to act on. A room that holds
+some furniture but lacks a piece its use requires is an `unresolved` note with that `room` too,
+naming the missing pieces; it is never topped up. On a plan with `level` blocks a furnish change or
+room note also carries the `level`, because the same id on two levels is two rooms.
+
+### Comparing two plans — `diffPlans`
+
+Where `describe(source)` turns **one** plan into facts, `diffPlans(sourceA, sourceB, opts?)`
+turns **two** into the *delta* between them. It reads each side's `describe()` summary plus the
+walls and opening hosts of that same resolve (which `describe()` does not report), and does a
+little geometry of its own: a vertex-by-vertex translation test to tell a move from a resize,
+and wall centreline lengths. It is equally pure, deterministic, and never throws: if either
+side fails to resolve it returns `{ ok: false, … }` with the collected error diagnostics.
+
+```ts
+import { diffPlans, type PlanDiff } from "@chanmeng666/archlang";
+const d = diffPlans(before, after);
+if (d.ok) for (const s of d.summary) console.log(s);
+```
+
+The returned `PlanDiff` reports:
+
+- **`rooms`** — each room `added` / `removed` (with its area) / `resized` (area before and
+  after, and the signed mm delta of each bbox edge, `top`/`bottom`/`left`/`right`, after −
+  before, in plan coordinates) / `relabeled` / `moved`. A `moved` room has the same shape at
+  another position and carries only its `offset` (`dx`, `dy` in mm, +y down the page), no
+  area fields. The offset is the translation that carries the room's floor vertices onto the
+  new ones within 10 mm each, also when the ring is written from another vertex or in the
+  other direction (a circle: its centre); it is never read off the bbox.
+- **`openings`** — doors, windows, and openings `added` / `removed` / `resized` (before/after
+  clear width in mm, and what they sit `between`), or `rehosted` when the width held but the
+  host changed (the wall it stands in, or its `between A and B` / `on <room>.<edge>`
+  placement) or the spaces it joins changed. `hostBefore`/`hostAfter` name the wall as a
+  person would (`wall "p"`, `the partition between "a" and "b"`,
+  `the exterior wall derived from the rooms`, `no wall`), `relationBefore`/`relationAfter`
+  quote a relational placement as written, and `betweenBefore` gives the spaces before.
+- **`walls`** — every wall, authored or derived by `walls from rooms`, `added` / `removed` /
+  `moved` (with its `offset`) / `resized` (centreline length before and after) /
+  `rethickened` (thickness before and after; a moved or resized wall carries these too when
+  its thickness also changed). An authored wall carries its `id`; a derived one has no id an
+  author can type, so it is named by its rooms (`name`, `derived: true`). A wall placed by
+  relation (derived, or `wall … between`/`around`) that moved or resized while its rooms did
+  lists those rooms in `follows`; a derived exterior ring follows every room that changed.
+- **`furniture`** — fixtures `added` / `removed`, by category.
+- **`circulation`** — per-room walk-distance and bottleneck (pinch) deltas, from the
+  [circulation](#circulation) model.
+- **`totals`** — floor area and room count before and after.
+- **`summary`** — human-readable one-line sentences describing each change above: rooms,
+  then openings (a re-hosted opening's `… re-hosted: …` and `… joins … → …` lines follow its
+  own entry), then furniture, then walls (`Moved the partition between "a" and "b" 500 mm
+  right, following Bed`), then the trailing `Walk to …` block.
+
+**Matching** is by **id**, with two label rules for rooms. An `id` here is the element's
+**resolved id** — the explicit `id=` if you wrote one, otherwise the deterministic auto id
+(e.g. `room_1`), which is positional and shifts when a room is inserted, deleted or reordered
+ahead of it. Rooms pair in this order: an `id=` you wrote on **both** sides pairs first,
+whatever the labels say; then a room whose non-empty `label` names exactly one room on
+**each** side is paired **by that label** — whether its id is auto or written on one side
+only, since neither says which room it was before; then every other room/opening/fixture is
+paired by its resolved id; and a room still unmatched is rescued only when its label is
+unique among the unmatched rooms on both sides. A room paired across two different ids is
+reported under its **after** id (an id change alone is not a change). Circulation deltas follow the same room
+pairing, and so does the test of which spaces an opening joins. Walls pair by resolved id too:
+an authored wall by its `id=`, a derived wall by its rooms, and a wall with no `id=` by its
+positional auto id (e.g. `partition_3`), which shifts when a wall is inserted ahead of it. On a multi-storey plan `diffPlans` compares the **lowest storey only**, exactly as
+`describe()`'s top-level `rooms[]` does.
+
+**Noise thresholds** keep sub-perceptual jitter out of the diff: a room counts as *resized* only
+past **0.05 m²** of area drift or **10 mm** on any bbox edge; a circulation change is reported only
+past **250 mm** of walk distance or **50 mm** of pinch width. Differences below these are ignored.
+A room that is measured on one side and blocked by furniture (`circulation.blocked`) or
+unmeasured (`circulation.unmeasured`) on the other — or unmeasured for a different reason — has
+no `circulation` entry, since it has no walk to compare, and is reported as a trailing
+`Walk to …` sentence in `summary` instead, e.g.
+`Walk to bed: 8000 mm (pinch 740 mm) → blocked (widest way in 0 mm)` or
+`Walk to bed: 8000 mm (pinch 740 mm) → unmeasured (no_door_route)`, with the reason code exactly
+as the API spells it. The same sentence reports a room blocked on both sides whose widest way in
+moved past the 50 mm pinch threshold (`… blocked (widest way in 0 mm) → blocked (widest way in
+200 mm)`), and every matched room when one side has no circulation model at all (an entrance
+added or removed): `Walk to bed: 8000 mm (pinch 740 mm) → no circulation model`.
+
+The **`summary` sentences are stable, rendered strings** — their exact wording is a frozen part of
+the API (downstream UIs display them verbatim), so treat them as presentation, not as a parse
+target; read the structured `rooms` / `openings` / `furniture` / `circulation` fields when you need
+to branch on a change.
+
+## Compilation result
+
+`compile(source, opts?)` returns:
+
+```ts
+{
+  svg: string;
+  errors: CompileError[];          // derived from diagnostics (severity "error")
+  warnings: CompileWarning[];      // derived from diagnostics (severity "warning")
+  diagnostics: Diagnostic[];       // every problem, with byte-offset spans
+  ast?: PlanNode;
+  scene?: Scene;                   // backend-neutral drawing (for DXF/PDF/PNG)
+}
+```
+
+- `errors` are **fatal**; when present, `svg` is `""`. Each carries `message`
+  and (when known) `line`/`col`.
+- `warnings` are advisory (e.g. *door does not lie on any wall*, *rooms overlap*)
+  and do not block rendering.
+- `errors`/`warnings` are **projections** of `diagnostics` — kept for back-compat.
+- `scene` is the backend-neutral {@link Scene} IR — the geometry computed once and
+  shared by every backend.
+
+### Output formats
+
+The default `compile()` path is zero-dependency and emits **SVG**. Other backends
+are pure serializers of the same `scene`:
+
+| Format | API | CLI | Dependency |
+|--------|-----|-----|------------|
+| SVG | `compile().svg` | `archlang compile p.arch` | none (default) |
+| DXF | `toDxf(scene)` | `archlang compile p.arch -f dxf` | none (zero-dep) |
+| TXT | `renderAscii(scene)` | `archlang compile p.arch -f txt` | none (zero-dep ASCII plan) |
+| JSON | `planToJson(source)` | `archlang compile p.arch -f json` | none (the Plan JSON `--from-json` reads; the plan's model, not a drawing of the scene) |
+| PDF | `toPdf(scene)` | `archlang compile p.arch -f pdf` | optional `pdfkit` (vector, text selectable) |
+| PNG | `renderPng(scene)` | `archlang compile p.arch -f png` | optional `@resvg/resvg-js` (deterministic raster) |
+
+The optional dependencies are lazily `import()`ed, so the core never requires
+them and a default install emits SVG, DXF and TXT with nothing extra. The PNG backend
+rasterizes the SVG with a bundled font (no system fonts), so output is
+byte-identical across machines.
+
+**Non-Latin text in PDF and PNG.** Both backends draw text with embedded fonts, never
+the host's. The bundled Roboto covers Latin (including Polish, Czech, Turkish and the
+rest of Latin Extended), Greek and Cyrillic. **Chinese, Japanese and Korean** labels
+use the optional `@chanmeng666/archlang-font-cjk` package, a renamed subset of Noto
+Sans CJK covering GB 2312, Big5, JIS X 0208, KS X 1001 and every Hangul syllable. npm
+installs it by default alongside `pdfkit` and `@resvg/resvg-js`, and it is loaded only
+when a label needs it, so a plan without CJK text renders exactly as before. Kanji and
+Traditional characters use the Simplified Chinese glyph forms of that face. A character
+no embedded font can draw still renders as an empty box, and the CLI names it with a
+warning: `W_CJK_FONT_MISSING` when the CJK package was left out (e.g.
+`--omit=optional`), `W_GLYPH_UNSUPPORTED` for any other script (Thai, Arabic, …).
+SVG output is unaffected either way: it uses the viewer's own fonts.
+
+**DXF units and layers.** The DXF is ASCII, headed AutoCAD 2000 (`AC1015`), and declares
+its unit: `$INSUNITS` 4 (millimetres) and `$MEASUREMENT` 1 (metric), so a CAD program
+inserts the plan at true size. Entities sit on NCS-style layers by discipline:
+architectural `A-` (`A-DOOR`, `A-GLAZ`, `A-FLOR`, `A-ANNO-DIMS`, …), landscape `L-` and
+civil `C-` for the ground, and `V-` for an axonometric view. Walls go on two layers: a
+wall of category `exterior` on `A-WALL-EXTR`, every other wall on `A-WALL-INTR`, so you
+can freeze the partitions and keep the envelope (a remodel's `status demolish` and
+`status new` walls go on `A-WALL-DEMO` and `A-WALL-NEWW`). That is the rule the rest of ArchLang
+uses for an outside wall (an `exterior` host's door opens to the outside, a roof follows
+the closed `exterior` ring), so name the envelope `exterior`. Where walls join, the
+thicker wall owns the junction. Between two walls of equal thickness and the same
+hatch (the same material, `scale` and `angle`), the `exterior` wall owns it. Between
+equal-thickness walls with different hatches (a different material, or the same material
+at another `scale` or `angle`), the wall stated first owns it, because that is whose hatch
+the drawing shows there. Each layer holds its walls' share of the joined outline and poché the drawing
+shows. No line is moved or added, but a face line is cut in two where it passes from one
+layer's wall to the other's.
+
+**DXF blocks and dimensions.** Each door, window and catalogued fixture is a `BLOCK` with one
+`INSERT`, on its AIA layer, and the entities inside keep theirs. Elements that draw the same shape
+share one definition, named by what they are: `DOOR-HINGED-900`, `WINDOW-FIXED-1500`,
+`FURN-SOFA-2000X900`, with `-2` for a second shape under a name (the same door hinged the other way, a
+sill on the other face). A door or a window stands in the frame of its wall and a turned fixture about
+the middle of its footprint, so one door on four walls is one block with four `INSERT`s. On a wall at
+another angle or a curved one the block is drawn as the plan has it. Every `dim` and `dims auto` figure
+is a rotated `DIMENSION` that measures along its own line, with an anonymous `*D` block holding what the
+drawing drew. Its `R`, `φ` or `text` is an override, and so is a figure that is not a whole number of
+millimetres; any other figure is the reader's own measure. A cased `opening` and an uncatalogued
+`furniture` word stay plain entities. Exploding the file gives the same entities as a flat export, and
+the check is [ezdxf](https://ezdxf.mozman.at/), an independent reader, run in CI. The file has no
+handles or OBJECTS section, which a stricter reader may ask for: test it in the CAD program you use.
+
+The **TXT** backend draws the plan as an ASCII/Unicode grid — no image, no binary, no
+dependency. It exists so a text-only agent (or a terminal) can *see* the layout at a
+glance; tune it with `--cols <n>` and `--charset unicode|ascii`.
+
+For a quick **viewable** raster, `archlang preview p.arch -o p.png` renders PNG at a
+sensible on-screen width (~1600 px) instead of the high-resolution native size — and
+where the optional renderer is absent it reports the catalogued `E_PNG_DEPENDENCY`
+(with a `fix`), or fetches it with `--install`. Render many files at once with
+`archlang batch …`, and embed plans in Markdown with `archlang md doc.md` (renders each
+fenced `arch` block to an image link). `archlang manifest --json` prints this whole CLI
+surface — commands, flags, formats, lint profiles, error codes — as structured data.
+
+To read that surface rather than parse it: `archlang help` lists every command,
+`archlang <cmd> --help` prints one command's flags and worked examples, and
+`archlang --version` prints the version. Help and the
+[CLI reference](https://archlang.uk/cli) are both rendered from the
+manifest, so none of the three can disagree.
+
+### Convert Plan JSON to another format (experimental)
+
+Plan JSON is the way out for a format ArchLang does not write. There is no plugin interface and
+the core takes on no dependency: a converter is a short script of your own that reads the document
+and writes the file. `tools/plan-to-geojson/` in the repository is one complete example, a recipe
+outside the npm package, with its worked example beside it.
+
+```sh
+archlang compile plan.arch -f json -o plan.json
+node tools/plan-to-geojson/plan_to_geojson.mjs plan.json plan.geojson
+```
+
+What a converter has to know, in the order it comes up:
+
+- **What is not in the document.** `compile -f json` prints a `note:` per clause it left out and
+  `--json` lists them in `dropped`, and a converter inherits that list. A plan with `level` blocks
+  writes one document per storey.
+- **The shape.** `schemas/plan.schema.json` describes it (`version: 1`). It is additive, so ignore a
+  key you do not know. Coordinates are millimetres, origin top-left, `y` down. Keys marked
+  output-only (`area`, `floor_polygon`, `edges`, …) are there to be read.
+- **A curved edge.** A wall point with an `arc` member says the edge arriving at it is an arc:
+  `radius`, `dir` (`cw` or `ccw` as the sheet reads, default `ccw`) and `major`, the same words as
+  the `.arch` clause. `x`/`y` stay its end, so ignoring `arc` leaves the chord. The script shows how to
+  find the centre and flatten it.
+- **Derived walls.** Under `walls from rooms` the document holds the statement, `walls_from_rooms`,
+  and not the walls. Read them from `describe --json`'s `derived_walls`.
+
+The example writes **GeoJSON** ([RFC 7946](https://www.rfc-editor.org/rfc/rfc7946)) because it is a
+real format with a short specification and wide support in GIS and web-map tools, and it is itself
+JSON, so the script is about the mapping and not a file format. Rooms, furniture and columns become
+polygons, walls lines, openings points. Its two awkward rules are ones any target can bring: the
+plan's `y` runs down, and GeoJSON has no curve, so an arc is flattened to one chord per 7.5°.
+
+Its limits are stated rather than hidden. Coordinates are local metres, because a plan has no place
+on Earth, and RFC 7946 §4 allows that only by agreement between the parties: a tool that assumes
+longitude and latitude will read them as degrees. A wall is its centreline, not its band, because
+the joined wall outline is not in the document. An opening is its centre.
+
+### Diagnostics
+
+The compiler never throws on bad source: it recovers from syntax errors and
+reports **all** problems in a single pass. Each is a `Diagnostic`:
+
+```ts
+interface Span { start: number; end: number; }          // byte offsets into source
+type Severity = "error" | "warning";
+interface Diagnostic {
+  severity: Severity;
+  message: string;
+  span?: Span;       // source location, when known
+  code?: string;     // stable machine code, e.g. "E_ROOM_SIZE"
+  hints?: string[];  // optional "did you mean …?" suggestions
+}
+```
+
+`formatDiagnostic(source, d)` (also exported) renders a caret-framed snippet:
+
+```text
+error[E_ROOM_SIZE]: room "bed" must have a positive size
+  --> 1:27
+   |
+ 1 | room id=bed at (0,0) size 0x4000
+   |                           ^^^^^^
+   = help: did you mean 3000x4000?
+```
+
+`offsetToLineCol(source, offset)` converts a byte offset to a 1-based
+`{ line, col }`. The `archlang` CLI prints these frames for every diagnostic.
+
+`compile(source, opts?)` options:
+
+- `width` — px for the `<svg>`; height derived from aspect ratio.
+- `noCache` — bypass the memoization cache.
+- `theme` — theme overrides layered on top of the plan's `theme { … }` directive.
+- `annotate` — stamp each drawn primitive that has a source span with a
+  `data-span="start:end"` attribute so tooling can map a clicked element back to its
+  source. **Default output is byte-identical** without it (see
+  [ADR 0007](adr/0007-opt-in-source-annotation.md)).
+- `overlays` — opt-in diagnostic overlays drawn on top of the plan. Currently only
+  `["circulation"]` (the entrance→room walks, bottleneck markers, and key routes from
+  the [circulation](#circulation) model — [ADR 0008](adr/0008-circulation-as-facts.md));
+  also via `archlang compile --overlay circulation`. Default output is **byte-identical**
+  without it, so shipped SVGs stay clean.
+- `accessible` — emit a self-describing SVG for assistive tech and machine consumers: the
+  `<svg>` gains `role="img"` + `aria-labelledby` and a `<title>`/`<desc>` pair. The title is
+  the plan name (or [`accTitle`](#accessible-metadata-acctitle-accdescr) when declared) and
+  the description is a derived one-sentence caption (`describe().caption` — the same sentence,
+  or [`accDescr`](#accessible-metadata-acctitle-accdescr) when declared). Also via
+  `archlang compile --accessible`. **Default output is byte-identical** without it (see
+  [ADR 0009](adr/0009-ai-first-context-and-distribution.md)). Pass an object,
+  `{ idPrefix: "plan-7" }`, to name the `<title>`/`<desc>` ids `plan-7-title`/`plan-7-desc`
+  instead of the fixed `arch-title`/`arch-desc` — which is what several plans inlined in one
+  HTML page need, or every `aria-labelledby` on the page resolves to the FIRST drawing's
+  title. `true` is exactly `{ idPrefix: "arch" }`. The prefix is reduced to
+  `[A-Za-z0-9_-]` (an id with a space would split the `aria-labelledby` token list) and an
+  empty result falls back to `arch`; it never fails a compile. Also via
+  `archlang compile --accessible --acc-id-prefix plan-7`. **Together with `annotate` it also
+  makes each element a control** — see [Keyboard and screen-reader operability](#keyboard-and-screen-reader-operability-annotate--accessible).
+- `onError` — set to `"svg"` to render a **broken** plan as a deterministic, self-describing
+  error-card SVG (severity, code, `line:col`, message, catalogued fix) instead of returning
+  an empty `svg`. Errors, diagnostics, and exit codes are unchanged; **without this opt-in a
+  failing plan still produces no image** (`svg: ""`). Also via `--error-svg` on `archlang compile`,
+  `archlang preview`, and `archlang md`. The card renderer is exported as `renderErrorSvg`
+  (see [ADR 0009](adr/0009-ai-first-context-and-distribution.md)).
+
+`annotate`, `overlays`, `accessible`, and `onError: "svg"` are the only options that change
+SVG output, and all are opt-in — the default `compile(source)` is byte-stable and
+snapshot-tested.
+
+### Source anchors (annotate mode)
+
+Alongside `data-span`, `annotate` also stamps element-identity attributes on every
+element primitive — **`data-arch-id`**, **`data-arch-kind`** and **`data-arch-label`**, plus
+**`data-arch-primary`** on one node per element — so a hit-testing or selection UI can map a
+clicked SVG shape back to the element (and thence its source) it came from, and can name and
+focus it without a second model of the drawing:
+
+- **`data-arch-id`** is the element's **resolved id** — the explicit `id=` if you wrote one,
+  otherwise the deterministic auto id (e.g. `room_1`).
+- **`data-arch-kind`** is the element's kind. Anchors are stamped on **every element kind
+  except `wall`**, so the value is currently one of `room`, `door`, `window`, `opening`,
+  `furniture`, `dim`, or `column`. Treat this as **open-ended, not a closed enum** — the set
+  is exactly the non-wall members of the compiler's `ElementKind` union and grows whenever a
+  new element kind is added, so a consumer should switch on the kinds it knows and tolerate
+  unrecognized ones rather than assume a fixed list.
+- **`data-arch-label`** is what the plan *calls* this element: the authored `label`, which is
+  the very string the drawing's own `<text>` prints. An unlabelled fixture or ground surface
+  falls back to its catalogue `category` / `surface` word — a catalogued symbol draws no text
+  at all, so that word is the only name there is, and it is emitted **verbatim**, snake_case
+  included; casing and word-splitting are a consumer's presentation choice. **The attribute is
+  absent when the plan names the element nothing**, which is every `door`, `window` and
+  `opening`: the language gives them no label and the compiler will not invent one.
+- **`data-arch-primary`** (an empty attribute, so match it as `[data-arch-primary]`) marks
+  **exactly one node per `data-arch-id`** — the shape that stands for the element. It is the
+  element's first non-`text` primitive: a room's floor polygon, a fixture's symbol outline. A
+  drawn name is never the primary, because a label *describes* a control rather than being
+  one. Use it instead of guessing "the polygon, else the first non-`text` node" from outside:
+  that guess is a second model of a drawing the compiler already knows, and it drifts.
+
+**Walls carry no anchors.** A single wall in the SVG is unioned geometry stitched across
+many source statements, so there is no one element to point back to; anchors are stamped on
+the discrete element primitives only. Like `data-span`, these attributes appear **only** under
+`annotate` — default output stays byte-identical (see
+[ADR 0007](adr/0007-opt-in-source-annotation.md)).
+
+### Keyboard and screen-reader operability (`annotate` + `accessible`)
+
+With **both** options on, the compiler also stamps the attributes that turn each element's
+primary node into a control, so an embedder does not have to derive a name or choose a
+focusable node for itself:
+
+⚠ **This is a library-only combination.** `accessible` has a flag (`archlang compile --accessible`)
+and `annotate` has none, so the CLI stops at the `<title>`/`<desc>` pair and never emits a
+control. Call `compile(source, { annotate: true, accessible: true })` — see
+`docs/backlog.md` (§A.7).
+
+| Attribute | Where | Value |
+|---|---|---|
+| `role="button"` | each `[data-arch-primary]` | — |
+| `tabindex="-1"` | each `[data-arch-primary]` | always `-1` |
+| `aria-label` | each `[data-arch-primary]` | `<Kind> <label>`, and `, <room>` for a fixture; an unnamed room gets `<Kind> <n>` |
+| `aria-hidden="true"` | every non-primary `<text>` with a `data-arch-id` | — |
+
+**The name leads with the KIND**: `Room Kitchen`, `Furniture Bed, Kitchen`, `Door`. It is read
+by someone who cannot see the drawing, where a bare "Bed" among thirty controls says nothing
+about what sort of thing it is — and the room trails a fixture because a family plan has four
+beds and the room is the half that tells them apart (from the element's declared
+`in <room>`, when that room is itself labelled). An element the language names nothing is
+announced by its kind alone, so two doors on one plan legitimately share the name `Door`,
+which is exactly what the drawing says about them.
+
+**A catalogue word is capitalised here and nowhere else.** This string is a sentence somebody
+hears, so a fixture the plan did not label opens like one — `Furniture Bed`, from the catalogue
+`bed`. An **authored** label is repeated exactly as the author cased it: those are their words,
+and `grandma's sofa` is not ours to retitle. Only the first letter changes, so `dining_table`
+becomes `Dining_table` — splitting a catalogue token into words is a guess the compiler does
+not make, and `data-arch-label` still carries the raw token for a consumer that wants it.
+
+**An unnamed room answers to its position**: `Room 1`, `Room 2`, `Room 3` — dense over the
+rooms the plan never labelled, in document order — so three anonymous rooms present three
+distinguishable controls rather than three called `Room`. Renaming one of them therefore
+renumbers the unnamed rooms after it, which is the price of a dense sequence and is why the
+ordinal is **not** written to `data-arch-label`: that attribute reports what the plan CALLS a
+thing, and the plan calls these nothing. No other element kind is numbered — the drawing says
+nothing that would distinguish two doors, and this is not the place to invent it.
+
+**`tabindex` is always `-1`, never `0`.** A plan is one roving tab stop: the embedder promotes
+whichever element currently holds it to `0`. Emitting `0` here would put a hundred tab stops
+in a single page.
+
+**The drawn labels are hidden** because the primary node's `aria-label` already announces the
+name; left visible they would be read a second and third time (a room draws its name *and* its
+area). The primary node itself is never `aria-hidden` — that on a focusable element is a
+keyboard trap.
+
+**The `<svg>` root keeps `role="img"`.** A drawing is one image until a consumer makes it
+something else; a consumer that wires up selection should override the root to `role="group"`
+so the controls beneath it are not hidden, and only where they really are controls — a
+read-only embed keeps `img`.
+
+**`accessible` never moves the `data-arch-id` set.** It only adds attributes to elements
+`annotate` already stamped, so a consumer's id-stability regression test holds across the
+two combinations.
+
+### What the embedder still owns
+
+The compiler names each element and marks which node is the control. What it cannot
+know is everything about the page the drawing is on, so it emits none of it:
+
+- **The roving tab stop.** Every primary is `tabindex="-1"`; exactly one element per
+  drawing is promoted to `0`, and which one is page state. A page showing three plans
+  has three rovers, not one.
+- **Selection state.** `aria-pressed` (or `aria-selected`) is the consumer's — the
+  compiler has no idea what is selected, or that anything can be.
+- **Focus.** Where focus goes when an element is activated, where Escape returns it,
+  and where it lands when the drawing is replaced are all page behaviour.
+- **A read-only render has to take the controls back OFF.** `role="button"` and
+  `tabindex` are stamped whenever `annotate` and `accessible` are both on, whether or
+  not anything is listening: a viewer that only *displays* a plan therefore ships a
+  screenful of buttons whose Enter does nothing. Strip `role` and `tabindex` from every
+  `[data-arch-primary]` and leave the `<svg>` root at `role="img"`. **Keep the
+  `aria-label`.** Once the SVG is injected into a page that attribute is the only place
+  the compiler's name survives, so dropping it forces the consumer back onto a name it
+  derives itself — the very derivation these attributes exist to retire. (ArchCanvas
+  shipped the un-stripped version to a public share page — 61 inert buttons over a root
+  demoted from `img` — and corrected it the same day.)
+- **One `idPrefix` per drawing.** Several plans inlined in one document must each pass
+  their own `accessible: { idPrefix }`, or every `aria-labelledby` on the page resolves
+  to the first drawing's `<title>`.
+- **Browse mode may need a scope.** A screen reader in its own browsing mode takes the
+  arrow keys for itself, so a consumer that binds arrows to move the roving stop may
+  need the drawing's wrapper (not the `<svg>`) to be `role="application"` with an
+  `aria-roledescription` and an instruction for the reader. That is a page decision
+  about a keyboard contract the compiler does not define, which is why the compiler
+  never emits `application` itself.
+
+### Known limitations (screen readers)
+
+Measured against the shipped examples with `{ annotate: true, accessible: true }`.
+These are real gaps, not subtleties, and every one of them is a consumer's problem
+today; the backlog entries that would close them upstream are in
+`docs/backlog.md`
+§ "A11y of the compiled drawing".
+
+- **`dims auto` text is announced as a bare number.** An automatic dimension chain
+  draws its readings as `<text>` carrying **no `data-arch-id`**, so it is neither named
+  by the compiler nor hidden by it: a reader announces `3400`, `600`, `5600` with
+  nothing saying what they measure. `bungalow.arch` emits 87 such unowned texts.
+  Consumers hide them (`aria-hidden`) today. The upstream fix is for the compiler to
+  emit either `aria-label="3.4 metres"` or `aria-hidden="true"` on its own annotation
+  text.
+- **An authored `dim` becomes a control called `Dim`.** A `dim` statement *is* an
+  element, so its first non-`text` primitive — a witness line — gets
+  `role="button"` and the kind-only name `Dim`. Its drawn number is correctly hidden,
+  which leaves a focusable control with no useful name. `studio.arch` has four.
+- **The `<desc>` sentence contains raw element ids.** `describe().caption` reads
+  *"…entrance via `d_front`, `d_garden`"* — an author's identifier, spoken. Consumers
+  rewrite the sentence client-side. The caption should name the element the way
+  `aria-label` does.
+- **The sheet's own text is unowned.** The title block, the room schedule, the legend,
+  the north arrow and the scale bar are `<text>` with no `data-arch-id`, so they are
+  neither named nor hidden. In ordinary browse mode that is fine — they read as the
+  drawing's printed matter, which is what they are — but inside a consumer's
+  `role="application"` scope they become unreachable.
+- **NVDA's browse mode drops the accessible name of an SVG `role="button"`.** It
+  announces the first character of `aria-label` and stops. The markup is correct and
+  other readers announce it in full; a consumer that needs it read in browse mode has
+  to leave browse mode (the `application` scope above). Reported as a reader
+  limitation, not a compiler one.
+
+## Worked example
+
+See [`examples/studio.arch`](../examples/studio.arch) and
+[`examples/two-bed.arch`](../examples/two-bed.arch), or try the
+[playground](../playground/index.html).
+
+## Architecture (for contributors)
+
+The compiler is a pipeline: **lex → parse → resolve(AST → IR) → render**.
+Every element type (wall, room, door, …) is a single self-contained module in
+`src/elements/` implementing a common `ElementDef` (`parse` / `resolve` /
+`render`); parse, resolve, and render all iterate the registry rather than a
+hard-coded switch. `resolve()` (in `src/ir.ts`) is the single place semantics
+live — grid-snap, id assignment, opening-hosting, and checks — and it produces
+a new immutable IR (the AST is never mutated). `render()` consumes the IR only,
+which keeps it backend-ready.
+
+**To add an element type:** write one `src/elements/<name>.ts` exporting an
+`ElementDef`, then add one `register()` line in `src/elements/index.ts`. No
+edits to the parser, resolver, or renderer cores are needed — `column` is the
+worked example.
+
+**`transform` — carrying an element through `place`.** A component instance
+resolves in its own frame, and each element then maps itself into plan
+coordinates with `transform(el, t)`, where `t` is a `TransformCtx`: `t.point`,
+`t.rect` (top-left + size, re-cornered), `t.arc`, `t.segment`, `t.side`,
+`t.quarterTurn`, `t.nsId`, plus `t.id` (the namespaced id), `t.reflected` and
+`t.swapsAxes`. Return a new element and flip any handed fact yourself when
+`t.reflected` is true. Every built-in has one. A plugin passed through
+`compile(src, { plugins })` may omit it: one that replaces a built-in kind
+inherits the built-in's, and a new kind without one is refused inside a `place`
+with `E_INSTANCE_NO_TRANSFORM` (the instance's copy is dropped, never drawn
+untransformed). The inherited action assumes the built-in's resolved shape, so a
+replacement whose `resolve` returns a different shape must provide its own
+`transform`.

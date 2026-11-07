@@ -1,0 +1,17 @@
+# class: clearances
+# origin: audits/2026-10-18-first-contact.md A4, H3, S4, T4, C3, K6 (in every first-contact plan a chair placed
+#   `at` south of its table with no `rotate`, so its back is to the north and it faces away from the table)
+# expect: W_SEAT_FACING_AWAY
+# status: done
+# fact: t_dine spans y 1500-2400; the chair spans y 2450-2900 at rotate 0 (back north), so its front ray runs south,
+#   away from the table, and enters no table or desk within 600 mm
+plan "Chair facing away from its table" {
+  units mm
+  grid 50
+  wall id=shell exterior thickness 200 { (0,0) (4000,0) (4000,4000) (0,4000) close }
+  room id=r_din at (0,0) size 4000x4000 label "Dining" uses dining
+  door id=d_in at (2000,4000) width 900 wall shell swing into r_din
+  window at (2000,0) width 1500 wall shell
+  furniture id=t_dine table at (1200,1500) size 1600x900 label "Table"
+  furniture chair at (1775,2450) size 450x450
+}

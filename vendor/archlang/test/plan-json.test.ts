@@ -1,0 +1,774 @@
+import { describe, expect, it } from "vitest";
+import { readdirSync, readFileSync } from "node:fs";
+import {
+  planFromJson,
+  planToJson,
+  planJsonToArch,
+  astToJson,
+  compile,
+  describe as describePlan,
+  roomTypeForUses,
+  usesForRoomType,
+  ROOM_TYPES,
+  USE_TO_ROOM_TYPE,
+  ROOM_TYPE_TO_USE,
+  PLAN_JSON_SCHEMA,
+  type PlanJson,
+} from "../src/index.js";
+// The parser's own accept-list, imported rather than retyped — the same law the
+// projection itself follows, so a fifth `dims auto` mode cannot pass this suite unnoticed.
+import { AUTO_DIMS_MODES } from "../src/ast.js";
+import { CANNOT_ROUND_TRIP } from "./plan-json-gaps.js";
+import { WALLS_FROM_ROOMS_PLANS } from "./walls-from-rooms-plans.js";
+
+/**
+ * Structured JSON I/O: planFromJson / planToJson / astToJson.
+ *
+ * The shape follows the RPLAN / DStruct2Design convention (snake_case, room_type
+ * enum, input_graph). The load-bearing guarantees: shape errors are catalogued and
+ * name their JSON path; and a non-scripting plan round-trips to byte-identical SVG.
+ */
+
+// A small hand-written plan exercising walls, rooms, doors/windows/openings, and
+// furniture — a non-scripting, grouped plan (the round-trip class).
+const FIXTURE_A = `plan "Fixture A" {
+  units mm
+  grid 50
+  wall exterior thickness 200 { (0,0) (6000,0) (6000,4000) (0,4000) close }
+  wall partition thickness 100 { (3000,0) (3000,4000) }
+  room id=r_a at (0,0) size 3000x4000 label "Living" uses living
+  room id=r_b at (3000,0) size 3000x4000 label "Bedroom" uses bedroom
+  door id=d_main at (1500,4000) width 1000 wall exterior hinge left swing in
+  door id=d_ab at (3000,2000) width 900 wall partition hinge left swing in
+  window at (0,2000) width 1200 wall exterior
+  furniture bed at (3300,300) size 1500x2000 label "Bed"
+}`;
+
+const FIXTURE_B = `plan "Fixture B" {
+  units mm
+  grid 100
+  scale 1:100
+  north right
+  wall exterior thickness 250 { (0,0) (8000,0) (8000,5000) (0,5000) close }
+  wall partition thickness 100 { (4000,0) (4000,5000) }
+  room id=k at (0,0) size 4000x5000 label "Kitchen"
+  room id=b at (4000,0) size 4000x5000 label "Master Bedroom"
+  opening id=o1 at (4000,2500) width 1000 wall partition
+  door id=d at (2000,5000) width 900 wall exterior hinge right swing in
+  window at (6000,0) width 1600 wall exterior
+  furniture sofa at (300,300) size 2000x900 label "Sofa"
+  dim (0,5000)->(8000,5000) offset 700 text "8000"
+  title { project "B" drawn_by "T" date "2026-07-10" }
+}`;
+
+/** Project a plan out to JSON, back to `.arch`, and require the same bytes of SVG. */
+const roundTripsSvg = (src: string): void => {
+  const { json, diagnostics } = planToJson(src);
+  expect(diagnostics.filter((d) => d.severity === "error")).toEqual([]);
+  expect(json).toBeDefined();
+  const { source, diagnostics: fromDiags } = planFromJson(json as PlanJson);
+  expect(fromDiags.filter((d) => d.severity === "error")).toEqual([]);
+  expect(source).toBeDefined();
+  expect(compile(source!).svg).toBe(compile(src).svg);
+};
+
+describe("plan-json — round-trip byte-identity (SVG)", () => {
+  const roundTrips = roundTripsSvg;
+
+  it("round-trips two hand-written fixtures to identical SVG", () => {
+    roundTrips(FIXTURE_A);
+    roundTrips(FIXTURE_B);
+  });
+
+  it("exports `walls from rooms` as the statement, never its derived walls, and round-trips it", () => {
+    // ADR 0028 §3: the statement is an additive kind; the walls it derives have no
+    // author-facing id, so they are not `walls[]` rows (the authored ones still are).
+    const src = readFileSync("examples/two-bed.arch", "utf8");
+    const { json } = planToJson(src);
+    expect(json!.walls_from_rooms).toEqual({
+      exterior: 300,
+      partition: 100,
+      open: [{ between: ["r_hall", "r_living"] }],
+    });
+    expect(json!.walls).toEqual([]);
+    // An authored wall beside the statement is still a `walls[]` row.
+    const coexist = WALLS_FROM_ROOMS_PLANS.find((p) => p[0] === "coexist")![1];
+    expect(planToJson(coexist).json!.walls.map((w) => w.id)).toEqual(["p"]);
+    // two-bed carries a `roof`, which Plan JSON leaves out (plan-json-gaps.ts); the studio twin round-trips
+    roundTrips(readFileSync("test/walls-from-rooms/studio.arch", "utf8"));
+    expect(planToJson(readFileSync("test/walls-from-rooms/studio.arch", "utf8")).json!.walls).toEqual([]);
+    const withExcept = coexist.replace("partition 100\n", "partition 100 { except b }\n");
+    expect(planToJson(withExcept).json!.walls_from_rooms!.except).toEqual(["b"]);
+    // The hand-typed twin derives nothing.
+    expect(
+      planToJson(readFileSync("test/walls-from-rooms/two-bed.arch", "utf8")).json!.walls_from_rooms,
+    ).toBeUndefined();
+    const bad = planFromJson({
+      ...(json as PlanJson),
+      walls_from_rooms: { exterior: 0, partition: 100, except: ["a b"] },
+    });
+    expect(bad.diagnostics.map((d) => d.code)).toContain("E_JSON_SCHEMA");
+  });
+
+  it("exports a relational opening as written (`relation`) and round-trips it (ADR 0028 §5)", () => {
+    const src = `plan "p" {\n  units mm\n  grid 50\n  room id=a at (0,0) size 4000x5000 uses living\n  room id=b at (4000,0) size 4000x5000 uses bedroom\n  walls from rooms exterior 200 partition 100\n  door id=d between a and b at 800 from end width 800 hinge left swing in\n  window id=w on b.top width 1500\n  window id=w2 on b.right at 1200 from b.top width 1200\n  door id=f at (1000,5000) width 900 wall exterior\n}\n`;
+    const { json } = planToJson(src);
+    const rows = json!.openings.map((o) => [o.id, o.relation, o.wall]);
+    expect(rows).toEqual([
+      ["d", { between: ["a", "b"], at: "800 from end" }, undefined],
+      ["w", { edge: "b.top" }, undefined],
+      ["w2", { edge: "b.right", at: "1200 from b.top" }, undefined],
+      ["f", undefined, "exterior"],
+    ]);
+    expect(json!.openings[0]).toMatchObject({ x: 4000, y: 4200 });
+    roundTrips(src);
+    expect(planJsonToArch(json).source).toContain("door id=d between a and b at 800 from end width 800");
+    for (const bad of [
+      { between: ["a"] },
+      { between: ["a", "b"], edge: "a.top" },
+      { edge: "a.middle" },
+      { between: ["a", "b"], at: 3 },
+      { between: ["a", "b"], extra: 1 },
+    ]) {
+      const out = planFromJson({ ...(json as PlanJson), openings: [{ kind: "door", width: 800, relation: bad }] });
+      expect(
+        out.diagnostics.map((d) => d.code),
+        JSON.stringify(bad),
+      ).toContain("E_JSON_SCHEMA");
+    }
+    // Plan JSON carries no axes: a relation `at axis <label>` exports by its coordinates (lossy,
+    // as axes already are), never as a `relation` that re-imports as E_OPENING_DATUM.
+    const onAxis = `plan "p" {\n  units mm\n  grid 50\n  axes {\n    x at 6000\n    y at 1500\n  }\n  room id=a at (0,0) size 4000x5000 uses living\n  room id=b at (4000,0) size 4000x5000 uses bedroom\n  walls from rooms exterior 200 partition 100\n  door id=d between a and b at axis A width 800 hinge left swing in\n  window id=w on b.top at axis 1 width 1200\n}\n`;
+    const axisJson = planToJson(onAxis).json!;
+    expect(axisJson.openings.map((o) => [o.id, o.relation, o.x, o.y])).toEqual([
+      ["d", undefined, 4000, 1500],
+      ["w", undefined, 6000, 0],
+    ]);
+    // The axes themselves do not survive (the grid layer and the frame it widens are lost), so
+    // the round trip is pinned on what the openings cut and draw: walls, doors and glazing.
+    const back = planFromJson(axisJson as PlanJson);
+    expect(back.diagnostics.filter((d) => d.severity === "error")).toEqual([]);
+    const layer = (svg: string, id: string): string => {
+      const m = new RegExp(`<g id="${id}"[\\s\\S]*?</g>`).exec(svg);
+      expect(m, id).not.toBeNull();
+      return m![0];
+    };
+    const [orig, again] = [compile(onAxis).svg, compile(back.source!).svg];
+    for (const id of ["A-WALL", "A-DOOR", "A-GLAZ"]) expect(layer(again, id)).toBe(layer(orig, id));
+    const winBetween = planFromJson({
+      ...(json as PlanJson),
+      openings: [{ kind: "window", width: 800, relation: { between: ["a", "b"] } }],
+    });
+    expect(winBetween.diagnostics.map((d) => d.code)).toContain("E_JSON_SCHEMA");
+  });
+
+  it("exports the pair clauses of `walls from rooms`, never the opening `open between` derives, and round-trips them", () => {
+    const src = `plan "p" {\n  units mm\n  grid 50\n  room id=a at (0,0) size 4000x3000 uses living\n  room id=b at (4000,0) size 3000x3000 uses kitchen\n  room id=c at (0,3000) size 7000x2000 uses hall\n  walls from rooms exterior 200 partition 100 { open between a and b  open id=ac between a and c width 900  between b and c thickness 150 }\n  door at (5500,5000) width 900 wall exterior hinge left swing in\n}\n`;
+    const { json } = planToJson(src);
+    expect(json!.walls_from_rooms).toEqual({
+      exterior: 200,
+      partition: 100,
+      open: [{ between: ["a", "b"] }, { between: ["a", "c"], id: "ac", width: 900 }],
+      between: [{ between: ["b", "c"], thickness: 150 }],
+    });
+    expect(json!.openings.map((o) => o.id)).toEqual(["door_1"]);
+    roundTrips(src);
+    for (const bad of [
+      { open: [{ between: ["a"] }] },
+      { open: [{ between: ["a", "b"], width: 0 }] },
+      { between: [{ between: ["a", "b"], thickness: -1 }] },
+      { open: [{ between: ["a", "b"], id: "not an id" }] },
+    ]) {
+      const out = planFromJson({ ...(json as PlanJson), walls_from_rooms: { exterior: 200, partition: 100, ...bad } });
+      expect(out.diagnostics.map((d) => d.code)).toContain("E_JSON_SCHEMA");
+    }
+  });
+
+  /**
+   * EVERY shipped example, partitioned — never sampled.
+   *
+   * This suite used to name three examples by hand, and that is exactly how the `dims
+   * auto` gap survived: `garden-loft.arch` and `one-room.arch` both declare it, both
+   * silently lost it through the JSON, and both rendered a differently-sized sheet with
+   * no diagnostic — and neither was in the sample. So the corpus is now the DIRECTORY:
+   * every `examples/*.arch` either round-trips, or appears in {@link CANNOT_ROUND_TRIP}
+   * with a reason and a `proof` pattern that must still match the file. A future example
+   * is covered the moment it is added; a lossy clause cannot hide in an unsampled file.
+   *
+   * The exclusions are not a skip list. Plan JSON is deliberately a FLAT, SINGLE-STOREY,
+   * SHEET-FREE, STRAIGHT-EDGED geometry projection: it carries walls, rooms, openings,
+   * furniture, columns, explicit `dim`s and the plan-level settings (`grid`, `scale`,
+   * `north`, `site`, `dims auto`, `title`), and nothing else. Everything named below is
+   * a language surface it does not model, so the loss is by construction and visible in
+   * the schema rather than a defect — with ONE exception, `two-bed.arch`, called out as
+   * a defect in its own reason string.
+   */
+
+  const EXAMPLES = readdirSync("examples")
+    .filter((f) => f.endsWith(".arch"))
+    .sort();
+  const COVERED = EXAMPLES.filter((f) => !(f in CANNOT_ROUND_TRIP));
+
+  it("names only exclusions that exist and still use the feature their reason cites", () => {
+    for (const [name, { proof }] of Object.entries(CANNOT_ROUND_TRIP)) {
+      expect(EXAMPLES, `exclusion "${name}" names no shipped example`).toContain(name);
+      expect(
+        proof.test(readFileSync(`examples/${name}`, "utf8")),
+        `exclusion "${name}": ${proof} no longer matches`,
+      ).toBe(true);
+    }
+  });
+
+  it("keeps a non-vacuous covered set", () => {
+    // A regression must not be greenable by moving a file into the exclusion list.
+    // 7, not 8: `accessible.arch` moved to the exclusions when the CLI suite's describe()
+    // comparison showed its accessibility metadata does not survive the projection.
+    expect(COVERED.length).toBeGreaterThanOrEqual(7);
+    for (const must of ["one-room.arch", "garden-loft.arch", "studio.arch", "attached.arch", "laneway-house.arch"])
+      expect(COVERED, `${must} must round-trip`).toContain(must);
+  });
+
+  it.each(COVERED)("round-trips examples/%s to identical SVG", (name) => {
+    roundTrips(readFileSync(`examples/${name}`, "utf8"));
+  });
+});
+
+/**
+ * A derived furniture position must survive the round-trip.
+ *
+ * `grid` snaps the coordinates an author WRITES, and deliberately does not snap one the
+ * resolver DERIVED from wall geometry (snapping a `flush` piece
+ * rounded it straight back into the wall it was measured off). So a projection that
+ * re-emits a derived position as an authored `at (x,y)` hands it to the snapper on the
+ * way back in, and the plan that comes out is not the plan that went in. Silently: no
+ * diagnostic, just moved furniture. The fix is to project the placement CLAUSE, so the
+ * round-trip re-DERIVES the position instead of re-authoring its result.
+ *
+ * The repro is minimal on purpose, and its two CONTROLS are what make a red run legible:
+ * at `grid 50`, and at `thickness 200`, the same statement lands on the grid already, so
+ * both round-trip whether or not the defect is present. Repro red + controls green means
+ * the projection; all three red means something else entirely.
+ */
+describe("plan-json — derived furniture positions", () => {
+  /** 300 thick puts the shell's inner face on a …50, which `grid 100` cannot represent. */
+  const repro = (grid: number, thickness: number): string => `plan "G4" {
+  units mm
+  grid ${grid}
+  wall id=shell exterior thickness ${thickness} { (0,0) (5000,0) (5000,3000) (0,3000) close }
+  room id=r at (0,0) size 5000x3000 label "Room" uses bedroom
+  furniture id=f wardrobe in r anchor top-right flush size 1200x600
+}`;
+
+  /** Where the one fixture actually resolved to — `x`/`y` are the resolved footprint. */
+  const furnAt = (src: string): { x: number; y: number } => {
+    const f = planToJson(src).json?.furniture.find((x) => x.id === "f");
+    expect(f, "the repro plan must resolve its one fixture").toBeDefined();
+    return { x: f!.x!, y: f!.y! };
+  };
+
+  it("the repro really is off-grid — otherwise it proves nothing", () => {
+    // Non-vacuity: `grid 100` cannot represent this position, so a re-snap MOVES it.
+    const at = furnAt(repro(100, 300));
+    expect(at).toEqual({ x: 3650, y: 150 });
+    expect(at.x % 100 === 0 && at.y % 100 === 0).toBe(false);
+    // …and both controls are on the grid, which is why they are controls.
+    for (const control of [repro(50, 300), repro(100, 200)]) {
+      const c = furnAt(control);
+      expect(c.x % 50).toBe(0);
+      expect(c.y % 50).toBe(0);
+    }
+  });
+
+  it("re-emits the anchor clause, not the coordinate it resolved to", () => {
+    const { json } = planToJson(repro(100, 300));
+    const f = json!.furniture[0]!;
+    // The resolved footprint is still reported — a reader that only wants to know where
+    // the piece ended up can stop at x/y — but the CLAUSE is what comes back out.
+    expect({ x: f.x, y: f.y }).toEqual({ x: 3650, y: 150 });
+    expect(f.room).toBe("r");
+    expect(f.anchor).toBe("top-right");
+    expect(f.flush).toBe(true);
+    const { source } = planFromJson(json as PlanJson);
+    expect(source).toContain("in r anchor top-right flush");
+    expect(source).not.toContain("at (3700,200)");
+  });
+
+  it("round-trips the repro and both controls to identical SVG", () => {
+    roundTripsSvg(repro(100, 300)); // the repro — red before the fix
+    roundTripsSvg(repro(50, 300)); // control: the same position, on the grid
+    roundTripsSvg(repro(100, 200)); // control: a thickness the grid can represent
+  });
+
+  it("carries an `against wall` clause, un-turning its wall-relative size", () => {
+    // `against wall` derives BOTH the position and a quarter-turn, and its `.arch` `size`
+    // is wall-relative (along × depth) while the JSON's width/height stay plan-axis — so
+    // a piece on a vertical wall has them swapped. Emitting the pair unswapped would put
+    // a 1600 mm counter 400 mm along the wall and 1600 mm out into the room.
+    const src = `plan "G4b" {
+  units mm
+  grid 100
+  wall id=w_west exterior thickness 300 { (0,0) (0,4000) }
+  wall id=w_south exterior thickness 300 { (0,4000) (5000,4000) }
+  room id=r at (0,0) size 5000x4000 label "Kitchen" uses kitchen
+  furniture id=c counter against wall w_west offset 1550 size 1600x400 in r
+}`;
+    const { json } = planToJson(src);
+    const f = json!.furniture[0]!;
+    expect(f.against_wall).toBe("w_west");
+    expect(f.offset).toBe(1550);
+    expect(f.room).toBe("r"); // and the trailing `in <room>` must survive — it is what
+    expect(f.side).toBeUndefined(); // an unstated `side` infers the wall FACE from
+    // The 300-thick shell puts this piece on x=150, which `grid 100` cannot represent —
+    // so this is the `against wall` arm of the same defect, not just a shape check.
+    expect({ x: f.x, y: f.y }).toEqual({ x: 150, y: 750 });
+    // plan-axis, i.e. the along/depth pair turned by the derived quarter-turn
+    expect(f.rotate).toBe(270);
+    expect({ w: f.width, h: f.height }).toEqual({ w: 400, h: 1600 });
+    const { source } = planFromJson(json as PlanJson);
+    expect(source).toContain("against wall w_west offset 1550 size 1600x400 in r");
+    roundTripsSvg(src);
+  });
+
+  /**
+   * The corpus gate. It reaches every shipped example the SVG round-trip above cannot —
+   * `roof`, `paper`, `theme`, `level` and the rest all cost that comparison its
+   * byte-identity while leaving furniture untouched — so a moved fixture cannot hide
+   * behind an unrelated by-design loss. It is not vacuous: measured against the code
+   * this test shipped with, 30 fixtures across `two-bed`, `garden-house`,
+   * `hillside-villa` and `materials` came back somewhere else.
+   */
+  it.each(
+    readdirSync("examples")
+      .filter((f) => f.endsWith(".arch"))
+      .sort(),
+  )("keeps every fixture of examples/%s where the source put it", (name) => {
+    const src = readFileSync(`examples/${name}`, "utf8");
+    const { json, diagnostics } = planToJson(src);
+    // `import`/`place` plans are refused by the projection itself, by design; they have
+    // no furniture answer to check, so the case is a no-op rather than a skip.
+    if (!json || diagnostics.some((d) => d.severity === "error")) return;
+    const { source, diagnostics: back } = planFromJson(json);
+    if (!source || back.some((d) => d.severity === "error")) return;
+    const pos = (s: string): Record<string, string> => {
+      const out: Record<string, string> = {};
+      for (const f of planToJson(s).json?.furniture ?? [])
+        out[f.id ?? ""] = `${f.x},${f.y} ${f.width}x${f.height} r${f.rotate ?? 0}`;
+      return out;
+    };
+    expect(pos(source)).toEqual(pos(src));
+  });
+});
+
+describe("plan-json — planToJson projection & enrichments", () => {
+  const { json } = planToJson(FIXTURE_A);
+  const p = json!;
+
+  it("emits the versioned RPLAN-style shape", () => {
+    expect(p.version).toBe(1);
+    expect(p.units).toBe("mm");
+    expect(p.plan).toBe("Fixture A");
+    expect(p.grid).toBe(50);
+  });
+
+  it("derives room_type, area, floor_polygon and totals", () => {
+    const a = p.rooms.find((r) => r.id === "r_a")!;
+    expect(a.room_type).toBe("LivingRoom");
+    expect(a.uses).toEqual(["living"]);
+    expect(a.area).toBe(12);
+    expect(a.floor_polygon).toEqual([
+      { x: 0, y: 0 },
+      { x: 3000, y: 0 },
+      { x: 3000, y: 4000 },
+      { x: 0, y: 4000 },
+    ]);
+    expect(p.room_count).toBe(2);
+    expect(p.total_area).toBe(24);
+    expect(p.room_types).toEqual(["LivingRoom", "MasterRoom"]);
+  });
+
+  it("keeps doors/windows/openings in one source-ordered openings[] with kinds", () => {
+    expect(p.openings.map((o) => o.kind)).toEqual(["door", "door", "window"]);
+    const door = p.openings.find((o) => o.id === "d_main")!;
+    expect(door.hinge).toBe("left");
+    expect(door.swing).toBe("in");
+    expect(door.wall).toBe("exterior");
+  });
+
+  it("projects the interior input_graph (exterior excluded)", () => {
+    expect(p.input_graph).toEqual({ r_a: ["r_b"], r_b: ["r_a"] });
+    // The front door (exterior→r_a) is a `front` edge, not an interior adjacency.
+    expect(p.edges).toContainEqual({ from: "exterior", to: "r_a", via: "door", type: "front" });
+    expect(p.edges).toContainEqual({ from: "r_a", to: "r_b", via: "door", type: "interior" });
+  });
+});
+
+/**
+ * `dims auto <mode>` — the plan-level setting the projection used to drop.
+ *
+ * It is load-bearing on OUTPUT, which is what made the loss silent and serious: the
+ * chains it synthesizes grow the drawing extent, so a plan that declared `dims auto all`
+ * came back through the JSON declaring nothing and rendered a smaller sheet — with zero
+ * diagnostics, on a PUBLISHED machine interface (`arch compile --from-json`).
+ */
+describe("plan-json — `dims auto` is a carried SETTING, not a dropped word", () => {
+  const withDims = (mode: string) => `plan "D" {
+  units mm
+  grid 50
+  dims auto ${mode}
+  wall id=s exterior thickness 200 { (0,0) (5000,0) (5000,4000) (0,4000) close }
+  room id=r at (0,0) size 5000x4000 label "Room" uses living
+}`;
+  const noDims = withDims("all").replace(/\n\s*dims auto all/, "");
+
+  it.each(AUTO_DIMS_MODES)("projects and re-emits `dims auto %s`", (mode) => {
+    const { json } = planToJson(withDims(mode));
+    expect(json?.dims_auto).toBe(mode);
+    expect(planJsonToArch(json!).source).toContain(`dims auto ${mode}`);
+  });
+
+  it("is absent from the payload of a plan that never asked for it", () => {
+    // The `site` rule: emitted only when declared, so every pre-existing payload is
+    // byte-identical and no consumer sees a new key appear on an unchanged plan.
+    expect("dims_auto" in planToJson(noDims).json!).toBe(false);
+    expect(planJsonToArch(planToJson(noDims).json!).source).not.toContain("dims auto");
+  });
+
+  it("actually moves the drawing — so the round-trip law has something to protect", () => {
+    // Non-vacuity: if the two rendered the same, the round-trip assertion above would
+    // pass no matter what the projection did with the word.
+    expect(compile(withDims("all")).svg).not.toBe(compile(noDims).svg);
+  });
+
+  it("refuses an unknown mode with a path-bearing E_JSON_SCHEMA", () => {
+    const { json } = planToJson(withDims("all"));
+    const bad = { ...(json as PlanJson), dims_auto: "everything" } as unknown as PlanJson;
+    const { source, diagnostics } = planFromJson(bad);
+    expect(source).toBeUndefined();
+    expect(diagnostics.some((d) => d.code === "E_JSON_SCHEMA" && d.message.includes("/dims_auto"))).toBe(true);
+  });
+
+  it("advertises every parser mode in the schema, derived rather than retyped", () => {
+    const prop = (PLAN_JSON_SCHEMA as unknown as { properties: Record<string, { enum?: readonly string[] }> })
+      .properties.dims_auto;
+    expect(prop?.enum).toEqual([...AUTO_DIMS_MODES]);
+  });
+});
+
+describe("plan-json — planFromJson shape validation", () => {
+  it("flags a non-numeric room field with a path-bearing E_JSON_SCHEMA", () => {
+    const { ast, diagnostics } = planFromJson({
+      plan: "X",
+      rooms: [{ x: 0, y: 0, width: "big", height: 3000 }],
+      walls: [],
+      openings: [],
+      furniture: [],
+    });
+    expect(ast).toBeUndefined();
+    const d = diagnostics.find((x) => x.code === "E_JSON_SCHEMA");
+    expect(d).toBeDefined();
+    expect(d!.message).toContain("/rooms/0/width");
+  });
+
+  it("flags an unknown opening kind with E_JSON_KIND naming the path", () => {
+    const { ast, diagnostics } = planFromJson({
+      plan: "X",
+      rooms: [],
+      walls: [],
+      openings: [{ kind: "portal", x: 0, y: 0, width: 900 }],
+      furniture: [],
+    });
+    expect(ast).toBeUndefined();
+    const d = diagnostics.find((x) => x.code === "E_JSON_KIND");
+    expect(d).toBeDefined();
+    expect(d!.message).toContain("/openings/0/kind");
+  });
+
+  it("rejects the top-level being a non-object", () => {
+    const { diagnostics } = planFromJson(42);
+    expect(diagnostics.some((d) => d.code === "E_JSON_SCHEMA")).toBe(true);
+  });
+
+  it("rejects scripting/import keys the JSON form cannot represent", () => {
+    const { diagnostics } = planFromJson({
+      plan: "X",
+      rooms: [],
+      walls: [],
+      openings: [],
+      furniture: [],
+      imports: ["x"],
+    });
+    expect(diagnostics.some((d) => d.code === "E_JSON_SCHEMA" && d.message.includes("/imports"))).toBe(true);
+  });
+
+  it("builds a valid AST from a well-formed JSON plan", () => {
+    const { ast, source, diagnostics } = planFromJson(planToJson(FIXTURE_A).json as object);
+    expect(diagnostics.filter((d) => d.severity === "error")).toEqual([]);
+    expect(ast).toBeDefined();
+    expect(source).toContain('plan "Fixture A"');
+  });
+});
+
+describe("plan-json — determinism", () => {
+  it("planToJson is byte-stable across runs", () => {
+    expect(JSON.stringify(planToJson(FIXTURE_B).json)).toBe(JSON.stringify(planToJson(FIXTURE_B).json));
+  });
+  it("planJsonToArch is byte-stable across runs", () => {
+    const j = planToJson(FIXTURE_B).json;
+    expect(planJsonToArch(j).source).toBe(planJsonToArch(j).source);
+  });
+});
+
+describe("plan-json — astToJson", () => {
+  it("projects settings, body and spans without expanding scripting", () => {
+    const src = `plan "S" {
+  units mm
+  let n = 3
+  for i in 0..n { room at (i,0) size 100x100 }
+}`;
+    const { ast } = compile(src);
+    const j = astToJson(ast!) as Record<string, unknown>;
+    expect(j.kind).toBe("plan");
+    expect(j.name).toBe("S");
+    const body = j.body as Array<Record<string, unknown>>;
+    // The `let` and `for` survive as their node kinds (no expansion) with spans.
+    expect(body.map((s) => s.kind)).toContain("let");
+    const forNode = body.find((s) => s.kind === "for")!;
+    expect(forNode.span).toBeDefined();
+  });
+});
+
+describe("plan-json — room-type mapping", () => {
+  it("maps uses → room_type by dominant priority", () => {
+    expect(roomTypeForUses(["living", "kitchen"])).toBe("LivingRoom");
+    expect(roomTypeForUses(["kitchen"])).toBe("Kitchen");
+    expect(roomTypeForUses(["bath"])).toBe("Bathroom");
+    expect(roomTypeForUses(["wc"])).toBe("Bathroom");
+    expect(roomTypeForUses([])).toBe("Room");
+  });
+  it("maps room_type → uses (inverse, lossy)", () => {
+    expect(usesForRoomType("MasterRoom")).toEqual(["bedroom"]);
+    expect(usesForRoomType("StudyRoom")).toEqual(["office"]);
+    expect(usesForRoomType("Room")).toEqual([]);
+    expect(usesForRoomType("Nonsense")).toEqual([]);
+  });
+  it("the tables cover the whole enum and vocabulary", () => {
+    for (const rt of ROOM_TYPES) expect(rt in ROOM_TYPE_TO_USE).toBe(true);
+    for (const u of Object.keys(USE_TO_ROOM_TYPE))
+      expect(ROOM_TYPES).toContain(USE_TO_ROOM_TYPE[u as keyof typeof USE_TO_ROOM_TYPE]);
+  });
+});
+
+describe("plan-json — describe() additions", () => {
+  it("surfaces room_type, floor_polygon and input_graph", () => {
+    const s = describePlan(FIXTURE_A);
+    const a = s.rooms.find((r) => r.id === "r_a")!;
+    expect(a.room_type).toBe("LivingRoom");
+    expect(a.floor_polygon.length).toBe(4);
+    expect(s.input_graph).toEqual({ r_a: ["r_b"], r_b: ["r_a"] });
+  });
+  it("returns an empty input_graph on a fatal error", () => {
+    const s = describePlan(`plan "X" { room at (0,0) size 0x0 }`);
+    expect(s.ok).toBe(false);
+    expect(s.input_graph).toEqual({});
+  });
+});
+
+describe("plan-json — schema object", () => {
+  it("advertises the id, required roots and the room_type enum", () => {
+    expect(PLAN_JSON_SCHEMA.$id).toBe("https://archlang.uk/plan.schema.json");
+    expect(PLAN_JSON_SCHEMA.required).toEqual(["plan", "rooms", "walls", "openings", "furniture"]);
+    expect(PLAN_JSON_SCHEMA.properties.room_types.items.enum).toEqual([...ROOM_TYPES]);
+  });
+});
+
+/**
+ * Plan JSON carries a frame's ROTATION and its REFLECTION (backlog G.10).
+ *
+ * `planToJson` projects the quarter-turn a `place` frame imposes on a fixture as `rotate`,
+ * and — since handed-symbol mirroring made 19 of the 83 catalogued families genuinely
+ * handed — the reflection as `mirror: true` (the IR's `_mirror`). The quarter-turn alone
+ * cannot say it: `M · R(l) = R(m − l) · Fx`, and the `Fx` is the part `rotate` drops.
+ *
+ * The way back prints the piece's own `mirror` clause, the same bit (issue #405), for a piece the
+ * document holds as written. A piece with a dotted id came flattened out of a `place`: it stays
+ * `E_JSON_MIRROR`, as a door or a dimension does (the next block).
+ *
+ * The second test is still a TRIPWIRE, armed on purpose: a plan containing `place` does
+ * not round-trip at all (`planFromJson` refuses a namespaced id with `E_DOTTED_DECL`).
+ * When someone makes a placed plan round-trip, it goes red here and names the work left:
+ * the reflection is projected, but nothing in source can yet receive it.
+ *
+ * Do not "fix" this file by deleting it.
+ */
+describe("plan-json — G.10: a frame's reflection is projected", () => {
+  const placed = (mirror: string): string => `plan "p" {
+  units mm
+  component c() {
+    wall id=w exterior thickness 200 { (0,0) (4000,0) (4000,3000) (0,3000) close }
+    room id=r at (0,0) size 4000x3000 label "Room"
+    furniture id=d desk in r anchor top-right inset 300 size 1400x700
+  }
+  place c() as a at (4000,0)${mirror}
+}`;
+
+  it("projects the reflection — a mirrored placed fixture carries `mirror: true`", () => {
+    const plain = planToJson(placed("")).json?.furniture ?? [];
+    const flipped = planToJson(placed(" mirror x")).json?.furniture ?? [];
+    expect(plain).toHaveLength(1);
+    expect(flipped).toHaveLength(1);
+    const a = plain[0];
+    const b = flipped[0];
+    if (!a || !b) throw new Error("expected one projected fixture on each side");
+
+    // `desk` is one of the 19 families measured to be handed, so these two
+    // pieces are drawn as mirror images of one another…
+    expect(a.category).toBe("desk");
+
+    // …and the two payloads now say so. Strip the position and they differ in exactly
+    // the reflection: the plain piece carries no `mirror` key at all (so a reflection-free
+    // plan's payload is byte-identical), the mirrored one carries `mirror: true`.
+    const shape = (f: unknown): Record<string, unknown> => {
+      const { x: _x, y: _y, id: _id, ...rest } = f as Record<string, unknown>;
+      return rest;
+    };
+    expect(shape(b)).not.toEqual(shape(a));
+    expect("mirror" in a).toBe(false);
+    expect(shape(b)).toEqual({ ...shape(a), mirror: true });
+
+    // The flag records the FRAME's reflection, not the glyph's handedness: a `table` at
+    // 1600x900 draws byte-identically mirrored or not (test/glyph-chirality.test.ts), and a
+    // reflecting instance still marks it.
+    const withTable = (m: string): string =>
+      placed(m).replace("size 1400x700\n", "size 1400x700\n    furniture id=t table at (500,1500) size 1600x900\n");
+    const table = (m: string) => planToJson(withTable(m)).json?.furniture?.find((f) => f.category === "table");
+    expect(table(" mirror x")?.mirror).toBe(true);
+    expect(table("") && "mirror" in table("")!).toBe(false);
+
+    // `mirror y` is `rotate 180 mirror x` (one D4 element, two spellings): same payload.
+    const y = planToJson(placed(" mirror y")).json?.furniture?.[0];
+    const x180 = planToJson(placed(" rotate 180 mirror x")).json?.furniture?.[0];
+    expect(y?.mirror).toBe(true);
+    expect(y).toEqual(x180);
+
+    // The way back is refused for a flattened instance's piece: source cannot declare `a.d`, and the
+    // `place` that states the reflection is gone. It stays this code, never the parser's.
+    const back = planJsonToArch({ ...planToJson(placed(" mirror x")).json, furniture: [b] });
+    expect(back.source).toBeUndefined();
+    const refusal = back.diagnostics.find((d) => d.code === "E_JSON_MIRROR");
+    expect(refusal?.severity).toBe("error");
+    expect(refusal?.message).toContain("/furniture/0/mirror");
+    expect(
+      planFromJson({ ...planToJson(placed(" mirror x")).json, furniture: [b] }).diagnostics.map((d) => d.code),
+    ).not.toContain("E_DOTTED_DECL");
+    // A piece the document holds as written prints its own clause.
+    const own = planJsonToArch({ ...planToJson(placed(" mirror x")).json, furniture: [{ ...b, id: "d" }] });
+    expect(own.diagnostics.map((d) => d.code)).not.toContain("E_JSON_MIRROR");
+    expect(own.source).toContain("size 1400x700 mirror");
+    // `mirror: false` is the absent key spelled out, and prints nothing.
+    const spelled = planJsonToArch({ ...planToJson(placed("")).json, furniture: [{ ...a, mirror: false }] });
+    expect(spelled.source).not.toContain("mirror");
+  });
+
+  it("is MASKED because a `place`d plan cannot round-trip at all (E_DOTTED_DECL)", () => {
+    const payload = planToJson(placed("")).json;
+    if (!payload) throw new Error("expected the plan to project");
+    const back = planFromJson(payload);
+    const codes = back.diagnostics.map((d) => d.code);
+    expect(codes).toContain("E_DOTTED_DECL");
+
+    // WHEN THIS FAILS: someone taught `planFromJson` to accept a namespaced id. Lift the dotted-id
+    // refusal in `validateFurniture` then, and a mirrored fixture round-trips by its `mirror` clause.
+  });
+});
+
+/**
+ * Backlog 6.3 — the same projection for a reflected DOOR and DIMENSION (`_mirror`): the flag
+ * records the frame's reflection (a sliding door's track, a zero-offset call-out's number
+ * side), is present ONLY when reflected, and its way back is refused like furniture's.
+ * Vertical runs (`_tail`) are deliberately not projected — Plan JSON has no stair/escalator/
+ * elevator members. These tests go red if the flag is dropped from either projection.
+ */
+describe("plan-json — 6.3: a frame's reflection reaches doors and dimensions", () => {
+  const placed = (mirror: string): string => `plan "p" {
+  units mm
+  component c() {
+    wall id=w exterior thickness 200 { (0,0) (4000,0) (4000,3000) (0,3000) close }
+    room id=r at (0,0) size 4000x3000 label "Room"
+    door id=hd at (1000,0) width 900 wall w swing in
+    door id=sl sliding at (2500,0) width 1200 wall w slide left
+    dim (0,3400)->(4000,3400) offset 300
+    dim (0,3600)->(4000,3600) offset 0
+  }
+  place c() as a at (4000,0)${mirror}
+}`;
+
+  it("marks every door and dimension of a reflected instance, and only those", () => {
+    const flipped = planToJson(placed(" mirror x")).json;
+    const plain = planToJson(placed("")).json;
+    expect(flipped?.openings?.map((o) => o.mirror)).toEqual([true, true]);
+    expect(flipped?.dims?.map((d) => d.mirror)).toEqual([true, true]);
+    // absent — not `false` — when unreflected, so a reflection-free payload is unchanged
+    for (const o of plain?.openings ?? []) expect("mirror" in o).toBe(false);
+    for (const d of plain?.dims ?? []) expect("mirror" in d).toBe(false);
+    // `mirror y` is `rotate 180 mirror x`: the same reflection, the same flag
+    const y = planToJson(placed(" mirror y")).json;
+    expect(y?.openings?.every((o) => o.mirror === true)).toBe(true);
+    expect(y?.dims?.every((d) => d.mirror === true)).toBe(true);
+    // a rotation alone does not reflect
+    const rot = planToJson(placed(" rotate 90")).json;
+    expect(rot?.openings?.some((o) => "mirror" in o)).toBe(false);
+    expect(rot?.dims?.some((d) => "mirror" in d)).toBe(false);
+  });
+
+  it("a doubly-reflected instance composes back to no flag (the frame XOR)", () => {
+    const nested = `plan "p" {
+  units mm
+  component inner() {
+    wall id=w exterior thickness 200 { (0,0) (4000,0) (4000,3000) (0,3000) close }
+    door id=hd at (1000,0) width 900 wall w swing in
+    dim (0,3400)->(4000,3400) offset 300
+  }
+  component outer() {
+    place inner() as i at (0,0) mirror x
+  }
+  place outer() as o at (0,0) mirror x
+}`;
+    const j = planToJson(nested).json;
+    expect(j?.openings).toHaveLength(1);
+    expect("mirror" in (j?.openings?.[0] ?? {})).toBe(false);
+    expect("mirror" in (j?.dims?.[0] ?? {})).toBe(false);
+  });
+
+  it("refuses the way back with E_JSON_MIRROR at the element's own path", () => {
+    const j = planToJson(placed(" mirror x")).json;
+    if (!j) throw new Error("expected the plan to project");
+    const back = planJsonToArch(j);
+    const msgs = back.diagnostics.filter((d) => d.code === "E_JSON_MIRROR").map((d) => d.message);
+    expect(msgs.some((m) => m.includes("/openings/0/mirror"))).toBe(true);
+    expect(msgs.some((m) => m.includes("/openings/1/mirror"))).toBe(true);
+    expect(msgs.some((m) => m.includes("/dims/0/mirror"))).toBe(true);
+    expect(msgs.some((m) => m.includes("/dims/1/mirror"))).toBe(true);
+    expect(back.source).toBeUndefined();
+    // `mirror: false` is the absent key spelled out, and is accepted; a non-boolean is a type error
+    const plain = planToJson(placed("")).json;
+    const spelled = { ...plain, openings: plain?.openings?.map((o) => ({ ...o, mirror: false })) };
+    expect(planJsonToArch(spelled).diagnostics.map((d) => d.code)).not.toContain("E_JSON_MIRROR");
+    const bad = { ...plain, dims: plain?.dims?.map((d) => ({ ...d, mirror: "yes" })) };
+    expect(planJsonToArch(bad).diagnostics.some((d) => d.message.includes("/dims/0/mirror"))).toBe(true);
+  });
+
+  it("`mirror` is a door's alone: on a window or cased opening it is a shape error", () => {
+    const plain = planToJson(placed("")).json;
+    if (!plain) throw new Error("expected the plan to project");
+    for (const kind of ["window", "opening"] as const) {
+      const payload = { ...plain, openings: [{ kind, x: 1000, y: 0, width: 900, mirror: true }] };
+      const msgs = planJsonToArch(payload).diagnostics;
+      expect(msgs.some((d) => d.message.includes("/openings/0/mirror") && d.code !== "E_JSON_MIRROR")).toBe(true);
+    }
+  });
+
+  it("projects no `_tail`: a vertical run leaves no member in Plan JSON", () => {
+    const j = planToJson(placed(" mirror x")).json as unknown as Record<string, unknown>;
+    expect(Object.keys(j).some((k) => /stair|escalator|elevator|tail/i.test(k))).toBe(false);
+  });
+});

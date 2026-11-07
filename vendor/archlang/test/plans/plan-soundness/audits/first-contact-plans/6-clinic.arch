@@ -1,0 +1,106 @@
+plan "Small Clinic" {
+  units mm
+  grid 50
+  paper A3 landscape
+  north up
+  dims auto all
+  height 3000
+
+  title { project "Small clinic" drawn_by "AI first-contact" date "2026-10-18" number "K-101" revision "A" }
+
+  # 15000 x 8000 to wall centrelines = 120 m2. Street to the south.
+  # Public side: waiting room with reception, accessible WC. Staff side (north-east): staff room, store, rear corridor.
+
+  # ---- rooms ----
+  room id=r_c1    at (0,0)       size 3600x3800 label "Consulting 1" uses office
+  room id=r_c2    at (3600,0)    size 3600x3800 label "Consulting 2" uses office
+  room id=r_c3    at (7200,0)    size 3600x3800 label "Consulting 3" uses office
+  room id=r_staff at (10800,0)   size 2400x3800 label "Staff room"   uses office
+  room id=r_store at (13200,0)   size 1800x3800 label "Store"        uses storage
+  room id=r_wait  at (0,3800)    size 10800x4200 label "Waiting / Reception" uses circulation
+  room id=r_awc   at (10800,5000) size 2800x3000 label "Accessible WC" uses wc
+  room id=r_corr  polygon (10800,3800) (15000,3800) (15000,8000) (13600,8000) (13600,5000) (10800,5000) label "Rear corridor" uses circulation
+
+  # ---- walls ----
+  wall id=w_n exterior thickness 250 { (0,0) (15000,0) }
+  wall id=w_e exterior thickness 250 { (15000,0) (15000,8000) }
+  wall id=w_s exterior thickness 250 { (0,8000) (15000,8000) }
+  wall id=w_w exterior thickness 250 { (0,0) (0,8000) }
+
+  wall id=w_h1 partition thickness 100 { (0,3800) (15000,3800) }
+  wall id=w_v1 partition thickness 100 { (3600,0) (3600,3800) }
+  wall id=w_v2 partition thickness 100 { (7200,0) (7200,3800) }
+  wall id=w_v3 partition thickness 100 { (10800,0) (10800,8000) }
+  wall id=w_v4 partition thickness 100 { (13200,0) (13200,3800) }
+  wall id=w_h2 partition thickness 100 { (10800,5000) (13600,5000) }
+  wall id=w_v6 partition thickness 100 { (13600,5000) (13600,8000) }
+
+  # ---- doors ----
+  door id=d_main sliding on w_s at 4000 width 1400
+  door id=d_fire on w_s at 14200 width 1000 swing out
+  door id=d_c1 on w_h1 at 1800 width 900 swing into r_c1
+  door id=d_c2 on w_h1 at 5400 width 900 swing into r_c2
+  door id=d_c3 on w_h1 at 9000 width 900 swing into r_c3
+  door id=d_corr on w_v3 at 4400 width 1000 swing into r_corr
+  door id=d_awc sliding on w_v3 at 6500 width 1000
+  door id=d_staff on w_h1 at 11800 width 900 swing into r_staff
+  door id=d_store on w_h1 at 14100 width 900 swing into r_store
+
+  # ---- windows ----
+  window on w_n at 1800 width 1400
+  window on w_n at 5400 width 1400
+  window on w_n at 9000 width 1400
+  window on w_n at 12500 width 1000
+  window on w_w at 6000 width 2000
+  window on w_s at 1500 width 1800
+  window on w_s at 7500 width 2200
+  window on w_s at 12200 width 600
+
+  # ---- consulting rooms (same fit-out in each) ----
+  furniture bed against wall w_v1 offset 1300 size 1900x700 label "Couch" in r_c1
+  furniture basin against wall w_w offset 3000 in r_c1
+  furniture desk at (1000,1000) size 1400x700 label "Desk"
+  furniture chair at (1450,500) size 450x450
+  furniture chair at (1250,1800) size 450x450
+  furniture chair at (1850,1800) size 450x450
+  furniture bed against wall w_v2 offset 1300 size 1900x700 label "Couch" in r_c2
+  furniture basin against wall w_v1 offset 3000 in r_c2
+  furniture desk at (4600,1000) size 1400x700 label "Desk"
+  furniture chair at (5050,500) size 450x450
+  furniture chair at (4850,1800) size 450x450
+  furniture chair at (5450,1800) size 450x450
+  furniture bed against wall w_v3 offset 1300 size 1900x700 label "Couch" in r_c3
+  furniture basin against wall w_v2 offset 3000 in r_c3
+  furniture desk at (8200,1000) size 1400x700 label "Desk"
+  furniture chair at (8650,500) size 450x450
+  furniture chair at (8450,1800) size 450x450
+  furniture chair at (9050,1800) size 450x450
+
+  # ---- staff room ----
+  furniture table at (10950,1550) size 1200x800 label "Table"
+  furniture chair at (11100,1100) size 450x450
+  furniture chair at (11550,1100) size 450x450
+  furniture chair at (11100,2350) size 450x450
+  furniture chair at (11550,2350) size 450x450
+  furniture kitchen_sink against wall w_n offset 12500 in r_staff
+  furniture fridge against wall w_v3 offset 700 in r_staff
+  furniture locker against wall w_v4 offset 2100 in r_staff
+
+  # ---- store ----
+  furniture bookshelf against wall w_e offset 1500 in r_store
+  furniture bookshelf against wall w_v4 offset 1500 in r_store
+
+  # ---- waiting / reception ----
+  for i in 0..5 {
+    furniture chair at (200, 4500 + i * 650) size 450x450
+  }
+  for i in 0..4 {
+    furniture chair at (1800 + i * 650, 4900) size 450x450
+    furniture chair at (1800 + i * 650, 5400) size 450x450
+  }
+  furniture reception_desk at (6200,6200) size 2400x800 label "Reception"
+
+  # ---- accessible WC ----
+  furniture wc against wall w_h2 offset 1400 in r_awc
+  furniture basin against wall w_v6 offset 1200 in r_awc
+}

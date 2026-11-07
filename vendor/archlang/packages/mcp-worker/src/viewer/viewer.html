@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>ArchLang plan</title>
+    <style>
+      :root {
+        --fg: #1d1b20;
+        --muted: #5f5a66;
+        --line: #d9d4de;
+        --bg: #ffffff;
+        --panel: #f7f5f9;
+        --err: #b3261e;
+        --warn: #8a5a00;
+        font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+        font-size: 14px;
+        color: var(--fg);
+        background: var(--bg);
+      }
+      body { margin: 0; }
+      main { padding: 12px; display: grid; gap: 12px; }
+      #status { color: var(--muted); }
+      #stage {
+        position: relative;
+        height: 420px;
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        overflow: hidden;
+        background: #fff;
+        touch-action: none;
+        cursor: grab;
+      }
+      #stage:active { cursor: grabbing; }
+      #canvas { transform-origin: 0 0; position: absolute; left: 0; top: 0; }
+      #canvas svg { display: block; }
+      .tools { position: absolute; right: 8px; top: 8px; display: flex; gap: 4px; }
+      .tools button {
+        font: inherit; min-width: 32px; height: 28px; border: 1px solid var(--line);
+        border-radius: 4px; background: var(--panel); color: var(--fg); cursor: pointer;
+      }
+      h2 { font-size: 13px; margin: 0 0 6px; }
+      ul { margin: 0; padding-left: 18px; }
+      li { margin: 2px 0; }
+      .code { font-family: ui-monospace, Consolas, monospace; font-size: 12px; }
+      .error .code { color: var(--err); }
+      .warning .code { color: var(--warn); }
+      pre { white-space: pre-wrap; background: var(--panel); padding: 8px; border-radius: 6px; margin: 0; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <div id="status" role="status">Waiting for a compile result.</div>
+      <div id="stage" hidden>
+        <div id="canvas"></div>
+        <div class="tools">
+          <button type="button" id="zoom-in" aria-label="Zoom in">+</button>
+          <button type="button" id="zoom-out" aria-label="Zoom out">&minus;</button>
+          <button type="button" id="fit" aria-label="Fit to view">Fit</button>
+        </div>
+      </div>
+      <section id="findings" hidden>
+        <h2 id="findings-title">Lint findings</h2>
+        <ul id="findings-list"></ul>
+      </section>
+      <pre id="fallback" hidden></pre>
+    </main>
+    <noscript>This viewer needs JavaScript. The compile result's text carries the same drawing and diagnostics.</noscript>
+    <script type="module">/*VIEWER_SCRIPT*/</script>
+  </body>
+</html>

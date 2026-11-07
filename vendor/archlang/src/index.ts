@@ -1,0 +1,728 @@
+/**
+ * ArchLang — compile declarative floor-plan source to a professional SVG.
+ *
+ * @example
+ * import { compile } from "@chanmeng666/archlang";
+ * const { svg, errors } = compile(`plan "Demo" { room at (0,0) size 4000x3000 label "Room" }`);
+ */
+
+// The one compile pipeline (parse → link → resolve → render) lives in
+// `pipeline.ts` — `compile()` below wraps it with the memoization cache;
+// `reroll.ts`'s twin-compile proof calls the SAME function, so the two can
+// never drift apart. See that module's header.
+import { compileUncached } from "./pipeline.js";
+import { clearNetAreaMemo } from "./analyze/net-area-memo.js";
+import { clearLexCache } from "./lexer.js";
+import { clearParseCache } from "./parser.js";
+import { clearResolveCache } from "./ir.js";
+import { resetRerollCache } from "./reroll.js";
+import { idToken } from "./identity.js";
+import type { CompileOptions, CompileResult } from "./types.js";
+
+export type {
+  CompileError,
+  CompileOptions,
+  CompilePage,
+  CompileResult,
+  CompileWarning,
+  Diagnostic,
+  RelatedSpan,
+  Span,
+  Severity,
+} from "./types.js";
+export { formatDiagnostic, offsetToLineCol } from "./diagnostics.js";
+// Agent-facing JSON projection of a diagnostic (line/col + catalogued `fix`) —
+// the canonical shape the CLI's `--json` output emits, exposed for programmatic
+// consumers (playground, LSP embedders, SDK users).
+export { diagnosticToJson } from "./diagnostic-json.js";
+export type { DiagnosticJson, FixSuggestionJson } from "./diagnostic-json.js";
+// A host's refusals (`E_INPUT_TOO_LARGE`, `E_RATE_LIMITED`), checked BEFORE compiling; compile() never calls them.
+export { inputTooLarge, rateLimited, utf8ByteLength } from "./input-limit.js";
+// Machine-applicable fixes: the `Diagnostic.fixes` model + a deterministic,
+// pure piece-table applier (ported from rustfix). `applyFixes` filters by
+// `Applicability`, applies each `FixSuggestion` atomically, and reports what it
+// skipped. Fix PRODUCERS attach these; `applyFixes` consumes them.
+export type { Applicability, FixEdit, FixSuggestion } from "./diagnostics.js";
+export { applyFixes, rankFixes } from "./fix-apply.js";
+export type { ApplyReport, ApplyFixesOptions } from "./fix-apply.js";
+export type * from "./ast.js";
+// Source formatter: pure text→text, comment-preserving, idempotent.
+export { format } from "./format.js";
+// `reroll`: detect ≥3 consecutive statements in arithmetic progression and offer
+// a proven-equivalent `for` loop (twin-compiled and byte-checked before it is
+// offered; ADR 0005 — never rewritten silently).
+export { reroll } from "./reroll.js";
+export type { RerollOptions, RerollSuggestion } from "./reroll.js";
+// Vertical circulation: the shared semantics of `stair`/`elevator`/`escalator` —
+// which end a run is entered from, what it does to the nav grid, and (the part that only
+// exists across storeys) which shafts join which `level` blocks. Pure, zero-dep.
+export {
+  entryEdges,
+  flightAxis,
+  isVertical,
+  verticalConnections,
+  verticalReach,
+  verticalsOf,
+  VERTICAL_KINDS,
+} from "./vertical.js";
+export type { RectEdge } from "./fixture-orientation.js";
+export type {
+  RVertical,
+  StairTurn,
+  StoreyRoomReach,
+  StoreySeeds,
+  VerticalLevelInput,
+  VerticalObstacle,
+  VerticalReach,
+} from "./vertical.js";
+// Semantic summary: pure source→facts. `describe(source)` returns rooms
+// (areas, bboxes, adjacency), doors (what they connect), windows, and totals —
+// the channel a text-only agent uses to verify a plan without rendering it.
+export { describe } from "./describe.js";
+// `describeLevel(summary, n)` narrows a multi-storey summary to ONE storey — that
+// level's facts become the top-level ones. A DISPLAY filter: `ok`/`diagnostics` stay
+// whole-plan. Exported because `arch describe --level` and the playground's storey
+// switcher must not each own a copy (a second copy is a second place to forget a
+// per-storey key, and that failure is silent — it reports the wrong floor's facts).
+export { describeLevel, PER_STOREY_OPTIONAL_KEYS } from "./describe.js";
+// The opt-in derived facts `describe(src, { facts })` can add (`symmetry`, `syntax`).
+export { DESCRIBE_FACTS, MAX_WASTE_PCT } from "./describe.js";
+// The CSV `arch takeoff --format csv` writes, from a summary read with the `quantities` fact, so
+// the Playground's Takeoff tab exports the same bytes.
+export { takeoffCsv } from "./analyze/takeoff.js";
+// An instance's rigid map as one canonical D4 value: `mirror y` and `rotate 180 mirror x`
+// describe differently (the summary echoes the spelling) and compare equal here.
+export { instanceTransform } from "./describe.js";
+export type { D4, QuarterTurn } from "./algebra/d4.js";
+// The vertical datum layer: the six drafting defaults, the elevation rule and the
+// range predicates. Exported because a consumer reading `describe().heights` — or writing
+// Plan JSON — needs the same numbers the compiler uses, and a retyped copy of a language
+// fact is exactly the drift `check:drift` cannot see. Nothing here draws.
+export {
+  CASED_OPENING_HEAD,
+  DOOR_HEAD,
+  elevationOf,
+  isDrawableHeight,
+  isPlacedHeight,
+  MAX_HEIGHT,
+  plansAuthorHeights,
+  STOREY_HEIGHT,
+  WINDOW_HEAD,
+  WINDOW_SILL,
+} from "./datum.js";
+export type {
+  SceneSummary,
+  KeepSummary,
+  KeepAt,
+  KeepSkipped,
+  LevelSummary,
+  SheetSummary,
+  StairFlightSummary,
+  StairLandingSummary,
+  VerticalSummary,
+  VerticalReport,
+  VerticalConnection,
+  VerticalKind,
+  VerticalStop,
+  VoidSummary,
+  OutdoorSummary,
+  FenceSummary,
+  RoomSummary,
+  DoorSummary,
+  DoorKind,
+  WindowKind,
+  WindowSummary,
+  OpeningSummary,
+  HeightFacts,
+  WallStatusFacts,
+  WallStatus,
+  FurnitureSummary,
+  ClearFact,
+  InstanceSummary,
+  AccessGraph,
+  AccessRoomNode,
+  AccessEdge,
+  MainEntranceFact,
+  MainEntranceBasis,
+  AxesSummary,
+  AxisSummary,
+  ScheduleRow,
+  ZoneSummary,
+  FreedomReport,
+  FreedomElement,
+  RoomPlacement,
+  OpeningPlacement,
+  FurniturePlacement,
+  BBox,
+  DescribeOptions,
+  BlockedRoom,
+  UnmeasuredRoom,
+  UnmeasuredReason,
+  CirculationModel,
+  RoomCirculation,
+  CirculationRoute,
+  DescribeFact,
+  SymmetryFacts,
+  SymmetryGroup,
+  SymmetryElement,
+  LayerSymmetry,
+  MirrorAxis,
+  Repeat,
+  TranslationRepeat,
+  MirrorRepeat,
+  SyntaxFacts,
+  SyntaxRoom,
+  DependsFacts,
+  KeepFact,
+  KeepRedundancy,
+  DependsEntry,
+  ContactFact,
+  RoomEdge,
+  DerivedWallDepends,
+  DerivedWallRow,
+  ApproachFact,
+  ClearanceFacts,
+  ClearanceObstacle,
+  DoorwayFact,
+  HobFact,
+  HobWindowFact,
+  LandingFact,
+  LowUnitFact,
+  StairFact,
+  TallUnitFact,
+  WcFact,
+  WcSideFact,
+  WindowCoverFact,
+  DoorQuantity,
+  QuantityFacts,
+  RoomQuantity,
+  WallQuantity,
+  WindowQuantity,
+} from "./describe.js";
+// Structured JSON I/O: the machine-native RPLAN/DStruct2Design plan shape.
+// `planFromJson` builds a PlanNode from JSON (catalogued E_JSON_* on bad shape),
+// `planToJson` projects a resolved plan OUT with enrichments (area/floor_polygon/
+// input_graph/edges), `astToJson` is a span-bearing AST projection, and `checkGraph`
+// compares an intended adjacency dict to a plan's interior-door connectivity. Pure,
+// deterministic, zero-dep. PLAN_JSON_SCHEMA is the JSON Schema (2020-12) source.
+export {
+  planFromJson,
+  planToJson,
+  planJsonToArch,
+  resolvedToJson,
+  astToJson,
+  checkGraph,
+  buildInputGraph,
+  PLAN_JSON_SCHEMA,
+  ROOM_TYPES,
+  USE_TO_ROOM_TYPE,
+  ROOM_TYPE_TO_USE,
+  roomTypeForUses,
+  usesForRoomType,
+} from "./plan-json.js";
+export type {
+  PlanJson,
+  PlanJsonPage,
+  PlanJsonDropped,
+  PlanJsonDroppedClause,
+  RoomJson,
+  WallJson,
+  WallArcJson,
+  WallPointJson,
+  WallsFromRoomsJson,
+  OpeningJson,
+  OpeningOnJson,
+  FurnitureJson,
+  DimJson,
+  ColumnJson,
+  TitleJson,
+  PaperJson,
+  PointJson,
+  EdgeJson,
+  RoomType,
+  GraphCheck,
+} from "./plan-json.js";
+// Foreign plans in: `openPlan3dToArch` reads an OpenPlan3D web project (cm) or prepared
+// RoomPlan interchange (m) JSON and returns `.arch` source plus a report of what was not
+// carried over (`arch import --from openplan3d`). Pure, deterministic, bounded, never throws.
+export { openPlan3dToArch } from "./import/openplan3d.js";
+export type {
+  OpenPlan3dFormat,
+  OpenPlan3dImportOptions,
+  OpenPlan3dImportResult,
+  OpenPlan3dImportReport,
+  OpenPlan3dIdChange,
+  OpenPlan3dDropped,
+  OpenPlan3dDroppedField,
+  OpenPlan3dCount,
+} from "./import/openplan3d.js";
+// Intent channel: author-time checking of a brief's INTENT against a plan.
+// `validateIntent(source, intent)` compiles the intent to predicates, checks them over
+// `describe()`'s facts, and returns catalogued E_INTENT_* violations with Nickel-style
+// blame; `feedbackForResult` turns them into advisory correction prompts (ADR 0005).
+// `intentFromJson` validates an untrusted Intent shape (pathed errors). The concept
+// vocabulary (`roomsMatchingConcept`/`isKnownConcept`) is production name resolution.
+// The eval consumes `compileIntent`/`checkPredicates`/`projectSubscores` (one judge, no
+// eval↔prod skew). INTENT_JSON_SCHEMA is the JSON Schema (2020-12) source. Pure, zero-dep.
+export {
+  validateIntent,
+  intentFromJson,
+  feedbackForResult,
+  compileIntent,
+  checkPredicates,
+  projectSubscores,
+  INTENT_JSON_SCHEMA,
+} from "./intent.js";
+export type {
+  Intent,
+  Predicate,
+  AssertionResult,
+  Subscores,
+  IntentViolation,
+  IntentCode,
+  IntentCheckResult,
+  IntentFacing,
+  RoomDimensionIntent,
+  IntentMeasure,
+  IntentMeasureReading,
+  IntentUnmeasuredReason,
+} from "./intent.js";
+export type { GrossAreaReason } from "./analyze/gross-area.js";
+export {
+  roomsMatchingConcept,
+  isKnownConcept,
+  isCirculationRoom,
+  CONCEPTS,
+  SYNONYMS_VERSION,
+} from "./intent-concepts.js";
+export type { Concept } from "./intent-concepts.js";
+// Semantic diff: pure two-source→delta on top of `describe()`. `diffPlans`
+// returns which rooms/openings/furniture were added/removed/resized/relabeled, per-room
+// bbox edge deltas, circulation deltas, and frozen human-readable summary sentences —
+// the channel ArchCanvas uses to narrate an iteration without re-rendering.
+export { diffPlans } from "./diff.js";
+export type { PlanDiff, RoomChange, OpeningChange, FurnitureChange, CirculationChange, WallChange } from "./diff.js";
+// Textual diff: a zero-dep line-based unified diff between two sources. The *syntactic*
+// counterpart to `diffPlans`'s semantic delta — what `arch fix` prints so an agent can
+// preview (`--dry-run`) exactly which bytes a fix pass would rewrite, and what the
+// dataset generator records as each repair trajectory's patch.
+export { unifiedDiff } from "./unified-diff.js";
+// Change impact (plan-soundness PS4.2): twin-compile two sources (or one with a `let`
+// overridden) and report what changed and why (the `depends` chain), what held although a
+// dependency changed, and the diagnostics that broke or healed. `arch impact` prints it.
+export { impact, applyLetOverride, MAX_WHY_DEPTH } from "./impact.js";
+export type {
+  ImpactChange,
+  ImpactContact,
+  ImpactDiagnostic,
+  ImpactHeld,
+  ImpactKeeps,
+  ImpactLet,
+  ImpactOptions,
+  ImpactReport,
+  ImpactStep,
+  KeepImpact,
+  LetOverride,
+} from "./impact.js";
+// The lock check (preview-and-remodel B1): `impact(before, after, { lock })` reports every
+// locked id that changed (`E_LOCKED_ELEMENT_CHANGED`) or names no written id (`E_LOCK_UNNAMED`).
+export { checkLocks, parseLockList } from "./lock.js";
+export type { ImpactLock, LockElement, LockRefusal, LockSide, LockSpan, LockViolation } from "./lock.js";
+// Architectural lint: habitability rules as `W_*` diagnostics — every room
+// enterable, bedrooms have a window, doors wide enough, the building has an entrance.
+// Pure; the ruleset is data. Surfaced as `arch lint`.
+export { lint, DEFAULT_RULESET, LINT_PROFILES, LINT_PROFILE_NAMES } from "./lint.js";
+export type { LintOptions, LintRuleset } from "./lint.js";
+// The lint coverage report (PS2.13): which rule families ran or skipped, and why. Beside
+// `lint()`'s diagnostics, never inside them, so `lint()`'s output is unchanged.
+export { lintCoverage, lintWithCoverage } from "./lint.js";
+export type {
+  LintCoverage,
+  LintCoverageFamily,
+  LintCoverageSkip,
+  LintFamily,
+  LintSkipReason,
+  LintUnclassifiedRoom,
+  EnclosureBudgetCap,
+} from "./lint.js";
+// Each lint code's soundness layer (ADR 0032): validity or drafting, read off its rule.
+export { LINT_CODE_LAYERS } from "./lint.js";
+export type { LintLayer } from "./lint.js";
+// The authoring stages (PS7.1): brief → rooms → walls → openings → fixtures → drafting; each
+// finding's stage, and `validate --stage`'s view (`atStage`). Pure; `lint()` never reads them.
+export { LINT_CODE_STAGES } from "./lint.js";
+export type { LintStage } from "./lint.js";
+export {
+  AUTHORING_STAGES,
+  atStage,
+  codeStage,
+  COMPILE_WARNING_STAGES,
+  diagnosticStage,
+  ELEMENT_KIND_STAGES,
+  GRAPH_STAGE,
+  INTENT_CODE_STAGES,
+  isAuthoringStage,
+  keepStage,
+  kindsOf,
+  predicateStage,
+  stageAtMost,
+} from "./stages.js";
+export type { AuthoringStage, KindOf, StageView } from "./stages.js";
+// The taste layer (ADR 0032, PS5.1): a separate, sourced score that never gates. `lint()` and
+// `describe()` never read it.
+export {
+  taste,
+  TASTE_ADVICE,
+  TASTE_BUDGET,
+  TASTE_PROFILE_NAMES,
+  TASTE_PROFILES,
+  TASTE_SUBSCORES,
+} from "./taste/index.js";
+export type {
+  TasteAdviceRow,
+  TasteAdvisory,
+  TasteCriterion,
+  TasteEvidence,
+  TasteOptions,
+  TasteReport,
+  TasteSkip,
+  TasteSkipReason,
+  TasteSubscore,
+  TasteVerified,
+} from "./taste/index.js";
+// The one item to fix first (PS5.3): fixed precedence over what `validate` measured — errors,
+// compile warnings, validity, drafting, intent, profile, taste. Pure; reads results only.
+export { nextDiagnostic, NEXT_TIERS } from "./next.js";
+export type { NextInput, NextItem, NextTier } from "./next.js";
+// Explicit opt-in source-to-source corrector (ADR 0006): never part of compile().
+export { repair } from "./repair.js";
+export type { RepairResult, RepairChange, RepairNote } from "./repair.js";
+// Explicit opt-in sheet completion (ADR 0024): adds the sheet statements a plan lacks
+// (`paper`, `scale`, `dims auto`, `title`, `schedule rooms`, `legend`); never part of compile().
+export { finish, FINISH_STAGE_ORDER, FINISH_STAGES, FINISH_STAGES_AVAILABLE } from "./finish.js";
+export { FURNISH_TABLE, type FurnishItem, type FurnishPlacement } from "./furnish.js";
+export type {
+  FinishOptions,
+  FinishResult,
+  FinishChange,
+  FinishNote,
+  FinishStage,
+  FinishStatement,
+} from "./finish.js";
+// CLI capability manifest: the whole `arch` API surface as structured data,
+// for agent discovery (`arch manifest --json`). Pure; assembles existing exports.
+export { buildManifest, MANIFEST_COMMAND_NAMES, EXPORT_FORMATS } from "./manifest.js";
+export type { Manifest, ManifestCommand, ManifestExample, ManifestFlag, ExportFormat } from "./manifest.js";
+// Markdown embedding: extract ```arch blocks and rewrite them to image
+// links. Pure text helpers behind `arch md`.
+export { extractArchBlocks, rewriteMarkdown } from "./markdown.js";
+export type { ArchBlock } from "./markdown.js";
+// Language services: pure LSP core (hover/completion/definition/rename/
+// signature help) over the CST cursor + registry schemas. The VS Code server is
+// a thin adapter; these are isomorphic and unit-testable.
+export {
+  hover,
+  completion,
+  definition,
+  rename,
+  signatureHelp,
+  codeActions,
+  refactorActions,
+  COMPLETION_KINDS,
+} from "./lsp.js";
+export type {
+  HoverResult,
+  CompletionItem,
+  CompletionKind,
+  TextEdit,
+  SignatureResult,
+  CodeAction,
+  RefactorAction,
+} from "./lsp.js";
+// Topology suggestions: advisory, never-applied `.arch` statements that
+// would resolve a room-unreachable / bedroom-no-window fault (`arch suggest`).
+// Data only (ADR 0005) — pure, deterministic, zero-dep.
+export { suggestTopology } from "./suggest.js";
+export type { Suggestion, SuggestionCandidate, SuggestOptions } from "./suggest.js";
+// Error catalog: every E_*/W_* code with cause/fix/example. Backs
+// `arch explain <CODE>` and the generated docs/error-codes.md.
+export { explain, ERROR_CATALOG, ERROR_CODES } from "./error-catalog.js";
+export type { CatalogEntry } from "./error-catalog.js";
+
+// IR + export backends (for consumers that want resolved geometry or other
+// output formats). `resolve`/`toDxf` are pure & zero-dep; `toPdf` lazily loads
+// optional deps. None of these are part of `compile()`.
+export { resolve } from "./ir.js";
+// Multi-storey resolve: `resolveAll` is the level-aware entry — one
+// `ResolvedPlan` per `level` block (`levels: []` for a single-storey plan, whose `ir` is
+// exactly what `resolve()` returns). `levelBlocks(ast)` is the AST-side helper: the plan's
+// storeys in drawing order (ascending, duplicates dropped).
+export { levelBlocks, resolveAll } from "./ir.js";
+export type { PlanResolution, ResolvedLevel } from "./ir.js";
+export type {
+  ResolvedPlan,
+  ResolvedElement,
+  RWall,
+  RRoom,
+  RDoor,
+  RWindow,
+  RFurniture,
+  RDim,
+  RColumn,
+  RAxis,
+  RZone,
+} from "./ir.js";
+// The resolved-plan seam for downstream consumers (ADR 0031): the complete parse → link →
+// resolve path (unlike `resolveAll(compile(src).ast)`, it keeps imported and placed
+// content), the wall joinery with its per-wall ownership split, and the door-leaf geometry,
+// so a consumer reuses the core's one implementation instead of writing a second.
+// Append-only; the types are the frontier closure of these signatures
+// (`test/public-surface.test.ts`) plus the element names `ResolvedElement` carries.
+export { resolvePlan } from "./analyze.js";
+export type { AnalyzeOptions } from "./analyze.js";
+export { joinWallSet } from "./wall-lowering.js";
+export type { JoinableWall, JoinedCut, JoinedWallSet } from "./wall-lowering.js";
+// The key `joinWallSet` groups fills by: `hatchKey(hatchOf(wall))` names a wall's group.
+export { hatchKey, hatchOf } from "./hatches.js";
+export type { HatchSpec } from "./hatches.js";
+export { loopsToPolygons } from "./geometry/joinery.js";
+export type { JoineryResult, JoinerySplit } from "./geometry/joinery.js";
+export type { Edge, EdgeLoop } from "./geometry/band.js";
+export type { Arc } from "./geometry/arc.js";
+export { doorLeaves, doorSwing } from "./geometry.js";
+export type { DoorLike, DoorSwing } from "./geometry.js";
+export type { DoorHinge, DoorSwingDir } from "./grammar/tokens.js";
+// How many tread divisions the plan draws on a flight of a given run: a stepped solid read from
+// it keeps its treads on the drawing's tread lines (ADR 0031, amendment 2026-11-06).
+export { treadCount } from "./elements/vertical-glyphs.js";
+export type {
+  Opening,
+  ROpening,
+  RStair,
+  RElevator,
+  REscalator,
+  RRoof,
+  RVoid,
+  ROutdoor,
+  RFence,
+} from "./ir.js";
+// Scene IR (the backend-neutral drawing target) + its builder. Backends consume
+// a Scene: `toDxf(scene)` / `toPdf(scene)`; build one with `toScene(ir)` or read
+// `compile().scene`.
+export { toScene } from "./scene-build.js";
+// The opt-in axonometric view: a SIBLING of `toScene` producing the same Scene
+// type, so every backend draws it unchanged. Illustrative only — see `src/view/`.
+export { toIso } from "./view/iso.js";
+export { VIEW_NAMES, isViewName, cameraFor, projectedArea2 } from "./view/camera.js";
+export type { ViewName, Camera, Point3, Projected } from "./view/camera.js";
+export { VIEW_LAYERS, VIEW_LAYER_NAMES } from "./view/paint.js";
+// Positioning axes (定位轴线): the GB/T numbering rules, exposed so a tool can label an
+// axis grid the same way the drawing does (`ir.axes` already carries the labels).
+export { numberAxes, axisLetter, AXIS_LETTERS } from "./axes.js";
+// Site & orientation: the `site` block's derived direction NAMES and the ONE page→compass
+// conversion `describe()` and the lint rules share. Closed form — no sun model, no
+// latitude, no date; `equator_side`/`sunrise_side`/`sunset_side` are a drafting heuristic
+// for an aspect, never a measured daylight outcome (see the module note in src/site.ts).
+export {
+  compassLetter,
+  deriveSite,
+  equatorSide,
+  FACINGS,
+  oppositeLetter,
+  planCenterOfRooms,
+  resolveSymbolicFacing,
+  SYMBOLIC_FACINGS,
+  toCompass,
+  windowFacingPage,
+} from "./site.js";
+export type { CompassLetter, SiteFacts, SymbolicFacing } from "./site.js";
+export type {
+  CadPart,
+  CadTurn,
+  Scene,
+  SceneNode,
+  ScenePart,
+  ScenePrim,
+  // `path` is the curved generalisation of `region`; a consumer that switches on
+  // `prim.t` needs both of its member types to name the branch it is handling.
+  PathLoop,
+  PathEdge,
+  Paint,
+  RenderPass,
+  RenderSizes,
+  SceneSheet,
+  // `Scene.walls` — export metadata (the DXF wall-layer split), never drawn.
+  SceneWall,
+  LineWeight,
+  LineType,
+} from "./scene.js";
+// Sheet layer: `paper A1 landscape` makes `scale` OPERATIVE — every annotation
+// size becomes a fixed number of millimetres on the sheet × the scale denominator,
+// instead of a fraction of the drawing's own size. Pure arithmetic; a plan with no
+// `paper` never touches it and renders byte-identically. `sizesFromPaper` is the second
+// `RenderSizes` constructor; `chooseScaleDenominator` is the 4-candidate auto-fit.
+export {
+  AUTO_SCALE_DENOMINATORS,
+  chooseScaleDenominator,
+  fitsOnSheet,
+  PAPER_MM,
+  PAPER_ORIENTATIONS,
+  PAPER_SIZES,
+  paperMm,
+  resolveSheetSpec,
+  scaleDenominator,
+  SHEET_MM,
+  sizesFromPaper,
+  usablePlanMm,
+} from "./sheet.js";
+export type { PaperOrientation, PaperSize, PaperSpec, ResolvedSheet, SheetFitInput } from "./sheet.js";
+// Sheet tables: the `schedule rooms` room schedule and the `legend` derived from
+// the plan's hatches + fixture symbols. Exposed so a tool can render or audit the same
+// rows the drawing prints (`describe().schedule` is the schedule half as data).
+export { roomSchedule, legendEntries } from "./sheet-tables.js";
+export type { RoomSchedule, ScheduleGroup, LegendEntry } from "./sheet-tables.js";
+export { toDxf } from "./export/dxf.js";
+export { toPdf } from "./export/pdf.js";
+// PNG raster backend. Rasterizes the Scene's SVG with the OPTIONAL,
+// lazy-loaded `@resvg/resvg-js`; deterministic via a bundled font. Node-only.
+export { renderPng, renderPngFromSvg, PNG_PREVIEW_WIDTH, isOptionalDepError } from "./backends/png.js";
+export type { PngOptions } from "./backends/png.js";
+// Error-card backend (opt-in). `compile(src, { onError: "svg" })` and the CLI's
+// `--error-svg` flag route a broken plan's diagnostics through this instead of
+// leaving `svg === ""`, so agent loops/embeds always get visual feedback. Pure,
+// deterministic, zero-dep; never touches the default (error-free) output.
+export { renderErrorSvg } from "./backends/error-svg.js";
+export type { ErrorSvgOptions } from "./backends/error-svg.js";
+// ASCII text backend. `renderAscii(scene)` serializes a Scene to a
+// fixed-width text floor plan — the channel a sandboxed, text-only agent uses to
+// *see* its plan. Pure, deterministic, zero-dep; behind `arch compile -f txt` and
+// `arch preview --ascii`. Furniture markers use opt-in `annotate` metadata.
+export { renderAscii } from "./backends/ascii.js";
+export type { AsciiOptions } from "./backends/ascii.js";
+// DEPRECATED: not consulted by the renderer; retained for API
+// compatibility. Every wall — orthogonal, angled and curved — is now joined in one
+// closed-form zero-dependency pass (`geometry/joinery.ts`), so registering a backend
+// changes no byte of any output. Kept because `src/index.ts` is append-only and a
+// plugin may hold these; removing them is a MAJOR (ADR 0018).
+export { setGeometryBackend, getGeometryBackend } from "./geometry/backend.js";
+export type { GeometryBackend, JoinKind } from "./geometry/backend.js";
+export { loadClipperBackend } from "./geometry/clipper.js";
+// Extensibility surface. `compile(src, { plugins, backend, hatches, themes })`
+// adds third-party elements/backends/hatches/themes per call — cache-safe, with no
+// global mutation. The `register*` helpers validate + tag an extension for an opts field.
+export {
+  createRegistry,
+  BUILTIN_REGISTRY,
+  registerElement,
+  registerTheme,
+  registerHatch,
+  registerBackend,
+} from "./registry.js";
+export type {
+  Registry,
+  Runtime,
+  ElementDef,
+  ParseCtx,
+  ResolveCtx,
+  RenderCtx,
+  TransformCtx,
+  ThemePlugin,
+  HatchPlugin,
+  HatchMetaInput,
+} from "./registry.js";
+export type { SheetText, SheetTextEntry } from "./sheet-text.js";
+// World seam: the compiler's window onto its environment (import reads,
+// `now`). Pass `compile(src, { world })`; default is a pure no-op World.
+export { NULL_WORLD, makeVirtualWorld } from "./world.js";
+export type { World } from "./world.js";
+// Theming: named bases (`theme <name>`), per-element `style`, and opt-in
+// one-colour poché derivation. THEMES are the built-in named bases.
+export { THEMES, DEFAULT_THEME, mergeTheme, derivePoche, hexToHsl, hslToHex } from "./theme.js";
+export type { Theme, StyleMap } from "./theme.js";
+// What each fixture family is made of (visual-assets V-D2): the table the `rendered` theme's
+// `materialTints` fill by, exported so `@chanmeng666/archlang-3d` can read it rather than retype
+// it. Additive: new names only; the byte-identity law in `test/rendered-theme.test.ts` shows no
+// existing output moved.
+export { FIXTURE_FAMILY_MATERIALS, FIXTURE_MATERIALS, familyMaterials } from "./elements/fixtures-glyphs.js";
+export type { FamilyMaterials, FixtureMaterial } from "./elements/fixtures-glyphs.js";
+// Config sanitization: denylist for untrusted .arch config; trusted
+// CompileOptions skip it. `fnv1a` keys the per-stage memo caches.
+export { sanitizeConfig, isDisallowedConfigValue } from "./sanitize.js";
+export { fnv1a } from "./hash.js";
+
+/** Small LRU-ish memo cache keyed by source+options. Bounded to 64 entries. */
+const cache = new Map<string, CompileResult>();
+const CACHE_MAX = 64;
+
+/**
+ * Compile ArchLang source to a professional SVG floor plan.
+ *
+ * Pure, synchronous, and isomorphic (Node + browser): the same `source` always
+ * yields byte-identical output. The result is append-only — `{ svg, errors,
+ * warnings, diagnostics, ast, scene }` — and never throws on a user-source
+ * problem; errors are returned as {@link CompileResult.diagnostics} (with byte
+ * spans) and reflected in `errors`, with `svg` left `""` when any error is
+ * present. Results are memoized by `source` + extension identity unless
+ * `opts.noCache` is set.
+ *
+ * The default path is zero-dependency and emits SVG; the `scene` field exposes
+ * the backend-neutral {@link Scene} so consumers can target other backends
+ * ({@link toDxf}, {@link toPdf}, {@link renderPng}) without re-resolving. Pass a
+ * {@link World} (via `opts.world`) to resolve `import`s and inject `now`.
+ *
+ * @param source  ArchLang source text (a `plan "…" { … }`).
+ * @param opts    Width, theme, plugins/backend/hatches/themes, world, noCache.
+ * @returns A {@link CompileResult}.
+ *
+ * @example
+ * const { svg, diagnostics, scene } = compile(`plan "Demo" {
+ *   room at (0,0) size 4000x3000 label "Room"
+ * }`);
+ */
+export function compile(source: string, opts: CompileOptions = {}): CompileResult {
+  // The key includes plugin/theme/backend/hatch identity so distinct extension
+  // sets never share a cache entry. Trusted, JSON-serializable `theme`/`width`
+  // are embedded directly; object plugins get a stable process-local id token
+  // (reused object → hit; different object → safe miss). Trailing tokens are 0
+  // when absent, preserving the legacy key shape for plain compiles.
+  const key = JSON.stringify([
+    source,
+    opts.width ?? null,
+    opts.theme ?? null,
+    opts.plugins?.map(idToken) ?? null,
+    idToken(opts.themes),
+    idToken(opts.backend),
+    idToken(opts.hatches),
+    idToken(opts.world),
+    opts.annotate ?? null,
+    opts.overlays ?? null,
+    opts.onError ?? null,
+    opts.accessible ?? null,
+    opts.view ?? null,
+  ]);
+  if (!opts.noCache) {
+    const hit = cache.get(key);
+    if (hit) return hit;
+  }
+
+  const result = compileUncached(source, opts);
+
+  if (!opts.noCache) {
+    if (cache.size >= CACHE_MAX) {
+      const oldest = cache.keys().next().value;
+      if (oldest !== undefined) cache.delete(oldest);
+    }
+    cache.set(key, result);
+  }
+  return result;
+}
+
+/** Clear the internal compile cache + all per-stage memos (lex/parse/resolve, net area) and the `reroll` baseline memo. */
+export function clearCache(): void {
+  cache.clear();
+  clearLexCache();
+  clearParseCache();
+  clearResolveCache();
+  clearNetAreaMemo();
+  resetRerollCache();
+}

@@ -1,0 +1,21 @@
+# class: missing-defining-contents
+# origin: audits/2026-10-18-first-contact.md C8 (first-contact-plans/4-cafe.arch: the servery `uses kitchen` holds a
+#   bar counter, a counter and a fridge, and no sink)
+# expect: W_ROOM_MISSING_DEFINING
+# status: done
+# fact: "Counter / servery" (uses kitchen) holds a counter and a fridge, and no kitchen_sink and no stove
+plan "Servery written as a kitchen with no sink or hob" {
+  units mm
+  grid 50
+  wall id=shell exterior thickness 200 { (0,0) (7000,0) (7000,4000) (0,4000) close }
+  wall id=w_v partition thickness 100 { (4000,0) (4000,4000) }
+  room id=r_seat at (0,0) size 4000x4000 label "Cafe seating" uses dining
+  room id=r_serv at (4000,0) size 3000x4000 label "Counter / servery" uses kitchen
+  door id=d_entry at (2000,4000) width 1000 wall shell
+  opening id=o_serv at (4000,2800) width 1000 wall w_v
+  window at (2000,0) width 2000 wall shell
+  window at (5500,0) width 1200 wall shell
+  furniture table at (1200,1200) size 1600x900
+  furniture counter against wall shell segment 1 offset 1500 in r_serv
+  furniture fridge against wall shell segment 1 offset 3200 in r_serv
+}

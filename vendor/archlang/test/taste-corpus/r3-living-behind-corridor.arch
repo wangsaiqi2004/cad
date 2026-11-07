@@ -1,0 +1,22 @@
+# criterion: R3
+# origin: a reduction of the inversion examples/furnished-flat.arch and examples/relational.arch
+#   show (a public room deeper from the entrance than a bedroom), with nothing reached through a
+#   private room, so lint is silent
+# fact: access depths hall 1, bedroom 2, corridor 2, living room 3: the one living-to-bedroom pair
+#   is inverted (3 > 2), R3 = 0/1
+plan "R3 living behind a corridor" {
+  units mm
+  grid 100
+  room id=r_hall at (0,0) size 2000x4000 label "Hall" uses hall
+  room id=r_a at (2000,0) size 4000x4000 label "Bedroom" uses bedroom
+  room id=r_corr at (0,4000) size 2000x4000 label "Corridor" uses circulation
+  room id=r_b at (2000,4000) size 4000x4000 label "Living Room" uses living
+  walls from rooms exterior 200 partition 100
+  door id=d_front on r_hall.left at center width 900 swing into r_hall
+  door id=d_hall_a between r_hall and r_a at center width 900 swing into r_a
+  door id=d_hall_corr between r_hall and r_corr at center width 900 swing into r_corr
+  door id=d_corr_b between r_corr and r_b at center width 900 swing into r_b
+  window id=w_a on r_a.top at center width 1500
+  window id=w_b on r_b.bottom at center width 1500
+  furniture bed in r_a anchor top-right flush inset 300 size 1400x2000 label "Bed"
+}

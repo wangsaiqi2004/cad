@@ -1,0 +1,16 @@
+# class: clearances
+# twin-of: seat-facing-away
+# origin: audits/2026-10-18-first-contact.md A4 with the chair turned by `facing t_dine` (PS3.7)
+# expect: none
+# fact: the same chair written `facing t_dine` resolves to rotate 180: its front ray runs north into the table 50 mm
+#   away
+plan "Chair facing away from its table" {
+  units mm
+  grid 50
+  wall id=shell exterior thickness 200 { (0,0) (4000,0) (4000,4000) (0,4000) close }
+  room id=r_din at (0,0) size 4000x4000 label "Dining" uses dining
+  door id=d_in at (2000,4000) width 900 wall shell swing into r_din
+  window at (2000,0) width 1500 wall shell
+  furniture id=t_dine table at (1200,1500) size 1600x900 label "Table"
+  furniture chair at (1775,2450) size 450x450 facing t_dine
+}

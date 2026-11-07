@@ -1,0 +1,13 @@
+# class: openings-ignore-walls
+# twin-of: window-past-corner
+# origin: audits/archcanvas-public-examples.md FH1 with the window moved off the corner
+# expect: none
+# fact: win spans x 500-2300: a 400 mm nib to the west wall's inner face at 100
+plan "Window clear of a corner" {
+  units mm
+  grid 50
+  wall id=shell exterior thickness 200 { (0,0) (6000,0) (6000,4000) (0,4000) close }
+  room id=a at (0,0) size 6000x4000 label "Living" uses living
+  door id=d_front on shell at 13000 width 900
+  window id=win on shell at 1400 width 1800
+}

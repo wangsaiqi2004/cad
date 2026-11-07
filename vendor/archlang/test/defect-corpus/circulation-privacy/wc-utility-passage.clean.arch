@@ -1,0 +1,21 @@
+# class: circulation-privacy
+# twin-of: wc-utility-passage
+# origin: audits/showcase-and-examples.md X12 with the garage door moved onto the hall
+# expect: none
+# fact: the utility room has one door, from the hall; the garage is reached from the hall directly
+plan "WC off the hall" {
+  units mm
+  grid 50
+  wall id=shell exterior thickness 200 { (0,0) (9000,0) (9000,6500) (0,6500) close }
+  wall id=w_hall partition thickness 100 { (0,1500) (9000,1500) }
+  wall id=w_gar partition thickness 200 { (3000,1500) (3000,6500) }
+  room id=r_hall at (0,0) size 9000x1500 label "Hall" uses hall
+  room id=r_util at (0,1500) size 3000x5000 label "Utility" uses utility wc
+  room id=r_garage at (3000,1500) size 6000x5000 label "Garage" uses garage
+  door id=d_entry at (1500,0) width 900 wall shell
+  door id=d_util at (1500,1500) width 800 wall w_hall
+  door id=d_gar at (4500,1500) width 900 wall w_hall
+  door id=d_garage garage at (9000,4000) width 3000 wall shell
+  furniture wc against wall shell segment 2 offset 8500 in r_util
+  furniture basin against wall shell segment 2 offset 7600 in r_util
+}

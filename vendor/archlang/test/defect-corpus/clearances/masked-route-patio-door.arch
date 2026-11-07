@@ -1,0 +1,27 @@
+# class: clearances
+# origin: audits/2026-10-18-first-contact.md T2 (first-contact-plans/5-townhouse.arch L0: the sofa 250 mm in front of
+#   g_o_hl; living and kitchen measured from g_patio); README PS0.10
+# expect: W_PATH_TOO_NARROW
+# status: todo
+# fact: the sofa (x 2400-3300, y 5000-7000) stands 250 mm in front of o_hl (w_v face x 2150, y 5500-6500) over its
+#   full width; describe measures Living and Dining from d_patio (1540 mm), so lint is silent; with d_patio made a
+#   window, lint gives W_PATH_TOO_NARROW 200 mm for "Living" and "Dining". With no site the main entrance is refused
+#   (the patio door opens into a public room, so the door into the hall does not outrank it; PS0.10), and every way in
+#   is kept; with site { street ... } naming d_front, lint reports both, "Dining" as reached only through its own door
+plan "Sofa across the hall opening, masked by the patio door" {
+  units mm
+  grid 50
+  wall id=shell exterior thickness 250 { (0,0) (5500,0) (5500,8000) (0,8000) close }
+  wall id=w_h partition thickness 100 { (0,4000) (5500,4000) }
+  wall id=w_v partition thickness 100 { (2100,4000) (2100,8000) }
+  room id=r_din at (0,0) size 5500x4000 label "Dining" uses dining
+  room id=r_hall at (0,4000) size 2100x4000 label "Hall" uses hall
+  room id=r_liv at (2100,4000) size 3400x4000 label "Living" uses living
+  door id=d_front at (1000,8000) width 900 wall shell swing into r_hall
+  opening id=o_hl at (2100,6000) width 1000 wall w_v
+  opening id=o_ld at (3800,4000) width 1800 wall w_h
+  door id=d_patio sliding at (4400,0) width 1600 wall shell
+  window at (1200,0) width 1200 wall shell
+  window at (3800,8000) width 2000 wall shell
+  furniture sofa at (2400,5000) size 900x2000 label "Sofa" rotate 270
+}

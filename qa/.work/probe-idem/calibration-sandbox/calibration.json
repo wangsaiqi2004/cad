@@ -1,0 +1,77 @@
+{
+  "backgroundImage": "qa-floorplan.png",
+  "items": [
+    {
+      "id": "scale",
+      "label": "比例未知",
+      "hint": "请在底图上点两点，并输入这两点之间的已知真实距离（mm）",
+      "required": true,
+      "confirmed": true,
+      "confirmedValue": "mm/px=60.000000",
+      "confirmedBy": "QA",
+      "confirmedAt": "2026-11-07T07:13:51.186Z"
+    },
+    {
+      "id": "dimensions",
+      "label": "关键尺寸缺失",
+      "hint": "核对开间 / 进深 / 各房间尺寸并确认",
+      "required": true,
+      "confirmed": true,
+      "confirmedValue": "QA 已人工核对",
+      "confirmedBy": "QA",
+      "confirmedAt": "2026-11-07T07:13:51.194Z"
+    },
+    {
+      "id": "thinWalls",
+      "label": "薄内墙待补",
+      "hint": "补漏薄内墙；不自动推测",
+      "required": true,
+      "confirmed": true,
+      "confirmedValue": "QA 已人工核对",
+      "confirmedBy": "QA",
+      "confirmedAt": "2026-11-07T07:13:51.201Z"
+    },
+    {
+      "id": "openings",
+      "label": "门窗洞口待核对",
+      "hint": "逐处核对门 / 窗洞口位置与宽度",
+      "required": true,
+      "confirmed": true,
+      "confirmedValue": "QA 已人工核对",
+      "confirmedBy": "QA",
+      "confirmedAt": "2026-11-07T07:13:51.210Z"
+    },
+    {
+      "id": "structuralWalls",
+      "label": "结构墙判断待确认",
+      "hint": "确认承重墙 / 可拆墙判断",
+      "required": true,
+      "confirmed": true,
+      "confirmedValue": "QA 已人工核对",
+      "confirmedBy": "QA",
+      "confirmedAt": "2026-11-07T07:13:51.220Z"
+    }
+  ],
+  "calibration": {
+    "mmPerPixel": 60,
+    "distancePx": 100,
+    "knownDistanceMm": 6000,
+    "p1": {
+      "x": 0,
+      "y": 0
+    },
+    "p2": {
+      "x": 100,
+      "y": 0
+    },
+    "imageWidthPx": null,
+    "imageHeightPx": null,
+    "scaleSource": "user_provided_known_distance",
+    "confirmedBy": "QA",
+    "confirmedAt": "2026-11-07T07:13:51.186Z"
+  },
+  "requirementsBlocking": [],
+  "startedAt": "2026-11-07T07:13:51.179Z",
+  "finalizedAt": "2026-11-07T07:13:51.238Z",
+  "finalizedBy": "QA"
+}

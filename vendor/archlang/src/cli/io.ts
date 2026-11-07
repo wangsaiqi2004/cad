@@ -1,0 +1,648 @@
+/**
+ * Shared CLI infrastructure — argument parsing, the {@link World}/IO seam, exit
+ * codes, and the small emit/format helpers every command module reuses. Split out
+ * of the former monolithic `src/cli.ts` (mechanical; behavior unchanged). Node APIs
+ * and real time are allowed here — and across `src/cli/` — the one place they are.
+ */
+
+import { readFileSync, existsSync, mkdirSync, statSync, writeFileSync } from "node:fs";
+import { resolve as resolvePath, dirname, sep } from "node:path";
+import { fileURLToPath } from "node:url";
+import { formatDiagnostic, EXPORT_FORMATS, planFromJson, buildManifest, ERROR_CATALOG } from "../index.js";
+import type { Diagnostic, World, ExportFormat, ManifestCommand, ManifestFlag, ViewName } from "../index.js";
+import { VIEW_NAMES, isViewName } from "../index.js";
+import { closest } from "../expr.js";
+import { CLI_NAME } from "../manifest.js";
+import { findCommand, usageLine } from "./help.js";
+
+export type Format = ExportFormat;
+/** Known `-f` ids and the "svg, dxf, pdf, or png" usage phrasing, from the one table. */
+export const FORMAT_IDS = new Set<string>(EXPORT_FORMATS.map((f) => f.id));
+export const FORMAT_LIST = `${EXPORT_FORMATS.slice(0, -1)
+  .map((f) => f.id)
+  .join(", ")}, or ${EXPORT_FORMATS[EXPORT_FORMATS.length - 1]!.id}`;
+
+/** Deterministic exit codes (documented in `--help`). `STALE` is the write-back guard's refusal
+ *  (`--expected-hash`, `E_STALE_SOURCE`; `src/cli/source-hash.ts`). */
+export const EXIT = { OK: 0, INTERNAL: 1, USER: 2, USAGE: 3, STALE: 4 } as const;
+
+/**
+ * The one non-exit-code a command may return: "I have installed a handle and the
+ * process is now MINE — do not exit."
+ *
+ * Every dispatch arm in `src/cli.ts` ends in `process.exit(...)`, which is right for
+ * a one-shot command and fatal for a resident one: `watch` would announce itself and
+ * then be killed by its own dispatcher if "returned `EXIT.OK`" and "finished" were
+ * the same thing.
+ *
+ * This sentinel separates them at the only moment the distinction is known — inside
+ * the command, right after the handle is installed — instead of leaving the caller to
+ * infer it from a zero. That matters for the NEXT resident command: `finish()` in
+ * `src/cli.ts` handles it for every arm at once, so a new resident command is correct
+ * by returning this, and a command that forgets is *not* silently long-running — it
+ * still exits, exactly as every one-shot arm does today.
+ *
+ * A resident command may still FAIL before it becomes resident: `watch` returns
+ * `EXIT.USAGE` for a missing path. So the return type is a union, not a flag on the
+ * command — the same invocation can end either way, and only the run knows which.
+ */
+export const RESIDENT = Symbol("resident");
+
+/** What a command hands back: an exit code, or {@link RESIDENT} to keep the process alive. */
+export type CommandResult = number | typeof RESIDENT;
+
+export const HERE = dirname(fileURLToPath(import.meta.url));
+
+export interface Args {
+  _: string[];
+  o?: string;
+  width?: number;
+  format?: string;
+  write?: boolean;
+  json?: boolean;
+  quiet?: boolean;
+  force?: boolean;
+  profile?: string;
+  strict?: boolean;
+  /** `-j/--jobs`: max concurrent renders for `batch`. */
+  jobs?: number;
+  /** `-s/--scale`: raster scale for PNG (`preview` defaults to 2). */
+  scale?: number;
+  /** `--install`: auto-install a missing optional render dep, then retry. */
+  install?: boolean;
+  /** `--overlay <name>`: draw an opt-in diagnostic overlay (currently `circulation`). */
+  overlay?: string;
+  /** `--error-svg`: on a broken plan, still emit a self-describing error-card image. */
+  errorSvg?: boolean;
+  /** `--accessible`: emit <title>/<desc>/role/aria accessibility metadata into the SVG. */
+  accessible?: boolean;
+  /** `--acc-id-prefix <p>`: with `--accessible`, the `<title>`/`<desc>` id prefix. */
+  accIdPrefix?: string;
+  /** `--ascii`: (preview) print the plan as ASCII text instead of a PNG. */
+  ascii?: boolean;
+  /** `--review`: (preview) render the review sheet: access graph, ringed warnings, legend, close-ups. */
+  review?: boolean;
+  /** `--cols <n>`: target grid width for the `txt` / `--ascii` text renderer. */
+  cols?: number;
+  /** `--charset unicode|ascii`: glyph set for the text renderer (default unicode). */
+  charset?: string;
+  /** `--unsafe`: (fix) widen the applied-fix gate to also apply `maybe-incorrect` fixes. */
+  unsafe?: boolean;
+  /** `--dry-run`: (fix/finish) compute the result but never write it. */
+  dryRun?: boolean;
+  /** `--backup`: (fix/finish) save the original bytes to `<target>.bak` before overwriting in place. */
+  backup?: boolean;
+  /** `--only <sheet|furnish>`: (finish) run only this stage. */
+  only?: string;
+  /** `--reissue`: (finish) allow `paper`/`scale` to be replaced when the drawing does not fit them. */
+  reissue?: boolean;
+  /** `--expected-hash <sha256>`: (fix/finish/repair/fmt/reroll) refuse unless the input's bytes hash to this. */
+  expectedHash?: string;
+  /** `--from-json`: (compile) read the input as Plan JSON (RPLAN shape), not `.arch`. */
+  fromJson?: boolean;
+  /** `--from <format>`: (import) the foreign format of the input file (`openplan3d`). */
+  from?: string;
+  /** `--graph <file>`: (validate) also check adjacency against an intended graph. */
+  graph?: string;
+  /** `--intent <file>`: (validate) also check the plan against a brief's intent JSON. */
+  intent?: string;
+  /** `--feedback`: (validate --intent) append deterministic per-violation correction prompts. */
+  feedback?: boolean;
+  /** `--brief <file>`: (score) the intent JSON to measure satisfaction against. */
+  brief?: string;
+  /** `--taste <profile>`: (score) the taste profile to score the plan under (ADR 0032). */
+  taste?: string;
+  /** `--stage <stage>`: (validate) report only the findings meaningful up to this authoring stage (PS7.1). */
+  stage?: string;
+  /** `--at <byteOffset>`: (complete) source offset to list completions at. */
+  at?: number;
+  /** `--room <id[,id…]>`: (describe) keep only these rooms and what touches them. */
+  room?: string;
+  /** `--zone <path[,path…]>`: (describe) keep only these declared zones' rooms. */
+  zone?: string;
+  /** `--select <key[,key…]>`: (describe) emit only these top-level keys of the JSON. */
+  select?: string;
+  /** `--facts <fact[,fact…]>`: (describe) also compute these opt-in derived facts. */
+  facts?: string;
+  /** `--waste <pct>`: (describe --facts quantities, takeoff) the waste percentage for `floor_area_with_waste_m2`. */
+  waste?: number;
+  /** `--code <CODE[,…]>`: (lint/validate) DISPLAY-filter diagnostics by code — never gating. */
+  code?: string;
+  /** `--severity <error|warning>`: (lint/validate) DISPLAY-filter diagnostics — never gating. */
+  severity?: string;
+  /** `--set NAME=value`: (impact) override a top-level `let` and compare before/after. */
+  set?: string;
+  /** `--against <old.arch>`: (impact) compare the input against this older file. */
+  against?: string;
+  /** `--lock <id[,id…]>`: (impact) ids that must not change between the sides (exit 2 if one did). */
+  lock?: string;
+  /** `--level <starter|full>`: (context) the starter screen or the whole bundle. (Every other command reads `--level <n>` as `level`.) */
+  contextLevel?: string;
+  /** `--section <spec|workflow|cli|errors>`: (context) print one section of the bundle, not all of it. */
+  section?: string;
+  /** `--level <n>`: (compile/watch/preview/describe) narrow a multi-storey plan to one storey. */
+  level?: number;
+  /** `--view <iso|axon>`: (compile/preview) render the illustrative axonometric instead of the plan. */
+  view?: string;
+  /** `--help`/`-h`: print the command's help instead of running it (handled in `main`). */
+  help?: boolean;
+  /** Tokens that look like flags but this command does not accept — `main` exits 3 on any. */
+  unknownFlags?: string[];
+}
+
+/** How a flag token is parsed: which {@link Args} field it fills, and with what. */
+export interface FlagSpec {
+  key: keyof Args;
+  kind: "string" | "number" | "boolean";
+  /** A command that reads this flag differently (`context --level starter` vs `describe --level 2`). */
+  perCommand?: Record<string, { key: keyof Args; kind: "string" | "number" | "boolean" }>;
+}
+
+/**
+ * The one parse table: EVERY flag name and alias the CLI accepts, mapped to the
+ * {@link Args} field it fills. Two invariants a drift test
+ * (`test/cli-help.test.ts`) enforces both ways:
+ *
+ *  - every flag/alias in the manifest's command table (and its `globalFlags`) has an
+ *    entry here, and every entry here is documented by the manifest;
+ *  - a flag with a manifest `arg` is a value-taking (non-`boolean`) kind, and vice-versa.
+ *
+ * So the parser, the help renderer, `archlang manifest --json`, and `docs/cli-reference.md`
+ * all describe the same CLI — an undeclared flag can no longer be silently swallowed as
+ * a positional (which is how `--jsn` used to become an input filename).
+ */
+export const FLAG_KEYS: Record<string, FlagSpec> = {
+  "--out": { key: "o", kind: "string" },
+  "-o": { key: "o", kind: "string" },
+  "--width": { key: "width", kind: "number" },
+  "-w": { key: "width", kind: "number" },
+  "--format": { key: "format", kind: "string" },
+  "-f": { key: "format", kind: "string" },
+  "--jobs": { key: "jobs", kind: "number" },
+  "-j": { key: "jobs", kind: "number" },
+  "--scale": { key: "scale", kind: "number" },
+  "-s": { key: "scale", kind: "number" },
+  "--cols": { key: "cols", kind: "number" },
+  "--level": { key: "level", kind: "number", perCommand: { context: { key: "contextLevel", kind: "string" } } },
+  "--at": { key: "at", kind: "number" },
+  "--charset": { key: "charset", kind: "string" },
+  "--profile": { key: "profile", kind: "string" },
+  "--overlay": { key: "overlay", kind: "string" },
+  "--room": { key: "room", kind: "string" },
+  "--zone": { key: "zone", kind: "string" },
+  "--select": { key: "select", kind: "string" },
+  "--facts": { key: "facts", kind: "string" },
+  "--waste": { key: "waste", kind: "number" },
+  "--code": { key: "code", kind: "string" },
+  "--severity": { key: "severity", kind: "string" },
+  "--section": { key: "section", kind: "string" },
+  "--set": { key: "set", kind: "string" },
+  "--against": { key: "against", kind: "string" },
+  "--lock": { key: "lock", kind: "string" },
+  "--view": { key: "view", kind: "string" },
+  "--graph": { key: "graph", kind: "string" },
+  "--intent": { key: "intent", kind: "string" },
+  "--brief": { key: "brief", kind: "string" },
+  "--taste": { key: "taste", kind: "string" },
+  "--stage": { key: "stage", kind: "string" },
+  "--only": { key: "only", kind: "string" },
+  "--reissue": { key: "reissue", kind: "boolean" },
+  "--expected-hash": { key: "expectedHash", kind: "string" },
+  "--from-json": { key: "fromJson", kind: "boolean" },
+  "--from": { key: "from", kind: "string" },
+  "--feedback": { key: "feedback", kind: "boolean" },
+  "--ascii": { key: "ascii", kind: "boolean" },
+  "--review": { key: "review", kind: "boolean" },
+  "--install": { key: "install", kind: "boolean" },
+  "--unsafe": { key: "unsafe", kind: "boolean" },
+  "--dry-run": { key: "dryRun", kind: "boolean" },
+  "--backup": { key: "backup", kind: "boolean" },
+  "--write": { key: "write", kind: "boolean" },
+  "--json": { key: "json", kind: "boolean" },
+  "--quiet": { key: "quiet", kind: "boolean" },
+  "-q": { key: "quiet", kind: "boolean" },
+  "--force": { key: "force", kind: "boolean" },
+  "--error-svg": { key: "errorSvg", kind: "boolean" },
+  "--accessible": { key: "accessible", kind: "boolean" },
+  "--acc-id-prefix": { key: "accIdPrefix", kind: "string" },
+  "--strict": { key: "strict", kind: "boolean" },
+  "--fail-on-warning": { key: "strict", kind: "boolean" },
+};
+
+/** `--help`/`-h` is accepted by every command and handled inside {@link parseArgs}. */
+export const HELP_FLAGS: readonly string[] = ["--help", "-h"];
+
+const flagNames = (flags: readonly ManifestFlag[]): string[] =>
+  flags.flatMap((f) => (f.alias ? [f.flag, f.alias] : [f.flag]));
+
+/** The global flags every command tolerates (`--json`/`--quiet`), from the manifest. */
+const GLOBAL_FLAG_NAMES: readonly string[] = flagNames(buildManifest("0.0.0").globalFlags);
+
+/** Every flag token `command` accepts: its own flags + the global ones + help. */
+export function allowedFlags(command: ManifestCommand): string[] {
+  return [...new Set([...flagNames(command.flags), ...GLOBAL_FLAG_NAMES, ...HELP_FLAGS])];
+}
+
+/**
+ * Parse `argv` against {@link FLAG_KEYS}. When a `command` is given, a flag it does not
+ * declare is rejected (collected into `unknownFlags`) rather than swallowed as a
+ * positional; `--help`/`-h` short-circuits to `help: true` so `archlang describe --help`
+ * prints help instead of failing on the missing input file.
+ */
+export function parseArgs(argv: string[], command?: ManifestCommand): Args {
+  const allowed = command ? new Set(allowedFlags(command)) : null;
+  const res: Args = { _: [] };
+  const bag = res as unknown as Record<string, unknown>;
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i]!;
+    if (HELP_FLAGS.includes(a)) {
+      res.help = true;
+      continue;
+    }
+    // `--flag=value` is `--flag value`, for a flag that takes one: `--level=-1`. A word that was a
+    // positional stays one, and a boolean flag has no value to give, so it stays an unknown flag.
+    const eq = a.startsWith("--") ? a.indexOf("=") : -1;
+    const name = eq > 0 ? a.slice(0, eq) : a;
+    const base = FLAG_KEYS[name];
+    const spec = base && command ? (base.perCommand?.[command.name] ?? base) : base;
+    if (spec && (!allowed || allowed.has(name)) && !(eq > 0 && spec.kind === "boolean")) {
+      if (spec.kind === "boolean") bag[spec.key] = true;
+      else {
+        const raw = eq > 0 ? a.slice(eq + 1) : argv[++i];
+        // `--level=` and `--level ""`: `Number("")` is 0, which would write storey 0 unasked.
+        if (spec.kind === "number" && raw?.trim() === "") {
+          res.unknownFlags = [...(res.unknownFlags ?? []), `${name}=`];
+          continue;
+        }
+        // A per-command string flag with no value after it is "", never undefined: the command
+        // can then refuse it (`context --level` must not fall back to printing the full bundle).
+        bag[spec.key] = spec.kind === "number" ? Number(raw) : spec === base ? raw : (raw ?? "");
+      }
+      continue;
+    }
+    // A `-`-leading token that isn't a flag this command takes is an error, never a
+    // filename. Bare `-` stays the stdin sentinel. No value is consumed for it.
+    if (a !== "-" && a.startsWith("-")) {
+      res.unknownFlags = [...(res.unknownFlags ?? []), a];
+    } else res._.push(a);
+  }
+  return res;
+}
+
+/** The package version (for `archlang manifest`), read from the shipped package.json. */
+function readVersion(): string {
+  for (const rel of ["../package.json", "../../package.json"]) {
+    const p = resolvePath(HERE, rel);
+    if (existsSync(p)) {
+      try {
+        return (JSON.parse(readFileSync(p, "utf8")).version as string) ?? "0.0.0";
+      } catch {
+        /* fall through */
+      }
+    }
+  }
+  return "0.0.0";
+}
+export const VERSION = readVersion();
+
+/** Read source from a file, or from stdin when `path` is `-`. */
+export function readInput(path: string): string {
+  return path === "-" ? readFileSync(0, "utf8") : readFileSync(resolvePath(path), "utf8");
+}
+
+/** A real-filesystem {@link World}: imports resolve against `baseDir`; `now` is the
+ *  wall clock. The one spot Node APIs + real time are allowed. */
+export function makeNodeWorld(baseDir: string): World {
+  return {
+    read(path: string): string | null {
+      try {
+        return readFileSync(resolvePath(baseDir, path), "utf8");
+      } catch {
+        return null;
+      }
+    },
+    now: () => new Date(),
+  };
+}
+
+/** Base dir for import resolution given the input path (cwd for stdin). */
+export const baseDirOf = (input: string): string => (input === "-" ? process.cwd() : dirname(resolvePath(input)));
+
+export function emitJson(obj: unknown): void {
+  process.stdout.write(JSON.stringify(obj, null, 2) + "\n");
+}
+
+/**
+ * The catalog's one-line remedy for a diagnostic, rendered in `formatDiagnostic`'s
+ * `= help:` style — or `""` when the code is uncatalogued (or carries no fix), so a
+ * bare `= fix:` line is never printed. JSON mode already carries this field
+ * (`diagnosticToJson`); this is the human-mode parity so a reader of stderr does not
+ * have to run `archlang explain <CODE>` to learn the remedy.
+ */
+function catalogFixLine(d: Diagnostic): string {
+  const fix = d.code ? ERROR_CATALOG[d.code]?.fix : undefined;
+  return fix ? `\n  = fix: ${fix}` : "";
+}
+
+/** Print diagnostics as framed snippets to stderr (unless quiet), each followed by
+ *  the error catalog's `fix` line when the code has one. */
+export function emitDiagnosticsHuman(source: string, diags: Diagnostic[], quiet?: boolean): void {
+  if (quiet) return;
+  for (const d of diags) process.stderr.write(`${formatDiagnostic(source, d)}${catalogFixLine(d)}\n\n`);
+}
+
+export const hasErrors = (diags: Diagnostic[]): boolean => diags.some((d) => d.severity === "error");
+
+/** A plain (non-array) object — used to sniff the `--graph` / Plan-JSON shapes. */
+export const isRecord = (v: unknown): v is Record<string, unknown> =>
+  typeof v === "object" && v !== null && !Array.isArray(v);
+
+/**
+ * Convert Plan-JSON text (`--from-json`) to canonical `.arch` source. On a JSON
+ * syntax error or a shape/kind problem, returns the error diagnostics (with the
+ * partially-generated source, when any, so line/col projection still works);
+ * on success returns the `.arch` string the compile pipeline then consumes.
+ */
+export function sourceFromJson(jsonText: string): { source: string } | { error: Diagnostic[]; generated?: string } {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(jsonText);
+  } catch (e) {
+    return { error: [{ severity: "error", code: "E_JSON_SCHEMA", message: `invalid JSON: ${(e as Error).message}` }] };
+  }
+  const { source, diagnostics } = planFromJson(parsed);
+  if (source === undefined || hasErrors(diagnostics)) return { error: diagnostics, generated: source };
+  return { source };
+}
+
+export function defaultOut(input: string, format: Format): string {
+  if (input === "-") return `out.${format}`;
+  return resolvePath(input).replace(/\.arch$/i, "") + "." + format;
+}
+
+/**
+ * The per-storey output path for a multi-storey plan: `<stem>.L<level>.<ext>` — `plan.svg`
+ * becomes `plan.L1.svg`, `plan.L-1.svg` for a basement. Derived from whatever target the
+ * caller gave (`-o` or the default), so `-o out/house.svg` writes `out/house.L1.svg` and a
+ * level's file always sits where a single-file compile would have.
+ */
+export function levelTarget(target: string, level: number): string {
+  const i = target.lastIndexOf(".");
+  const slash = Math.max(target.lastIndexOf("/"), target.lastIndexOf("\\"));
+  // No extension (or the only dot is in a directory name) → just append the suffix.
+  if (i <= slash) return `${target}.L${level}`;
+  return `${target.slice(0, i)}.L${level}${target.slice(i)}`;
+}
+
+/** A `-o` target that names its storey by itself: `{level}` stands for the number. */
+const LEVEL_TOKEN = "{level}";
+
+/**
+ * Where one storey lands: `{level}` in the target is the storey's number, and a target without it
+ * takes the {@link levelTarget} suffix. Kept apart from `levelTarget`, which the playground's file
+ * name is held in lockstep with: a browser download has no target to carry the word.
+ */
+export function storeyTarget(target: string, level: number): string {
+  return target.includes(LEVEL_TOKEN) ? target.replaceAll(LEVEL_TOKEN, String(level)) : levelTarget(target, level);
+}
+
+/**
+ * `-o -` streams ONE artifact, but a multi-storey plan renders one per storey — so the two
+ * only compose with `--level <n>`. Same doctrine as {@link stdoutJsonConflict}: refuse
+ * loudly (exit 3) instead of silently picking a page or writing files nobody asked for.
+ */
+export function stdoutMultiPage(command: string, levels: readonly number[]): number {
+  return usageErrorFor(
+    command,
+    `\`-o -\` streams a single drawing, but this plan has ${levels.length} levels (${levels.join(", ")}) and renders one file per level — ` +
+      `add \`--level <n>\` to stream one storey, or give \`-o <file>\` to write <stem>.L<level> files`,
+  );
+}
+
+/** The exit-3 usage error for a `--level <n>` that the plan does not declare. */
+export function unknownLevel(command: string, want: number, levels: readonly number[]): number {
+  if (levels.length === 0) {
+    return usageErrorFor(
+      command,
+      `--level ${want} was given but this plan declares no \`level\` blocks (it is single-storey) — drop --level`,
+    );
+  }
+  return usageErrorFor(command, `unknown --level ${want} (plan has ${levels.join(", ")})`);
+}
+
+/** Parse + validate the `-f` format, or `null` if it's not a known format. */
+/**
+ * The format an output path names, for `compile` with no `-f`: otherwise `-o plan.pdf` writes SVG
+ * bytes under a `.pdf` name and reports success. An unknown extension names none (the default).
+ */
+export function formatOfOutput(out: string | undefined): Format | undefined {
+  const ext = out?.match(/\.([a-z]+)$/i)?.[1]?.toLowerCase();
+  return ext && FORMAT_IDS.has(ext) ? (ext as Format) : undefined;
+}
+
+export function parseFormat(args: Args): Format | null {
+  const fmt = (args.format ?? "svg").toLowerCase();
+  return FORMAT_IDS.has(fmt) ? (fmt as Format) : null;
+}
+
+/**
+ * Resolve `--view <iso|axon>`, or say precisely why it cannot be honoured.
+ *
+ * Five refusals, every one an exit-3 usage error rather than a silent fallback to the
+ * plan — a flag that quietly does nothing is how a user comes to believe they are looking
+ * at a drawing they are not:
+ *
+ *  - an unrecognised value, with a did-you-mean, exactly as an unknown verb is treated;
+ *  - `-f txt`, because the ASCII backend reads a plan (it identifies a room as a polygon
+ *    on the `floor` pass) and would print a meaningless grid from a projection;
+ *  - `-f json`, because Plan JSON is the plan's model rather than a drawing, so a view has
+ *    nothing to change in it and would hand back the plan as though it were the view;
+ *  - `--level`, because the view is ONE drawing of the whole building and has no per-storey
+ *    page to narrow to. This one has to be refused *here* and not left to the render path:
+ *    a view returns no `pages`, so the generic handler saw an empty level list and told the
+ *    author that a plan with two `level` blocks "declares no `level` blocks (it is
+ *    single-storey)" — a confident wrong answer about their own source, which is worse
+ *    than any silence;
+ *  - `--overlay`, because a diagnostic overlay is a MEASUREMENT drawn on a plan — routes,
+ *    bottleneck markers — and the whole contract of this view is that nothing measured
+ *    reaches it. `toIso` does not draw one, so accepting the flag would ignore it.
+ *
+ * **Deprecated**: a valid `--view` prints a one-line notice on stderr (never stdout); `--quiet` silences it.
+ *
+ * Returns `{ view: undefined }` when the flag is absent, which is every existing call.
+ */
+export function resolveView(args: Args, format: Format, command: string): { view?: ViewName } | { code: number } {
+  if (args.view === undefined) return {};
+  const name = args.view;
+  if (!isViewName(name)) {
+    const hint = closest(name, [...VIEW_NAMES]);
+    return {
+      code: usageErrorFor(
+        command,
+        `unknown view "${name}" — expected one of: ${VIEW_NAMES.join(", ")}` +
+          (hint === null ? "" : ` (did you mean "${hint}"?)`),
+      ),
+    };
+  }
+  if (format === "txt") {
+    return {
+      code: usageErrorFor(
+        command,
+        "--view cannot be combined with -f txt — the ASCII backend draws a PLAN, not a projection (use svg, pdf, png or dxf)",
+      ),
+    };
+  }
+  if (format === "json") {
+    return {
+      code: usageErrorFor(
+        command,
+        "--view cannot be combined with -f json — Plan JSON is the plan's model, not a drawing of it (drop --view)",
+      ),
+    };
+  }
+  if (args.level !== undefined) {
+    return {
+      code: usageErrorFor(
+        command,
+        `--view draws ONE picture of the whole building, with every storey stacked, so --level ${args.level} has nothing to narrow — drop one of the two (\`--level\` alone renders that storey's PLAN)`,
+      ),
+    };
+  }
+  if (args.overlay !== undefined) {
+    return {
+      code: usageErrorFor(
+        command,
+        `--view cannot be combined with --overlay ${args.overlay} — an overlay draws a MEASUREMENT (routes, bottlenecks) and nothing measured is drawn on a projection`,
+      ),
+    };
+  }
+  if (!args.quiet)
+    process.stderr.write("note: --view is deprecated — illustrative only; removed in 2.0 (ArchLang draws plans)\n");
+  return { view: name };
+}
+
+/**
+ * `-f json` with a flag that only changes a DRAWING: an exit-3 usage error, for the reason
+ * {@link resolveView} gives — a flag that quietly does nothing is how a user comes to believe
+ * the output carries something it does not. Plan JSON is the plan's model, so a page width, a
+ * raster scale, accessibility markup or a diagnostic overlay has nothing in it to change.
+ * Returns the exit code to stop with, or `undefined` to go on.
+ */
+export function refuseJsonDrawingFlags(args: Args, format: Format, command: string): number | undefined {
+  if (format !== "json") return undefined;
+  const given = [
+    args.accessible ? "--accessible" : undefined,
+    args.overlay !== undefined ? "--overlay" : undefined,
+    args.width !== undefined ? "--width" : undefined,
+    args.scale !== undefined ? "--scale" : undefined,
+  ].filter((f): f is string => f !== undefined);
+  if (given.length === 0) return undefined;
+  return usageErrorFor(
+    command,
+    `${given.join(", ")} cannot be combined with -f json — ${given.length === 1 ? "it changes" : "they change"} a drawing, and Plan JSON is the plan's model, not a drawing of it (drop ${given.length === 1 ? "it" : "them"})`,
+  );
+}
+
+/** Normalize the `--charset` flag to the text backend's union (unknown → unicode). */
+export const asciiCharset = (args: Args): "unicode" | "ascii" => (args.charset === "ascii" ? "ascii" : "unicode");
+
+export function usageError(msg: string): number {
+  process.stderr.write(`error: ${msg}\n`);
+  return EXIT.USAGE;
+}
+
+/**
+ * The exit-3 shape `main` uses for a rejected flag: `error: <msg>` followed by the
+ * manifest-derived `usage:` echo and the `--help` pointer. Exported so a command that
+ * rejects a flag *combination* (which `main` cannot see, because it is not an unknown
+ * token) reports it in exactly the same way — one usage-error path, not two.
+ */
+export function usageErrorFor(command: string, msg: string): number {
+  const code = usageError(msg);
+  const c = findCommand(buildManifest(VERSION), command);
+  if (c) process.stderr.write(`usage: ${usageLine(c)}   (try \`${CLI_NAME} ${c.name} --help\`)\n`);
+  return code;
+}
+
+/**
+ * `-o -` streams the artifact to stdout; `--json` puts its result envelope there. Both
+ * at once is unresolvable — and quietly redirecting the artifact to a default filename
+ * (what `compile`/`preview`/`md` used to do) writes a file the caller never asked for
+ * and never hears about. So it is a loud usage error (exit 3) instead: silent misuse is
+ * exactly what the self-describing CLI surface exists to prevent.
+ */
+export function stdoutJsonConflict(command: string): number {
+  return usageErrorFor(
+    command,
+    "`-o -` (stream to stdout) conflicts with --json (the JSON envelope owns stdout) — drop --json or give `-o <file>`",
+  );
+}
+
+/** Does `target` end in a path separator (`dir/`, and `dir\` on Windows)? Resolving it drops the
+ *  separator, so `-o dir/` would write a FILE named `dir`. */
+export function endsInSeparator(target: string): boolean {
+  return target.endsWith("/") || (sep === "\\" && target.endsWith("\\"));
+}
+
+/** The one line for an output file path that names a directory, by its trailing separator. */
+export const separatorRefusal = (target: string): string =>
+  `cannot write ${target}: it ends in a path separator, so it names a directory, and -o names a file`;
+
+/**
+ * Create the directory an output file goes in, as `batch -o <dir>` always has, so a
+ * `-o some/new/dir/x.svg` writes instead of failing with a raw `ENOENT`. Called only
+ * once there is something to write, so a plan that does not compile leaves no empty
+ * directory behind. Returns the one-line reason when the file cannot be written there: the
+ * path ends in a separator (checked before anything is created), the directory cannot exist
+ * (a file already stands on its path, the same wording `batch` reports), or a directory
+ * already stands where the file would go (a raw `EISDIR` otherwise).
+ */
+export function ensureOutputDir(target: string): string | undefined {
+  if (endsInSeparator(target)) return separatorRefusal(target);
+  const path = resolvePath(target);
+  const dir = dirname(path);
+  try {
+    mkdirSync(dir, { recursive: true });
+  } catch (e) {
+    return `cannot create the output directory ${dir}: ${(e as Error).message}`;
+  }
+  let isDir = false;
+  try {
+    isDir = statSync(path).isDirectory();
+  } catch {
+    // nothing stands there yet: the usual case
+  }
+  if (isDir) return `cannot write ${path}: it is a directory, and the output is a file — name a file inside it`;
+  return undefined;
+}
+
+/**
+ * Write a `-o` output file, creating its directory first ({@link ensureOutputDir}).
+ * Throws an `Error` whose message is the one line to report; every caller already
+ * turns a write failure into {@link ioError}.
+ */
+export function writeOutput(target: string, data: string | Uint8Array): void {
+  const why = ensureOutputDir(target);
+  if (why !== undefined) throw new Error(why);
+  writeFileSync(resolvePath(target), data);
+}
+
+export function ioError(msg: string, json?: boolean, extra?: Record<string, unknown>): number {
+  if (json) emitJson({ ok: false, error: msg, ...extra });
+  else process.stderr.write(`error: ${msg}\n`);
+  return EXIT.INTERNAL;
+}
+
+/** Read source for a command from a file (or stdin `-`), then run `run`; the shared
+ *  entry ladder for the single-source commands (describe/lint/fmt/…). */
+export function withSource(args: Args, run: (source: string, input: string) => number): number {
+  const input = args._[0];
+  if (!input) return usageError("missing input file (use a path or `-` for stdin)");
+  let source: string;
+  try {
+    source = readInput(input);
+  } catch {
+    return ioError(`cannot read ${input}`, args.json);
+  }
+  return run(source, input);
+}

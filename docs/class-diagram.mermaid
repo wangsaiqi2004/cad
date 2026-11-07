@@ -1,0 +1,369 @@
+classDiagram
+    direction TB
+
+    class Task {
+        +string taskId
+        +string projectId
+        +string versionId
+        +TaskState state
+        +string stateEnteredAt
+        +SubProgress subProgress
+        +TaskEvent[] events
+        +string errorCode
+        +string idempotencyKey
+        +int chargeSubmittedCount
+    }
+    class TaskEvent {
+        +string eventId
+        +string at
+        +TaskState from
+        +TaskState to
+        +string reason
+        +int done
+        +int total
+        +string unit
+    }
+    class SubProgress {
+        +int done
+        +int total
+        +string unit
+        +advance(realCount int) void
+    }
+    class Project {
+        +string projectId
+        +string name
+        +string customer
+        +string createdAt
+        +string currentVersionId
+        +string rootPath
+    }
+    class Version {
+        +string versionId
+        +string taskId
+        +string createdAt
+        +string[] artifactPaths
+        +bool manualEdited
+        +string contentHash
+    }
+    class VersionManifest {
+        +string versionId
+        +Record~string,string~ sha256
+        +string cadVersion
+        +string boundaryNote
+    }
+    class SourceAsset {
+        +string assetId
+        +string path
+        +string mime
+        +string role
+        +bool readable
+        +string thumbnail
+    }
+    class RequirementSpec {
+        +float area
+        +DimensionSpec dimensions
+        +float ceilingHeight
+        +string[] roomUses
+        +int occupants
+        +string style
+        +string budget
+        +string special
+        +CandidateValue[] candidates
+    }
+    class CandidateValue {
+        +string field
+        +string value
+        +string sourceFile
+        +bool confirmed
+    }
+    class StructuredPlan {
+        +string planVersion
+        +string units
+        +Wall[] walls
+        +Room[] rooms
+        +Opening[] openings
+        +Furniture[] furniture
+        +Dimension[] dimensions
+        +Layer[] layers
+        +CalibrationItem[] calibration
+        +confirmedAt string
+    }
+    class CalibrationItem {
+        +string itemId
+        +string kind
+        +string description
+        +bool resolved
+        +float knownDistanceMm
+    }
+    class RenderRecord {
+        +string recordId
+        +string cadVersionId
+        +string[] inputImages
+        +string prompt
+        +string modelName
+        +string at
+        +string resultPath
+    }
+    class ModelGroupConfig {
+        +string group
+        +string interfaceType
+        +string baseUrl
+        +string modelName
+        +string capabilityNote
+        +CapabilityResult[] results
+    }
+    class CapabilityResult {
+        +string key
+        +string status
+        +string reason
+        +string testedAt
+    }
+    class IdempotencyRecord {
+        +string taskId
+        +string stepId
+        +string idempotencyKey
+        +string inputHash
+        +string modelName
+        +string status
+        +string submittedAt
+        +bool resultUnknown
+    }
+    class PermissionScope {
+        +string projectRoot
+        +string[] allowedTools
+        +string[] forbidden
+        +bool rememberChoice
+    }
+    class AuditEntry {
+        +string at
+        +string tool
+        +string targetPath
+        +string result
+    }
+
+    class TaskStateMachine {
+        +transitions Table
+        +canTransition(from TaskState, to TaskState, guard Guard) bool
+        +next(from TaskState, event string) TaskState
+        +assertBlocking(state TaskState) void
+    }
+    class TaskOrchestrator {
+        +Task current
+        +start(projectId string) Task
+        +transition(to TaskState, evidence Evidence) void
+        +retryExplicitly(stepId string) void
+        +redo() Task
+        +cancel() void
+    }
+    class TaskEventLog {
+        +append(event TaskEvent) void
+        +since(stateEnteredAt string) TaskEvent[]
+        +redactAndExport() string
+    }
+    class IdempotencyLedger {
+        +beginCharge(taskId string, stepId string, inputHash string) IdempotencyRecord
+        +markResult(key string, status string) void
+        +markUnknown(key string) void
+        +canResubmit(key string) bool
+        +countFor(taskId string) int
+    }
+    class ProjectStore {
+        +create(name string, customer string) Project
+        +open(projectId string) Project
+        +listRecent() Project[]
+        +writeSafely(path string, content string) void
+    }
+    class VersionStore {
+        +newVersion(projectId string, taskId string) Version
+        +writeArtifact(versionId string, path string, bytes Uint8Array) void
+        +hash(versionId string) string
+        +markManualEdited(versionId string) void
+    }
+    class DeliveryPackager {
+        +pack(versionId string) string
+        +assertNoPlaintextKey(zipPath string) void
+        +writeBoundaryNote(versionId string) void
+    }
+    class SecretVault {
+        +available() bool
+        +get(group string) string
+        +set(group string, key string) void
+        +redact(input string) string
+    }
+    class ModelSettingsStore {
+        +load() ModelGroupConfig[]
+        +save(config ModelGroupConfig) void
+        +capability(group string, key string) CapabilityResult
+    }
+    class CapabilityTester {
+        +testFive(configs ModelGroupConfig[]) CapabilityResult[]
+        +assertEnabled(key string) bool
+    }
+    class TextProviderAdapter {
+        +complete(prompt string, tools ToolSpec[]) ChatOutput
+        +toolCallsSupported() bool
+    }
+    class ImageProviderAdapter {
+        +generate(req ImageRequest) ImageResult
+        +edit(req ImageRequest) ImageResult
+        +supports(key string) bool
+    }
+    class ImageGenTool {
+        +name string
+        +submit(req ImageRequest) ImageResult
+        +readKeyAtCallTime() string
+    }
+    class ToolWhitelist {
+        +allow(name string) bool
+        +forbidden() string[]
+    }
+    class PathSandbox {
+        +resolve(projectRoot string, p string) string
+        +isWithin(projectRoot string, p string) bool
+        +assertContained(p string) void
+    }
+    class ParamValidator {
+        +validate(name string, input unknown) Result
+        +assertUnitsMm(input unknown) void
+    }
+    class PermissionGate {
+        +confirm(scope PermissionScope) Decision
+        +assertAllowed(name string, input unknown) void
+    }
+    class AuditLog {
+        +record(entry AuditEntry) void
+        +list(taskId string) AuditEntry[]
+    }
+    class AgentOrchestrator {
+        +planLayout(plan StructuredPlan, req RequirementSpec) StructuredPlan
+        +handleChat(text string) void
+        +runToolGuarded(name string, input unknown) ToolResult
+    }
+    class ToolRegistry {
+        +register(spec ToolSpec, handler Handler) void
+        +list() ToolSpec[]
+        +dispatch(name string, input unknown) ToolResult
+    }
+    class McpClientAdapter {
+        +connect(server string) void
+        +listTools() ToolSpec[]
+        +callTool(name string, input unknown) ToolResult
+    }
+    class SkillRegistry {
+        +load(dir string) Skill[]
+        +systemPrompt() string
+        +slashCommands() string[]
+    }
+    class IngestService {
+        +validateAndDedupe(files string[]) SourceAsset[]
+    }
+    class CandidateExtractor {
+        +extract(assets SourceAsset[]) CandidateValue[]
+        +attachSource(value CandidateValue, file string) void
+    }
+    class Redactor {
+        +scrub(input string) string
+        +assertNoPlaintextKey(path string) void
+    }
+    class CalibrationService {
+        +buildPendingItems(assets SourceAsset[], plan StructuredPlan) CalibrationItem[]
+        +assertBlocking(items CalibrationItem[]) bool
+        +confirm(items CalibrationItem[], plan StructuredPlan) StructuredPlan
+    }
+    class ArchSourceEmitter {
+        +emit(plan StructuredPlan) string
+    }
+    class ArchlangBridge {
+        +compile(archSource string) CadArtifacts
+        +validateStrict(archSource string) Diagnostic[]
+        +assertDeterministic(a string, b string) bool
+    }
+    class OpencalqueProjector {
+        +toOps(plan StructuredPlan) Op[]
+        +apply(file string, ops Op[]) Document
+        +check(doc Document) Problem[]
+        +quantities(doc Document) Stats
+    }
+    class CadChecker {
+        +check(dxfPath string) CheckReport
+        +assertSixElementClasses(report CheckReport) void
+    }
+    class PreviewRenderer {
+        +svg(plan StructuredPlan) string
+        +pdf(plan StructuredPlan) Uint8Array
+        +png(plan StructuredPlan) Uint8Array
+    }
+    class OpencalqueRuntime {
+        <<reused upstream>>
+        +runRequest(session ChatSession, host AgentHost, text string, events AgentEvents, signal AbortSignal) void
+        +runDrawingTool(name string, input unknown, host DrawingHost) ToolResult
+        +DRAWING_TOOLS ToolSpec[]
+        +placeFloorPlan(file File) void
+        +applyCalibration(realMm number) void
+        +writeSafely(path string, content string) void
+        +safeStorage SafeStorage
+    }
+    class ArchlangCompiler {
+        <<reused upstream>>
+        +compile(source string, format string) string
+        +validate(source string, strict bool) Diagnostic[]
+        +lint(source string) Diagnostic[]
+        +guide() string
+    }
+
+    class ProjectPort { <<interface>> }
+    class ProviderPort { <<interface>> }
+    class PermissionPort { <<interface>> }
+    class IdempotencyPort { <<interface>> }
+
+    Project *-- Version : contains
+    Version *-- VersionManifest : has
+    Version o-- RenderRecord : records
+    Version o-- SourceAsset : references
+    Project *-- RequirementSpec : owns
+    RequirementSpec *-- CandidateValue : proposes
+    Task *-- TaskEvent : emits
+    Task *-- SubProgress : reports
+    Task o-- IdempotencyRecord : binds
+    StructuredPlan *-- CalibrationItem : requires
+    ModelGroupConfig *-- CapabilityResult : holds
+    PermissionScope o-- AuditEntry : produces
+
+    TaskOrchestrator --> TaskStateMachine : uses
+    TaskOrchestrator --> TaskEventLog : writes
+    TaskOrchestrator --> IdempotencyLedger : guards charges
+    TaskOrchestrator --> AgentOrchestrator : invokes
+    TaskOrchestrator --> CalibrationService : blocks at AWAITING_CALIBRATION
+    TaskOrchestrator --> ArchlangBridge : CAD_BUILDING
+    TaskOrchestrator --> CadChecker : CAD_CHECKING
+    TaskOrchestrator --> ImageGenTool : IMAGE_GENERATING
+    TaskOrchestrator --> DeliveryPackager : PACKAGING
+    ProjectStore ..|> ProjectPort : implements
+    VersionStore ..|> ProjectPort : implements
+    TextProviderAdapter ..|> ProviderPort : implements
+    ImageProviderAdapter ..|> ProviderPort : implements
+    PermissionGate ..|> PermissionPort : implements
+    IdempotencyLedger ..|> IdempotencyPort : implements
+    AgentOrchestrator --> ToolRegistry : dispatches
+    ToolRegistry --> PermissionGate : every call passes
+    PermissionGate --> ToolWhitelist : checks
+    PermissionGate --> PathSandbox : checks
+    PermissionGate --> ParamValidator : checks
+    PermissionGate --> AuditLog : writes
+    AgentOrchestrator --> SkillRegistry : system prompt
+    AgentOrchestrator ..> OpencalqueRuntime : reuses runRequest
+    ToolRegistry ..> OpencalqueRuntime : reuses DRAWING_TOOLS
+    McpClientAdapter ..> ToolRegistry : optional external tools
+    CalibrationService ..> OpencalqueRuntime : placeFloorPlan/applyCalibration
+    IngestService --> CandidateExtractor : feeds
+    ArchSourceEmitter --> ArchlangBridge : emits .arch
+    OpencalqueProjector ..> OpencalqueRuntime : applyEdit/checkDrawing
+    ArchlangBridge ..> ArchlangCompiler : in-process
+    CadChecker --> ArchlangBridge : audits DXF
+    CadChecker ..> OpencalqueRuntime : dxfOps parse
+    ImageGenTool --> SecretVault : reads key at call time
+    ImageGenTool --> ImageProviderAdapter : HTTP
+    ModelSettingsStore --> CapabilityTester : drives
+    SecretVault ..> OpencalqueRuntime : safeStorage
+    DeliveryPackager --> VersionStore : packs
+    DeliveryPackager --> Redactor : plaintext self-check

@@ -1,0 +1,955 @@
+/**
+ * Frozen fixture catalog — tacit architectural knowledge about furniture/fixtures
+ * as pure, deterministic data. Today it records which fixtures conventionally sit
+ * **against a wall** (plumbing fixtures and kitchen runs need a wall behind them for
+ * supply/waste/venting), used by the `lint` clearance/placement rules. It is the
+ * seam for future per-category default footprints and clearance envelopes.
+ *
+ * Keyed by the same `furniture <category>` names the renderer's fixture glyphs use
+ * (see `elements/fixtures-glyphs.ts`); aliases share one entry. Pure data — no I/O.
+ */
+
+export interface FixtureSpec {
+  /** Conventionally installed against a wall (plumbing/venting/supply). */
+  requiresWall: boolean;
+  /**
+   * Minimum activity clearance (mm) directly in front of the fixture — the space a
+   * person needs to use it. Deliberately conservative (tight enough that a normal
+   * layout never trips it, generous enough to catch a piece parked right in front).
+   * 0 / omitted means "no frontal clearance check" (e.g. a shower you stand inside).
+   */
+  clearanceMm?: number;
+  /**
+   * A conventional default footprint (mm) in **wall-relative** axes — `along` runs
+   * parallel to the wall the fixture backs onto, `depth` projects into the room. Lets
+   * `furniture <cat> against wall <id>` omit an explicit `size`; closed-form, never a
+   * guess among alternatives (ADR 0005). Omitted for free-standing furniture.
+   */
+  footprint?: { along: number; depth: number };
+  /**
+   * Which room zone(s) this category satisfies for the `W_ROOM_NO_FIXTURE` lint rule
+   * (a bathroom needs a wet fixture, a kitchen a kitchen fixture). The membership
+   * encodes lint's long-standing behaviour exactly — e.g. `sink` counts for both
+   * zones, while `lavatory` deliberately carries none (it never counted; flipping
+   * that is a behaviour change, not a refactor).
+   */
+  zones?: readonly FixtureZone[];
+  /**
+   * The canonical category whose job this piece does in a room, beside its own family's: a
+   * `double_bed` serves `bed`, a `urinal` serves `wc`, a bare `sink` serves `basin`. Read
+   * only by `finish`, to decide whether a room that holds furniture lacks a piece its use
+   * requires (`src/furnish.ts`). Nothing draws, measures or lints it. The words of a family
+   * carry the same value unless their `zones` differ (`sink` is wet as well as kitchen, so it
+   * serves `basin`; `kitchen_sink` is kitchen only, so it does not), and a piece that serves a
+   * zoned category carries that category's zones (`test/finish-furnish.test.ts`).
+   *
+   * A judgement call, stated so it is not mistaken for an oversight: `urinal` serves `wc` in
+   * every wet room, a dwelling `bath` included, so a bathroom holding a urinal and a basin is
+   * not reported as lacking a WC.
+   */
+  serves?: string;
+  /**
+   * The drawn plan symbol is **rotation-symmetric** — it has no distinguishable
+   * back, so which way the piece faces carries no meaning (a shower tray: outline,
+   * both diagonals, a centre drain). Orientation reasoning skips these: they still
+   * need a wall (`requiresWall`) but never trip `W_FIXTURE_BACK_TO_ROOM` and never
+   * get a derived `rotate`. Omitted = the symbol has a back (a WC's cistern, a
+   * basin's tap, a counter's nosing), so its facing is a real architectural fact.
+   */
+  symmetric?: boolean;
+  /**
+   * The drawn symbol has a **back worth turning toward a wall**, even though the piece needs
+   * no services.
+   *
+   * {@link requiresWall} answers "can this work without a wall?" — plumbing, venting, or
+   * hanging off one. This answers a different question: "does the drawing say which way it
+   * faces?" A bed's headboard, a wardrobe's door line and a bookshelf's open front are
+   * unmistakable in plan and belong against something, but none of them needs a pipe. Before
+   * the symbols were drawn the two questions had the same answer for every catalogued
+   * category, so one flag served both; a bed that draws as a labelled rectangle has no back to
+   * find, and deriving a rotation for it would have been an invisible, unverifiable claim.
+   *
+   * Set only where the SYMBOL earns it. A sofa is deliberately absent: seating is arranged
+   * rather than installed, and its back to the room is a legitimate room-divider layout, not a
+   * defect to warn about. So is anything {@link symmetric} — a round stool has no back at any
+   * angle.
+   */
+  directional?: boolean;
+  /**
+   * The piece lies flat on the floor and is **walked on rather than walked round** — a rug, a
+   * carpet. Other furniture stands ON it, which is the whole reason it is there.
+   *
+   * Three consumers read this flag, and every one of them DECLINES an existing check rather
+   * than adding a new one:
+   *
+   *   - `W_FURNITURE_OVERLAP` skips an underlay⇄non-underlay pair. A sofa on a rug is the
+   *     arrangement, not a collision. Two rugs overlapping each other still warn — that pair
+   *     is not the exempt case, and one rug half over another is a drawing mistake.
+   *   - `W_FURN_CLEARANCE` never counts an underlay as the thing blocking a fixture's frontal
+   *     use-space; you can stand on it.
+   *   - Both walkability grids (`analyze/circulation.ts`'s nav grid and
+   *     `analyze/occupancy.ts`'s per-room flood fill) drop it from their obstacle list, so a
+   *     rug across the only route into a room does not seal that room off.
+   *
+   * `W_FURNITURE_WALL_COLLISION` deliberately still applies: a rug drawn through a wall solid
+   * is a drawing error whatever you can walk on. And the glyph draws it with **no fill at
+   * all**, so paint order cannot matter — a rug listed after the sofa that stands on it still
+   * cannot hide it.
+   *
+   * Not the same question as {@link symmetric}, though a rug is both: that one asks whether a
+   * quarter-turn changes the drawing, this one asks whether the piece is an obstacle. A
+   * runner with a border pattern would carry this flag and not that one.
+   */
+  underlay?: boolean;
+  /**
+   * The piece hangs **above the horizontal plane a floor plan is cut at** — a wall cabinet, an
+   * extract hood, a mirror. Its rectangle on the drawing is a PROJECTION of something over the
+   * floor, not a thing standing on it, which is why every one of them is drawn with the
+   * `dashedPattern()` outline the drawing reserves for exactly that meaning.
+   *
+   * ## Exactly ONE consumer, and the other three are refusals stated on purpose
+   *
+   * This flag is deliberately NOT {@link underlay} spelled backwards. An underlay and an
+   * overhead piece are both "not where a body is", but they are not where a body is in
+   * different directions, and the four consumers that read `underlay` split three-to-one on it:
+   *
+   *   - `W_FURNITURE_OVERLAP` **exempts** the pair, exactly as it does for an underlay, and by
+   *     the same pair-shaped test: two things on DIFFERENT sides of the cut plane cannot
+   *     collide, so a hood over a hob and a mirror over a basin are the arrangement rather than
+   *     a defect. Two overhead pieces overlapping EACH OTHER still warn — that pair is not the
+   *     exempt case, and one wall cabinet half through another is a drawing mistake, which is
+   *     the rule two rugs already obey. Read through {@link cutPlaneLayer}, never by testing
+   *     this flag beside `underlay` at the call site.
+   *   - Both walkability grids (`analyze/circulation.ts`'s nav grid and
+   *     `analyze/occupancy.ts`'s per-room flood fill) **keep it as an obstacle**, which is the
+   *     whole difference from an underlay. A rug is walked ON. A wall cabinet is not walked
+   *     UNDER in any sense those grids model: they ask whether a BODY fits, and a body is
+   *     1700 mm tall while a wall unit's underside is at about 1400 mm. So `solidFurniture()`
+   *     — the one predicate both grids share — is untouched by this flag, which is also what
+   *     keeps the furniture-free control in `furnitureSealed` and the body-radius ladder in
+   *     `measureWaysIn` agreeing with the main grid: they call `buildNav` again with different
+   *     parameters, and there is no per-call-site exemption for them to disagree about.
+   *   - `W_FURN_CLEARANCE` needs nothing added. An overhead piece is above a fixture's frontal
+   *     use-space rather than in it, so it should never be the thing blocking one — and today
+   *     it never is, because all three overhead families are also {@link requiresWall} and that
+   *     rule already skips every services fixture as an obstruction. A second, currently
+   *     unreachable arm would be untested code. **Revisit the moment an overhead family is NOT
+   *     wall-requiring** — a ceiling pendant or a projector hangs off the slab, not the fabric,
+   *     and would be the first to need it.
+   *
+   * `W_FURNITURE_WALL_COLLISION` deliberately still applies, on the underlay precedent: a piece
+   * drawn through a wall solid is a drawing error at any height.
+   *
+   * ## Not the same set as "draws dashed"
+   *
+   * Four shipped symbols draw a dashed outline and only three families carry this flag. A bunk
+   * bed's upper deck and a vanity's mirror band are dashed BITS of a piece that stands on the
+   * floor; the piece itself is at the cut plane and collides with everything a bed or a chest
+   * of drawers would. The flag is about the whole fixture, not about a line in its symbol.
+   *
+   * A category is never both this and {@link underlay} — they name opposite sides of the same
+   * plane, and {@link cutPlaneLayer} would have to pick one.
+   */
+  overhead?: boolean;
+  /**
+   * The piece is a **tall unit**: full-height storage or an appliance that stands from the floor
+   * to about a door head (2100 mm, `DOOR_HEAD` in `src/datum.ts`), well above a window's 900 mm
+   * default sill. Read by exactly one rule, `W_FURNITURE_OVER_WINDOW` (plan-soundness PS2.11b): a
+   * tall unit standing against a window's wall across the window's span blocks the glass, which
+   * a low unit under the sill (a worktop, a chest of drawers, a washer) does not.
+   *
+   * The catalogue holds no heights, so the set is stated family by family rather than read off a
+   * number: the fridge (a fridge-freezer stands about 1800–2000 mm), the wardrobe (built to the
+   * door head), the bookcase (`bookshelf`, `bookcase`), the locker (a full-height bank), the
+   * pantry (a larder cupboard, drawn with the tall-unit cross) and the server rack (a 42U cabinet).
+   * Deliberately NOT tall: the bare word `shelf`, though it shares the bookshelf's symbol (low open
+   * shelving under a sill is ordinary, and the word says nothing of height); the dresser and
+   * chest of drawers, the filing cabinet (a two- or four-drawer unit often
+   * stands under a sill), the shoe cabinet, the sideboard, the washer and dryer, the water heater
+   * and boiler (wall-hung or cupboard-housed), and every {@link overhead} piece, which hangs above
+   * the cut plane rather than standing in front of the glass.
+   */
+  tall?: boolean;
+  /**
+   * The family comes in ONE shape: whatever the model, its long side is on the same axis of its
+   * {@link footprint} (a bed is always longer than wide, a bath always longer than deep), and
+   * that footprint is oblong by at least 5:4. Read only by `W_FOOTPRINT_TRANSPOSED`
+   * (`src/lint/rules/footprint.ts`): a piece of such a family whose symbol frame has its long
+   * side on the other axis is drawn turned a quarter, not a different product. A family sold in
+   * both shapes (a wardrobe: a single door is deeper than wide; a filing cabinet: lateral or
+   * vertical; a locker, a shed, a sink) never carries it, so a standard product never warns.
+   * Each entry that sets it says why on the line above.
+   */
+  fixedAspect?: boolean;
+  /**
+   * The piece is **mounted on a wall by its back**: its back mounts on a wall whenever it touches
+   * one, though it needs no services there (so it is not {@link requiresWall}, and
+   * `W_FIXTURE_FLOATING` leaves it alone when it stands free). Read only by
+   * `W_FIXTURE_BACK_TO_ROOM` (plan-soundness PS2.50), which declines a piece standing side-on or
+   * end-on to a wall, a layout for a bed or a wardrobe, but not for one of these: a radiator, a
+   * fireplace, a TV, an EV charger, a towel rail or a whiteboard touching a wall with its end is the
+   * wrong way round. Set on exactly those six families.
+   */
+  wallMounted?: boolean;
+}
+
+/** A room zone a fixture can satisfy (see {@link FixtureSpec.zones}). */
+export type FixtureZone = "wet" | "kitchen";
+
+/** Catalog entries, keyed by category (and its aliases). */
+const CATALOG: Readonly<Record<string, FixtureSpec>> = Object.freeze({
+  // Wet-room plumbing fixtures — need a wall behind them.
+  // fixedAspect: a pan projects from its cistern: always deeper than wide, whatever the model.
+  wc: {
+    requiresWall: true,
+    fixedAspect: true,
+    clearanceMm: 450,
+    footprint: { along: 400, depth: 700 },
+    zones: ["wet"],
+  },
+  toilet: {
+    requiresWall: true,
+    fixedAspect: true,
+    clearanceMm: 450,
+    footprint: { along: 400, depth: 700 },
+    zones: ["wet"],
+  },
+  basin: { requiresWall: true, clearanceMm: 450, footprint: { along: 600, depth: 450 }, zones: ["wet"] },
+  // No zone: lint's wet-fixture set never included `lavatory` (see FixtureSpec.zones).
+  lavatory: { requiresWall: true, clearanceMm: 450, footprint: { along: 600, depth: 450 } },
+  // fixedAspect: a tub lies along its wall, always longer than deep (a deep soaking tub is still oblong).
+  bathtub: {
+    requiresWall: true,
+    fixedAspect: true,
+    clearanceMm: 550,
+    footprint: { along: 1700, depth: 700 },
+    zones: ["wet"],
+  },
+  tub: {
+    requiresWall: true,
+    fixedAspect: true,
+    clearanceMm: 550,
+    footprint: { along: 1700, depth: 700 },
+    zones: ["wet"],
+  },
+  bath: {
+    requiresWall: true,
+    fixedAspect: true,
+    clearanceMm: 550,
+    footprint: { along: 1700, depth: 700 },
+    zones: ["wet"],
+  },
+  // The tray symbol is drawn symmetrically (outline + both diagonals + a centre
+  // drain), so it has no back to face at a wall — see FixtureSpec.symmetric.
+  shower: { requiresWall: true, footprint: { along: 900, depth: 900 }, zones: ["wet"], symmetric: true },
+  // Kitchen run — counters/appliances line a wall; leave standing/working room.
+  kitchen_sink: { requiresWall: true, clearanceMm: 550, footprint: { along: 800, depth: 600 }, zones: ["kitchen"] },
+  // A bare `sink` satisfies either room kind (a bathroom basin or the kitchen sink).
+  sink: {
+    requiresWall: true,
+    clearanceMm: 550,
+    footprint: { along: 800, depth: 600 },
+    zones: ["wet", "kitchen"],
+    serves: "basin",
+  },
+  counter: { requiresWall: true, clearanceMm: 550, footprint: { along: 600, depth: 600 }, zones: ["kitchen"] },
+  worktop: { requiresWall: true, clearanceMm: 550, footprint: { along: 600, depth: 600 }, zones: ["kitchen"] },
+  stove: { requiresWall: true, clearanceMm: 550, footprint: { along: 600, depth: 600 }, zones: ["kitchen"] },
+  hob: { requiresWall: true, clearanceMm: 550, footprint: { along: 600, depth: 600 }, zones: ["kitchen"] },
+  cooktop: { requiresWall: true, clearanceMm: 550, footprint: { along: 600, depth: 600 }, zones: ["kitchen"] },
+  fridge: {
+    requiresWall: true,
+    clearanceMm: 550,
+    footprint: { along: 600, depth: 650 },
+    zones: ["kitchen"],
+    tall: true,
+  },
+  refrigerator: {
+    requiresWall: true,
+    clearanceMm: 550,
+    footprint: { along: 600, depth: 650 },
+    zones: ["kitchen"],
+    tall: true,
+  },
+  // Zone-only entry: counts as a kitchen fixture but is free-standing (no wall,
+  // clearance or footprint semantics — identical to having no catalog entry for
+  // the other rules).
+  oven: { requiresWall: false, zones: ["kitchen"] },
+
+  // -------------------------------------------------------------------------
+  // The room-furniture vocabulary. Everything below is a word plans in this repo (and
+  // models writing for it) already use — `bed`, `wardrobe`, `sofa`, `desk`, `washer` — and
+  // that until now fell through to "unknown category": no footprint, no wall requirement,
+  // no orientation. Catalogued, each one gains the semantics its name implies, which for
+  // most of them means exactly one thing: a `footprint`, so `against wall` can omit `size`.
+  //
+  // ## `requiresWall` means SERVICES, and this vocabulary is where that starts to matter
+  //
+  // Every category that carried this flag before was a plumbing or kitchen fixture, so the
+  // flag's two jobs never had to be told apart: it drives `W_FIXTURE_FLOATING` ("this needs
+  // a wall behind it") AND, through `orientationMatters`, the derived quarter-turn and
+  // `W_FIXTURE_BACK_TO_ROOM`. Room furniture separates them, and the separation is not a
+  // judgement call — it is measurable. Flagging `bed`, `bookshelf` and `wardrobe` as
+  // wall-requiring raised 23 new warnings across nine shipped plans, and the largest group
+  // was `examples/library.arch`: **twelve** floating-stack warnings on a library whose
+  // stacks are free-standing runs in the middle of the floor, which is what stacks ARE.
+  // `W_FIXTURE_FLOATING`'s own remedy line reads "supply/waste/venting runs in the wall" — a
+  // sentence that is simply false about a bookcase. So a piece of furniture that merely
+  // *tends* to stand against a wall is NOT `requiresWall`; only a piece that cannot work
+  // without one is (the plumbed and vented white goods below, and the wall cabinet, which
+  // hangs off the wall by definition).
+  //
+  // That separation left one thing unfinished, and this is the phase that finishes it. While
+  // room furniture drew as a plain labelled rectangle, an anchored bed got no derived
+  // quarter-turn — correctly, because a rectangle has no back to face, so a derived rotation
+  // would have been invisible and `W_FIXTURE_BACK_TO_ROOM`'s advice unverifiable from the
+  // drawing. The symbols are drawn now: a bed has a headboard, a wardrobe a door line, a
+  // bookshelf an open front. So `directional` carries the "this symbol has a back" fact the
+  // comment above promised, and `orientationMatters` reads `(requiresWall || directional)`.
+  // `requiresWall` keeps its single meaning — services — and `W_FIXTURE_FLOATING`, whose
+  // remedy line is about supply and waste runs, stays keyed on it alone.
+  //
+  // `against wall` was never affected either way: `placeAgainst` derives its rotation from the
+  // wall directly, for every category.
+  //
+  // `symmetric` still wins over both flags — a round stool and a square coffee table have no
+  // back to find at any angle.
+
+  // Bedroom. Footprints are the conventional single/double mattress, laid head-to-wall:
+  // `along` runs with the wall (the bed's width), `depth` into the room (its length).
+  // fixedAspect: a single bed is always longer than wide; the headboard is on a short side.
+  bed: { requiresWall: false, fixedAspect: true, directional: true, footprint: { along: 1500, depth: 2000 } },
+  double_bed: { requiresWall: false, directional: true, footprint: { along: 1800, depth: 2000 }, serves: "bed" },
+  nightstand: { requiresWall: false, directional: true, footprint: { along: 450, depth: 400 } },
+  bedside_table: { requiresWall: false, directional: true, footprint: { along: 450, depth: 400 } },
+  // NO `clearanceMm`, deliberately, and it was measured rather than assumed. A 550 mm
+  // frontal clearance here warned on `examples/garden-loft.arch`, whose 3200 mm bedroom
+  // puts a 600 mm robe on one wall and a 2000 mm bed on the other — and that plan cannot be
+  // fixed, because 600 + 550 + 2000 exceeds the 3100 mm of clear depth the room has. This
+  // field's own calibration rule is "tight enough that a normal layout never trips it"; a
+  // small bedroom IS the normal layout, and a wardrobe is commonly approached from the side
+  // or hung with sliding doors. The plumbed white goods below keep their 550, which no
+  // shipped plan trips.
+  wardrobe: { requiresWall: false, directional: true, tall: true, footprint: { along: 1800, depth: 600 } },
+  robe: { requiresWall: false, directional: true, tall: true, footprint: { along: 1800, depth: 600 } },
+  closet: { requiresWall: false, directional: true, tall: true, footprint: { along: 1800, depth: 600 } },
+
+  // Living. Free-standing: seating is arranged, not installed.
+  sofa: { requiresWall: false },
+  couch: { requiresWall: false },
+  armchair: { requiresWall: false },
+  coffee_table: { requiresWall: false, symmetric: true },
+  // Installed against a wall in practice, but it carries no services — so it is furniture
+  // by the rule above, and a media wall floated as a room divider raises nothing. No
+  // frontal clearance either: nobody stands in front of a TV unit to use it, and a coffee
+  // table half a metre away is the arrangement, not a defect.
+  tv_unit: { requiresWall: false, directional: true, footprint: { along: 1500, depth: 450 } },
+
+  // Dining & seating.
+  table: { requiresWall: false, symmetric: true, serves: "dining_table" },
+  dining_table: { requiresWall: false, symmetric: true },
+  chair: { requiresWall: false },
+  stool: { requiresWall: false, symmetric: true },
+  barstool: { requiresWall: false, symmetric: true },
+  bench: { requiresWall: false },
+
+  // Office.
+  desk: { requiresWall: false },
+  office_chair: { requiresWall: false },
+  // NOT wall-requiring: a library's stacks are free-standing runs mid-floor
+  // (`examples/library.arch` has twelve of them), which is what stacks are.
+  bookshelf: { requiresWall: false, directional: true, tall: true, footprint: { along: 900, depth: 300 } },
+  bookcase: { requiresWall: false, directional: true, tall: true, footprint: { along: 900, depth: 300 } },
+  shelf: { requiresWall: false, directional: true, footprint: { along: 900, depth: 300 } },
+
+  // Kitchen appliances & utility — the plumbed and vented pieces, and the only ones in this
+  // block that are `requiresWall`. They share the 600 mm module the counter run above
+  // already uses, and the same 550 mm standing room in front.
+  dishwasher: { requiresWall: true, clearanceMm: 550, footprint: { along: 600, depth: 600 }, zones: ["kitchen"] },
+  // An island is free-standing BY DEFINITION — that is what makes it an island — so it needs
+  // no wall and carries no single frontal clearance.
+  //
+  // It is NOT `symmetric`: the flag says the DRAWN SYMBOL is rotation-symmetric, and the
+  // island symbol has a seating overhang along one side, cabinet ticks under that side, and
+  // a hob or a bowl at one end (`glyphs-kitchen.ts` `drawIsland`). None of that maps onto
+  // itself under a quarter-turn. Nothing observable depends on it: `orientationMatters` is
+  // `(requiresWall || directional) && !symmetric`, and an island is neither — so it still
+  // derives no rotation and still never trips `W_FIXTURE_BACK_TO_ROOM`, which
+  // `test/fixture-orientation.test.ts` pins directly.
+  island: { requiresWall: false, zones: ["kitchen"] },
+  // Hangs OFF the wall, so it is the one non-plumbed piece here that genuinely cannot exist
+  // without one. Above the cut plane — which is now a FLAG rather than a remark in this
+  // comment ({@link FixtureSpec.overhead}), so a base unit drawn under it is no longer a
+  // collision — hence shallower than a base unit, and needing no floor clearance.
+  upper_cabinet: { requiresWall: true, overhead: true, footprint: { along: 600, depth: 350 } },
+  wall_cabinet: { requiresWall: true, overhead: true, footprint: { along: 600, depth: 350 } },
+  washer: { requiresWall: true, clearanceMm: 550, footprint: { along: 600, depth: 600 } },
+  washing_machine: { requiresWall: true, clearanceMm: 550, footprint: { along: 600, depth: 600 } },
+  dryer: { requiresWall: true, clearanceMm: 550, footprint: { along: 600, depth: 600 } },
+
+  // Misc.
+  plant: { requiresWall: false, symmetric: true },
+  planter: { requiresWall: false, symmetric: true },
+  car: { requiresWall: false },
+
+  // -------------------------------------------------------------------------
+  // The second furniture tranche. Four kinds a furnished plan reaches for that the first
+  // one had no word for, and one new piece of catalog semantics — {@link
+  // FixtureSpec.underlay} — that the rug is the whole reason for.
+  //
+  // Three of the four deliberately carry NO footprint, and each refusal is its own
+  // argument rather than an oversight:
+  //
+  //   - `rug` has no conventional size at all. Rugs are sold from 600 x 900 runners to
+  //     4 x 3 m room-size, chosen against the furniture group they sit under, so any
+  //     number here would be invented. It is also the one kind you would never write
+  //     `against wall` about.
+  //   - `piano` is the interesting one: a grand piano DOES have conventional sizes (a
+  //     baby grand is about 1500 x 1500), and giving it a footprint would make
+  //     `furniture piano against wall <id>` legal. That form derives the rotation from
+  //     the wall under the back-on-top convention, which would face the KEYBOARD into
+  //     the wall — the one orientation a piano is never in. So the footprint is withheld
+  //     to keep the form unreachable, and a piano is placed with `at (x,y)` + `rotate`,
+  //     which is how it is placed on a real drawing too.
+  //   - `sun_lounger` is placed by where the sun is, not by a wall; its length varies
+  //     with the model and it is as often at an angle as square to anything.
+  //
+  // `sofa_l` DOES carry one, at the common three-seat-plus-chaise size, and it is
+  // measured as the whole L's bounding rectangle — see `glyphs-living.ts`'s
+  // `drawSofaL` for why the empty quadrant is still inside the footprint every lint
+  // rule measures.
+  rug: { requiresWall: false, symmetric: true, underlay: true },
+  carpet: { requiresWall: false, symmetric: true, underlay: true },
+  // NOT `directional`, for the same reason `sofa` is not: seating is arranged rather than
+  // installed, and an L-sofa floated as a room divider is a normal plan. Its footprint is
+  // the bounding rectangle of the L, chairs-included in the same spirit as `dining_table`.
+  // fixedAspect: an L is a run with a chaise return, always wider than deep (a square corner sofa is under 5:4).
+  sofa_l: { requiresWall: false, fixedAspect: true, footprint: { along: 2600, depth: 1600 }, serves: "sofa" },
+  corner_sofa: { requiresWall: false, fixedAspect: true, footprint: { along: 2600, depth: 1600 }, serves: "sofa" },
+  piano: { requiresWall: false },
+  grand_piano: { requiresWall: false },
+  sun_lounger: { requiresWall: false },
+  lounger: { requiresWall: false },
+
+  // -------------------------------------------------------------------------
+  // The OUTDOOR tranche. Twenty-one families for what a site plan draws once the drawing
+  // leaves the building: planting, garden furniture, the things parked on a driveway, and
+  // the small standing objects a survey records.
+  //
+  // ## Not one of them is `requiresWall`, and that is a decision, not an omission
+  //
+  // The flag means SERVICES — supply, waste, venting, or hanging off a wall by definition —
+  // and `W_FIXTURE_FLOATING`'s own remedy line says so in as many words: "supply/waste/
+  // venting runs in the wall". Two categories here would tempt a reader to set it and both
+  // are wrong. A `hot_tub` is genuinely plumbed, and is still set DOWN on a deck and fed
+  // from below, so a tub in the middle of a terrace is the normal arrangement and flagging
+  // it would be a false positive on every garden that has one. An `ev_charger` is genuinely
+  // wired, and is as often on a free-standing bollard as on a wall. Outdoors the wall is
+  // the exception; the rule that assumes one does not belong out here.
+  //
+  // ## What each flag is doing instead
+  //
+  // `directional` is set for the five whose SYMBOL has a back worth turning to something —
+  // a shed's door and dashed ridge, a barbecue's shelf, a bin's lid and wheels, a mailbox's
+  // flap, a charger's pedestal. `outdoor_chair` deliberately does NOT carry it, for the same
+  // reason `sofa` and `chair` do not: seating is arranged, not installed.
+  //
+  // `symmetric` is set for the ten whose drawing genuinely maps onto itself under a
+  // quarter-turn, and each of those is proved by construction rather than asserted — the
+  // planting stars have a multiple of four lobes, the trampoline twelve springs, the sandpit
+  // a fixed quincunx (see `elements/glyphs-outdoor.ts`).
+  //
+  // A `footprint` is given only where `furniture <kind> against wall <id>` is a form someone
+  // would actually write: the six pieces that stand against a house wall or a fence. A tree
+  // has no conventional canopy size, a trampoline comes in four, and inventing either would
+  // put a number in the language that nothing measured.
+  //
+  // `clearanceMm` is set for the barbecue ALONE, at 900 mm — the standing room a cook needs
+  // in front of an open grill, and the one frontal use-space out here that a plan can be
+  // wrong about. It is deliberately NOT given to the hot tub, which is `symmetric`: a
+  // symmetric piece has no front, so a "frontal clearance" for it would be measured off an
+  // arbitrary edge and would be a number the drawing cannot justify.
+  //
+  // None is `underlay`: a rug is walked ON, and none of these is.
+
+  // Planting — each canopy is one closed outline filled with the lawn tint, so the ground hatch
+  // under it is painted out and the crown reads as one mass.
+  tree: { requiresWall: false, symmetric: true },
+  deciduous_tree: { requiresWall: false, symmetric: true },
+  conifer: { requiresWall: false, symmetric: true },
+  pine: { requiresWall: false, symmetric: true },
+  shrub: { requiresWall: false, symmetric: true },
+  bush: { requiresWall: false, symmetric: true },
+  // A run rather than a specimen, so it is the one plant with a footprint: 2 m of hedge
+  // 600 mm deep is the length a `for` loop or an `against wall` clause repeats.
+  hedge: { requiresWall: false, footprint: { along: 2000, depth: 600 } },
+
+  // Garden furniture.
+  bbq: { requiresWall: false, directional: true, clearanceMm: 900, footprint: { along: 1200, depth: 600 } },
+  grill: { requiresWall: false, directional: true, clearanceMm: 900, footprint: { along: 1200, depth: 600 } },
+  barbecue: { requiresWall: false, directional: true, clearanceMm: 900, footprint: { along: 1200, depth: 600 } },
+  // Approached from every side, like the `island` and the `dining_table` it is the outdoor
+  // cousin of — so no back, no frontal clearance, and the chairs are drawn inside its own
+  // footprint rather than being four more pieces to place.
+  outdoor_table: { requiresWall: false, symmetric: true },
+  patio_table: { requiresWall: false, symmetric: true },
+  outdoor_chair: { requiresWall: false },
+  patio_chair: { requiresWall: false },
+  umbrella: { requiresWall: false, symmetric: true },
+  parasol: { requiresWall: false, symmetric: true },
+
+  // Parked things. No footprint: a bicycle's is the rack it is in, a motorcycle's varies by
+  // a factor of two, and neither is ever written `against wall`.
+  bicycle: { requiresWall: false },
+  bike: { requiresWall: false },
+  motorcycle: { requiresWall: false },
+
+  // Terrace & lawn.
+  hot_tub: { requiresWall: false, symmetric: true },
+  spa: { requiresWall: false, symmetric: true },
+  swing: { requiresWall: false },
+  swing_set: { requiresWall: false },
+  trampoline: { requiresWall: false, symmetric: true },
+
+  // The small standing objects. The five that go against a house wall or a fence carry
+  // both `directional` and a footprint; the three that stand in the open carry neither.
+  // (Order follows `FIXTURE_FAMILIES` in `elements/fixtures-glyphs.ts`, which is the
+  // legend's order — keeping the two lists in step is a courtesy to whoever reads both.)
+  bin: { requiresWall: false, directional: true, footprint: { along: 600, depth: 700 } },
+  wheelie_bin: { requiresWall: false, directional: true, footprint: { along: 600, depth: 700 } },
+  mailbox: { requiresWall: false, directional: true, footprint: { along: 400, depth: 300 } },
+  letterbox: { requiresWall: false, directional: true, footprint: { along: 400, depth: 300 } },
+  ev_charger: { requiresWall: false, directional: true, wallMounted: true, footprint: { along: 400, depth: 300 } },
+  pergola: { requiresWall: false, symmetric: true },
+  sandpit: { requiresWall: false, symmetric: true },
+  sandbox: { requiresWall: false, symmetric: true },
+  fire_pit: { requiresWall: false, symmetric: true },
+  shed: { requiresWall: false, directional: true, footprint: { along: 2400, depth: 1800 } },
+  garden_shed: { requiresWall: false, directional: true, footprint: { along: 2400, depth: 1800 } },
+  clothesline: { requiresWall: false },
+  washing_line: { requiresWall: false },
+
+  // -------------------------------------------------------------------------
+  // ── kitchen & bath ──
+  //
+  // Eight families that finish the two WET domains. Where the outdoor tranche above had to
+  // argue its way OUT of `requiresWall` — outdoors the wall is the exception — this one is
+  // the flag's home ground, and six of the eight carry it. Each for the reason the flag
+  // actually means, which is "cannot work without a wall", not "usually stands near one":
+  //
+  //   - `bidet`, `urinal` and `laundry_sink` are plumbed. Supply in, waste out, both in the
+  //     wall behind them; `W_FIXTURE_FLOATING`'s remedy line ("supply/waste/venting runs in
+  //     the wall") is literally true of all three.
+  //   - `water_heater` is the service the other three are fed from. It is the one piece here
+  //     whose OUTLINE would map onto itself under a quarter-turn — it is a cylinder — and it
+  //     is deliberately not `symmetric`, because its two pipe ticks run to the back edge and
+  //     a turned vessel would put them into the room. The drawing has a back even though the
+  //     vessel does not.
+  //   - `mirror` and `range_hood` are the `upper_cabinet` case, not the plumbing one: they
+  //     hang off the fabric by definition. A mirror standing free in a room is a
+  //     `wardrobe`-shaped object, and an extract hood that is not over a hob venting through
+  //     something is not an extract hood.
+  //
+  // The two that are NOT wall-requiring are `directional` instead, which is the distinction
+  // the room-furniture tranche above drew and this one keeps: a microwave and a bar counter
+  // both have an unmistakable front, and neither needs a pipe. A `bar_counter` floated in the
+  // middle of an open-plan room is the normal arrangement, which is exactly why flagging it
+  // would be a false positive.
+  //
+  // `clearanceMm` goes to the three fixtures a person STANDS AT to use — 450 for the two
+  // sanitary pieces (matching `wc` and `basin`, which they sit beside), 600 for the laundry
+  // sink, which is deeper than a basin and is worked at with both hands and a basket. The
+  // wall-hung pair get none: nobody is blocked from using a mirror by a chair, and a hood is
+  // used from under it. `microwave` and `bar_counter` get none either, for the reason
+  // `tv_unit` gets none — the piece in front of a bar is a stool, and that is the layout.
+  //
+  // Zones follow what a room NEEDS to be that room: the three sanitary/laundry pieces are
+  // `wet`, the three kitchen pieces are `kitchen`. `water_heater` and `mirror` carry no zone
+  // on purpose — a cupboard with a boiler in it is not a bathroom, and a mirror over a
+  // console table is not one either. Adding either would silently green a
+  // `W_ROOM_NO_FIXTURE` a plan deserves.
+  // fixedAspect: the same pan as a WC: always deeper than wide.
+  bidet: {
+    requiresWall: true,
+    fixedAspect: true,
+    clearanceMm: 450,
+    footprint: { along: 400, depth: 700 },
+    zones: ["wet"],
+  },
+  // `serves: "wc"` in every wet room, a dwelling bath included — a judgement call (see `serves`).
+  urinal: { requiresWall: true, clearanceMm: 450, footprint: { along: 400, depth: 350 }, zones: ["wet"], serves: "wc" },
+  laundry_sink: { requiresWall: true, clearanceMm: 600, footprint: { along: 600, depth: 500 }, zones: ["wet"] },
+  laundry_tub: { requiresWall: true, clearanceMm: 600, footprint: { along: 600, depth: 500 }, zones: ["wet"] },
+  water_heater: { requiresWall: true, footprint: { along: 600, depth: 600 } },
+  boiler: { requiresWall: true, footprint: { along: 600, depth: 600 } },
+  // The two OVERHEAD pieces of this tranche, and the reason the flag exists: both are drawn
+  // over the fixture they serve — a hood over the hob, a mirror over the basin — so both used
+  // to raise `W_FURNITURE_OVERLAP` on a correct drawing, and both were left OUT of
+  // `examples/furnished-flat.arch` rather than nudged somewhere false. See
+  // {@link FixtureSpec.overhead} for why that is the only rule they change.
+  // fixedAspect: a wall mirror is a thin band along its wall, always far wider than deep.
+  mirror: { requiresWall: true, fixedAspect: true, overhead: true, footprint: { along: 900, depth: 50 } },
+  range_hood: { requiresWall: true, overhead: true, footprint: { along: 900, depth: 500 }, zones: ["kitchen"] },
+  microwave: { requiresWall: false, directional: true, footprint: { along: 500, depth: 400 }, zones: ["kitchen"] },
+  // fixedAspect: a counter with stools along its front: the stools need length, so always wider than deep.
+  bar_counter: {
+    requiresWall: false,
+    fixedAspect: true,
+    directional: true,
+    footprint: { along: 1800, depth: 600 },
+    zones: ["kitchen"],
+  },
+  // -------------------------------------------------------------------------
+  // ── living, bedroom, office ──
+  //
+  // Eighteen families that close the gap between "a plan can name a room" and "a plan can show
+  // what is in it". Three things are decided here rather than left to read off the rows.
+  //
+  // ## Not one of them is `requiresWall`
+  //
+  // The flag means SERVICES — supply, waste, venting, or hanging off a wall by definition — and
+  // `W_FIXTURE_FLOATING`'s remedy line says so in as many words. Two rows below would tempt a
+  // reader to set it and both are wrong. A `radiator` is genuinely plumbed, and is fed from the
+  // floor as often as from the wall; more to the point, flagging it would raise a warning on
+  // every plan that puts one under a window, which is where they go. A `fireplace` is genuinely
+  // built into a chimney, and a free-standing stove in the middle of a room is a normal drawing.
+  // Both are `directional` instead, which is the honest claim: their symbols have a front.
+  //
+  // ## `directional` is set where the SYMBOL earns it, and refused where seating is involved
+  //
+  // Twelve of the eighteen carry it, and in every case a reader can point at the linework that
+  // says which way the piece faces: a fireplace's opening, a radiator's fins against its back
+  // face, a sideboard's and a locker's handles, a dresser's drawer band, a vanity's mirror, a
+  // shoe cabinet's tilt lines, a crib's head end, a bunk's ladder, a filing cabinet's pull, a
+  // reception desk's chair inside the L, a treadmill's console, a `tv`'s bracket. `loveseat` and
+  // `chaise` deliberately do NOT carry it, for the reason `sofa`, `chair`, `bench` and
+  // `outdoor_chair` do not: seating is arranged rather than installed, and a two-seater floated
+  // with its back to the room is a room divider, not a defect. `crib` follows the `bed`
+  // precedent, and `bunk_bed` follows `crib`.
+  //
+  // ## `clearanceMm` is set for exactly four, and each one is a use-space a plan can be wrong
+  // about
+  //
+  // A dresser and a vanity need a drawer's or a chair's depth in front of them (600 mm), a
+  // filing cabinet needs a drawer pulled out (600 mm), and a treadmill needs run-off behind the
+  // user (900 mm — the largest figure in the catalog, and the only one here above the plumbed
+  // goods' 550). Nothing else gets one: a fireplace's hearth is not a use-space a lint rule can
+  // measure, and a `symmetric` piece has no front to measure one from at all, which is why
+  // `coat_rack` and `pool_table` have none.
+  //
+  // Every one carries a footprint, because every one is a piece someone would write
+  // `against wall` or `anchor` about — including the two symmetric ones, whose footprint is used
+  // for the size and not for a rotation.
+
+  // Bedroom.
+  // fixedAspect: a bunk is a single bed stacked: always longer than wide.
+  bunk_bed: {
+    requiresWall: false,
+    fixedAspect: true,
+    directional: true,
+    footprint: { along: 1000, depth: 2000 },
+    serves: "bed",
+  },
+  // fixedAspect: a cot is always longer than wide, like the bed it is.
+  crib: {
+    requiresWall: false,
+    fixedAspect: true,
+    directional: true,
+    footprint: { along: 700, depth: 1300 },
+    serves: "bed",
+  },
+  cot: {
+    requiresWall: false,
+    fixedAspect: true,
+    directional: true,
+    footprint: { along: 700, depth: 1300 },
+    serves: "bed",
+  },
+  dresser: { requiresWall: false, directional: true, clearanceMm: 600, footprint: { along: 1200, depth: 500 } },
+  chest_of_drawers: {
+    requiresWall: false,
+    directional: true,
+    clearanceMm: 600,
+    footprint: { along: 1200, depth: 500 },
+  },
+  vanity: { requiresWall: false, directional: true, clearanceMm: 600, footprint: { along: 1200, depth: 500 } },
+  dressing_table: {
+    requiresWall: false,
+    directional: true,
+    clearanceMm: 600,
+    footprint: { along: 1200, depth: 500 },
+  },
+
+  // Living.
+  fireplace: { requiresWall: false, directional: true, wallMounted: true, footprint: { along: 1200, depth: 400 } },
+  radiator: { requiresWall: false, directional: true, wallMounted: true, footprint: { along: 1000, depth: 100 } },
+  sideboard: { requiresWall: false, directional: true, footprint: { along: 1600, depth: 450 } },
+  buffet: { requiresWall: false, directional: true, footprint: { along: 1600, depth: 450 } },
+  // fixedAspect: a two-seat sofa: seats along its back, always wider than deep.
+  loveseat: { requiresWall: false, fixedAspect: true, footprint: { along: 1500, depth: 850 }, serves: "sofa" },
+  sofa_2: { requiresWall: false, fixedAspect: true, footprint: { along: 1500, depth: 850 }, serves: "sofa" },
+  chaise: { requiresWall: false, footprint: { along: 1600, depth: 800 } },
+  // fixedAspect: a screen is a thin band, always far wider than deep.
+  tv: {
+    requiresWall: false,
+    fixedAspect: true,
+    directional: true,
+    wallMounted: true,
+    footprint: { along: 1200, depth: 80 },
+  },
+  coat_rack: { requiresWall: false, symmetric: true, footprint: { along: 400, depth: 400 } },
+  shoe_cabinet: { requiresWall: false, directional: true, footprint: { along: 800, depth: 300 } },
+
+  // Office & commercial.
+  // Symmetric for the reason `dining_table`, `island` and `outdoor_table` are: it is approached
+  // and sat at from every side, so it has no back to find and no single frontal clearance.
+  meeting_table: { requiresWall: false, symmetric: true, footprint: { along: 2400, depth: 1200 } },
+  reception_desk: { requiresWall: false, directional: true, footprint: { along: 2400, depth: 900 }, serves: "desk" },
+  filing_cabinet: { requiresWall: false, directional: true, clearanceMm: 600, footprint: { along: 450, depth: 600 } },
+  locker: { requiresWall: false, directional: true, tall: true, footprint: { along: 1200, depth: 450 } },
+  pool_table: { requiresWall: false, symmetric: true, footprint: { along: 2500, depth: 1400 } },
+  // fixedAspect: a belt you walk along: always longer than wide.
+  treadmill: {
+    requiresWall: false,
+    fixedAspect: true,
+    directional: true,
+    clearanceMm: 900,
+    footprint: { along: 800, depth: 1800 },
+  },
+
+  // -------------------------------------------------------------------------
+  // ── the visual-assets tranche (V8) ──
+  //
+  // Twenty families for the everyday objects a plan had no word for. The rules the tranches above
+  // settled are kept, and three choices are worth naming.
+  //
+  // ## Not one of them is `requiresWall`, and none carries a `clearanceMm`
+  //
+  // The flag means services, and none of these needs a pipe or hangs off the fabric by
+  // definition: a whiteboard can stand on a mobile frame and a towel rail be fed from the floor,
+  // as a radiator is. Both are `wallMounted` instead, joining the radiator, the fireplace, the TV
+  // and the EV charger: their backs mount on a wall whenever they touch one, so side-on to a wall
+  // is the wrong way round. No frontal clearance is claimed for any of the twenty: a printer, a
+  // slide's run-out and a rack's cold aisle each have a real use-space, but none has a figure this
+  // catalogue can defend without a standard behind it, and a guessed number would warn on plans
+  // that are fine.
+  //
+  // ## `directional` where the symbol earns it; `symmetric` where it is drawn D4-invariant
+  //
+  // The console table's back rail, the pantry's doors, the towel rail's and the whiteboard's
+  // brackets, the slide's ladder, the printer's panel, the rack's front door and the hospital
+  // bed's head panel each say which way the piece faces. The floor lamp, the side table, the
+  // ottoman, the palm and the bollard are drawn to map onto themselves under every quarter-turn
+  // and mirror (on a square for the two built from rectangles), so they are `symmetric`. The
+  // runs — a flower bed, a raised bed, a bike rack — and the pieces approached from two sides
+  // (a picnic table, a desk pod) are neither, as the hedge and the outdoor table are; the bean
+  // bag is seating, arranged rather than installed, as the sofa is.
+  //
+  // ## The pantry is `tall`; the server rack is not `fixedAspect`
+  //
+  // A larder cupboard and a rack stand to about a door head, so both block a window's glass
+  // (`W_FURNITURE_OVER_WINDOW`). A rack ROW is written as one wide piece (two cabinets are
+  // 1200 x 1000), so a rack is sold in both shapes and never `fixedAspect`.
+
+  // Living.
+  floor_lamp: { requiresWall: false, symmetric: true, footprint: { along: 450, depth: 450 } },
+  side_table: { requiresWall: false, symmetric: true, footprint: { along: 500, depth: 500 } },
+  end_table: { requiresWall: false, symmetric: true, footprint: { along: 500, depth: 500 } },
+  // fixedAspect: a console is a long, shallow table against a wall, always far wider than deep.
+  console_table: { requiresWall: false, fixedAspect: true, directional: true, footprint: { along: 1200, depth: 350 } },
+  ottoman: { requiresWall: false, symmetric: true, footprint: { along: 600, depth: 600 } },
+  pouf: { requiresWall: false, symmetric: true, footprint: { along: 600, depth: 600 } },
+  footstool: { requiresWall: false, symmetric: true, footprint: { along: 600, depth: 600 } },
+  bean_bag: { requiresWall: false },
+
+  // Kitchen & bath.
+  pantry: { requiresWall: false, directional: true, tall: true, footprint: { along: 600, depth: 600 } },
+  tall_cabinet: { requiresWall: false, directional: true, tall: true, footprint: { along: 600, depth: 600 } },
+  larder: { requiresWall: false, directional: true, tall: true, footprint: { along: 600, depth: 600 } },
+  // fixedAspect: a ladder rail is one plane of bars along its wall, always far wider than deep.
+  towel_rail: {
+    requiresWall: false,
+    fixedAspect: true,
+    directional: true,
+    wallMounted: true,
+    footprint: { along: 500, depth: 120 },
+  },
+  towel_radiator: {
+    requiresWall: false,
+    fixedAspect: true,
+    directional: true,
+    wallMounted: true,
+    footprint: { along: 500, depth: 120 },
+  },
+
+  // Outdoor: planting, then the play and street furniture.
+  palm: { requiresWall: false, symmetric: true },
+  palm_tree: { requiresWall: false, symmetric: true },
+  flower_bed: { requiresWall: false, footprint: { along: 2000, depth: 800 } },
+  planting_bed: { requiresWall: false, footprint: { along: 2000, depth: 800 } },
+  boulder: { requiresWall: false },
+  rock: { requiresWall: false },
+  picnic_table: { requiresWall: false, footprint: { along: 1800, depth: 1500 } },
+  // fixedAspect: a chute you slide down: always longer than wide.
+  slide: { requiresWall: false, fixedAspect: true, directional: true, footprint: { along: 800, depth: 3000 } },
+  playground_slide: {
+    requiresWall: false,
+    fixedAspect: true,
+    directional: true,
+    footprint: { along: 800, depth: 3000 },
+  },
+  bollard: { requiresWall: false, symmetric: true, footprint: { along: 200, depth: 200 } },
+  bike_rack: { requiresWall: false, footprint: { along: 2000, depth: 800 } },
+  cycle_stand: { requiresWall: false, footprint: { along: 2000, depth: 800 } },
+  raised_bed: { requiresWall: false, footprint: { along: 2400, depth: 1200 } },
+  vegetable_bed: { requiresWall: false, footprint: { along: 2400, depth: 1200 } },
+
+  // Office & care.
+  // fixedAspect: a board is a thin band along its wall, always far wider than deep.
+  whiteboard: {
+    requiresWall: false,
+    fixedAspect: true,
+    directional: true,
+    wallMounted: true,
+    footprint: { along: 1800, depth: 100 },
+  },
+  printer: { requiresWall: false, directional: true, footprint: { along: 600, depth: 650 } },
+  copier: { requiresWall: false, directional: true, footprint: { along: 600, depth: 650 } },
+  server_rack: { requiresWall: false, directional: true, tall: true, footprint: { along: 600, depth: 1000 } },
+  // fixedAspect: a bed, longer than wide; `serves: "bed"`, as a double bed does.
+  hospital_bed: {
+    requiresWall: false,
+    fixedAspect: true,
+    directional: true,
+    footprint: { along: 1000, depth: 2200 },
+    serves: "bed",
+  },
+  // `serves: "desk"`, as the reception desk does: an office furnished with a pod has its desks.
+  workstation: { requiresWall: false, serves: "desk" },
+  desk_pod: { requiresWall: false, serves: "desk" },
+});
+
+/** All catalogued categories (aliases included), in declaration order. */
+export const CATALOG_CATEGORIES: readonly string[] = Object.freeze(Object.keys(CATALOG));
+
+/** The categories that satisfy `zone` for W_ROOM_NO_FIXTURE — derived from the
+ *  catalog so the lint rule and this data can never drift apart. */
+export function zoneFixtureCategories(zone: FixtureZone): ReadonlySet<string> {
+  return new Set(CATALOG_CATEGORIES.filter((c) => CATALOG[c]!.zones?.includes(zone)));
+}
+
+/** The catalog spec for a fixture category, or `null` for free-standing furniture. */
+export function fixtureSpec(category: string): FixtureSpec | null {
+  return CATALOG[category] ?? null;
+}
+
+/** Does this fixture category conventionally need a wall behind it? */
+export function requiresWall(category: string): boolean {
+  return CATALOG[category]?.requiresWall ?? false;
+}
+
+/** Must this piece's back be on a wall whenever it touches one: a services fixture
+ *  ({@link FixtureSpec.requiresWall}) or a wall-mounted one ({@link FixtureSpec.wallMounted})? */
+export function backsOntoWall(category: string): boolean {
+  const spec = CATALOG[category];
+  return spec?.requiresWall === true || spec?.wallMounted === true;
+}
+
+/**
+ * Does which way this fixture faces mean anything? True for any symbol with a distinguishable
+ * back — either because the piece needs a wall for services ({@link FixtureSpec.requiresWall}:
+ * a WC's cistern, a basin's tap, a counter's nosing) or because the drawn symbol simply has a
+ * front and a back worth aiming ({@link FixtureSpec.directional}: a bed's headboard, a
+ * wardrobe's door line). These are the categories whose orientation can be derived, flagged
+ * (`W_FIXTURE_BACK_TO_ROOM`) and corrected.
+ *
+ * False for a rotation-symmetric symbol whichever flag it carries (see
+ * {@link FixtureSpec.symmetric}), and for arranged furniture that has neither — a sofa's back
+ * to the room is a layout, not an error.
+ */
+export function orientationMatters(category: string): boolean {
+  const spec = CATALOG[category];
+  if (!spec || spec.symmetric === true) return false;
+  return spec.requiresWall === true || spec.directional === true;
+}
+
+/** The frontal activity clearance (mm) for a fixture category, or 0 if none. */
+export function frontClearanceMm(category: string): number {
+  return CATALOG[category]?.clearanceMm ?? 0;
+}
+
+/**
+ * Is this category an **underlay** — a piece lying flat on the floor that other furniture
+ * stands on and people walk over (see {@link FixtureSpec.underlay})?
+ *
+ * The one predicate all four consumers share, so the overlap rule, the clearance rule and
+ * the two walkability grids can never disagree about what a rug is.
+ */
+export function isUnderlay(category: string): boolean {
+  return CATALOG[category]?.underlay === true;
+}
+
+/**
+ * Is this category **overhead** — a piece hanging above the horizontal plane the drawing is
+ * cut at, whose rectangle is a projection rather than a floor obstruction (see
+ * {@link FixtureSpec.overhead})?
+ *
+ * Exported for the same reason {@link isUnderlay} is — a test asserts the catalogue directly —
+ * but no lint rule calls it: the one rule this flag changes reads {@link cutPlaneLayer}, so
+ * "which side of the cut plane is this on?" is asked in exactly one place.
+ */
+export function isOverhead(category: string): boolean {
+  return CATALOG[category]?.overhead === true;
+}
+
+/** Where a fixture sits relative to the horizontal plane a floor plan is cut at. */
+export type CutPlaneLayer = "underlay" | "body" | "overhead";
+
+/**
+ * Which side of the drawing's cut plane a category occupies: `underlay` below it (a rug, lying
+ * on the floor and stood on), `overhead` above it (a wall cabinet, a hood, a mirror), and
+ * `body` — everything else — at it, where a person and the furniture they move round both are.
+ *
+ * **Two pieces can only collide when they share a layer.** That is the whole of
+ * `W_FURNITURE_OVERLAP`'s exemption, and stating it as one three-valued function rather than as
+ * two flag comparisons is deliberate: the pairwise test then reads as the physical claim it is,
+ * and adding a fourth layer later cannot leave one rule comparing two flags and another three.
+ * It also keeps the two exemptions honest in the case neither flag's own doc covers — a rug and
+ * a wall cabinet over it do not collide either, and nothing had to be written for that.
+ */
+export function cutPlaneLayer(category: string): CutPlaneLayer {
+  const spec = CATALOG[category];
+  if (spec?.underlay === true) return "underlay";
+  if (spec?.overhead === true) return "overhead";
+  return "body";
+}
+
+/**
+ * The pieces a walkability grid must treat as obstacles — everything that is not an
+ * {@link isUnderlay}.
+ *
+ * Lives here, beside the flag, rather than in either grid: `analyze/circulation.ts`'s
+ * whole-plan nav grid and `analyze/occupancy.ts`'s per-room flood fill both need it, and two
+ * copies of "is a rug an obstacle?" is exactly the shape of drift this repository keeps
+ * finding. Generic over the element type so this module keeps importing nothing.
+ *
+ * An **overhead** piece is deliberately NOT dropped here: a body is taller than a wall unit's
+ * underside, so a hood and a wall cabinet obstruct a walk exactly as the base units below them
+ * do (see {@link FixtureSpec.overhead}). That asymmetry is the point of the two flags being
+ * separate, and it is what lets every caller of the nav grid — the main pass, the
+ * furniture-free control, and the body-radius ladder that re-runs it — read one predicate and
+ * agree.
+ */
+export function solidFurniture<T extends { category: string }>(furniture: readonly T[]): T[] {
+  return furniture.filter((f) => !isUnderlay(f.category));
+}
+
+/** Is this category a tall unit ({@link FixtureSpec.tall}): full-height storage or a fridge? */
+export function isTallUnit(category: string): boolean {
+  return CATALOG[category]?.tall === true;
+}
+
+/** A fixture category's conventional wall-relative footprint (along × depth), or null. */
+export function defaultFootprint(category: string): { along: number; depth: number } | null {
+  return CATALOG[category]?.footprint ?? null;
+}

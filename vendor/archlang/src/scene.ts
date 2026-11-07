@@ -1,0 +1,509 @@
+/**
+ * Backend-neutral **Scene IR** — the keystone drawing intermediate.
+ *
+ * `resolve()` produces semantic geometry (rooms, walls, openings); this module
+ * defines a flat list of *positioned drawing primitives* tagged with a layer and
+ * paint. Geometry is computed exactly **once** here (by the elements, lowered via
+ * `scene-build.ts`); every backend (SVG, DXF, PDF, …) is then a thin, pure
+ * serializer of the same `Scene`. This kills the geometry duplication the
+ * string-based `RenderOp` forced (DXF re-deriving door arcs, PDF rasterizing SVG).
+ *
+ * Prior art: Typst's `Frame`/`FrameItem` (crates/typst-library/src/layout/frame.rs)
+ * — a positioned list of drawable items — and D2's `d2target` (a flat, pointer-free
+ * render target consumed by independent backends). ArchLang has no nested
+ * transforms, so unlike Typst's `Frame` the node list is flat (no sub-frames).
+ *
+ * Deliberately small: poché stays an SVG `<pattern>` fill string, and page chrome
+ * (north arrow, scale bar, title block) stays in the backends.
+ */
+
+import type { NorthDir, Point, TitleNode } from "./ast.js";
+// Type-only and erased at runtime, so the scene ↔ chrome-layout reference is not a real cycle.
+import type { ChromeLayout } from "./chrome-layout.js";
+import type { Span } from "./diagnostics.js";
+import type { Bounds } from "./geometry.js";
+import type { HatchSpec } from "./hatches.js";
+import type { ResolvedSheet } from "./sheet.js";
+import type { Theme } from "./theme.js";
+
+/**
+ * Ordered draw layers. Nodes are bucketed by `layer` and emitted in this order,
+ * preserving collection order within a layer — this reproduces the canonical
+ * global draw order (all wall fills, then all wall faces, doors before windows,
+ * labels above fills, …). Doubles as the discriminant of {@link SceneNode.layer}.
+ */
+export const RENDER_PASSES = [
+  "floor",
+  // Positioning axes (定位轴线) sit just above the room floor fills and below the built
+  // fabric: a datum line reads *through* the drawing (visible in the rooms and outside
+  // the building, hidden inside the wall poché), which is how GB/T sheets read. Their
+  // bubbles land outside the building where nothing overlaps. A plan with no `axes`
+  // block emits no node on this pass, so inserting it here leaves every existing
+  // drawing byte-identical.
+  "axes",
+  "furniture",
+  "wallFill",
+  "wallFace",
+  "doors",
+  "openings",
+  "windows",
+  "labels",
+  "dims",
+  "annotations",
+] as const;
+export type RenderPass = (typeof RENDER_PASSES)[number];
+
+/**
+ * Named line-weight steps (a CAD pen ramp). A backend maps each to a concrete
+ * stroke width via the drawing's reference dimension + theme `lineWeight`, so the
+ * weight *hierarchy* is defined once and stays consistent across SVG/DXF/PDF.
+ */
+export const LINE_WEIGHTS = ["heavy", "medium", "thin", "extraThin"] as const;
+export type LineWeight = (typeof LINE_WEIGHTS)[number];
+
+/**
+ * Named line-weight ramp → concrete stroke width in mm, scaled from the drawing.
+ * `heavy` matches the wall stroke; the rest step down. The whole hierarchy keys off the
+ * same sizes (which already include the theme `lineWeight` multiplier), so weights stay
+ * proportional at any drawing size.
+ *
+ * It lives HERE, beside the ramp it resolves, rather than inside the SVG backend where it
+ * was written — because it is not an SVG fact. Only the SVG serializer consults
+ * `node.lineWeight`; the PDF backend reads `paint.width` and nothing else. A node that
+ * carries a weight must therefore also carry the width that weight resolves to, or the two
+ * exports disagree about how thick a line is. `elements/glyph-lib.ts` is the caller that
+ * needs it: it sets both, from this one function.
+ *
+ * `extraThin` is {@link EXTRA_THIN_RATIO} of `thin`: on a sheet `thin` is 0.18 sheet-mm
+ * (`SHEET_MM`, `src/sheet.ts`), so the finest pen lands on 0.13 mm — the smallest width in the
+ * ISO 128 pen series, below which a line stops reproducing in print. (It was 0.55 × thin, about
+ * 0.099 mm on paper.)
+ */
+export function weightWidth(w: LineWeight, sizes: RenderSizes): number {
+  switch (w) {
+    case "heavy":
+      return sizes.wallStroke;
+    case "medium":
+      return sizes.wallStroke * 0.6;
+    case "thin":
+      return sizes.thin;
+    case "extraThin":
+      return (sizes.thin * EXTRA_THIN_RATIO[0]) / EXTRA_THIN_RATIO[1];
+  }
+}
+
+/** `extraThin` / `thin` as an exact fraction: the ISO 128 pens 0.13 mm / 0.18 mm. */
+export const EXTRA_THIN_RATIO: readonly [number, number] = [13, 18];
+
+/** Named line types (dash conventions). `continuous` is the default solid line. */
+export const LINE_TYPES = ["continuous", "dashed", "center", "hidden"] as const;
+export type LineType = (typeof LINE_TYPES)[number];
+
+/**
+ * The sheet a paper-mode drawing is laid out on: the resolved paper + operative scale
+ * (see `src/sheet.ts`), plus the **page rectangle in plan millimetres** the drawing is
+ * centred on. Present only when the plan declares `paper`; absent → the backends size
+ * the page from the drawing extent + margins exactly as before (byte-identical).
+ */
+export interface SceneSheet extends ResolvedSheet {
+  /** The page in plan mm: `w`/`h` are the paper mm × the scale denominator. */
+  page: { x: number; y: number; w: number; h: number };
+  /** True when the laid-out drawing overflowed the sheet and the page grew to fit. */
+  grown: boolean;
+}
+
+/** Render-derived sizes (in mm), scaled from the drawing's reference dimension. */
+export interface RenderSizes {
+  refDim: number;
+  wallStroke: number;
+  thin: number;
+  roomFont: number;
+  areaFont: number;
+  dimFont: number;
+  furnFont: number;
+  margin: number;
+  hatchGap: number;
+}
+
+/**
+ * How a primitive is painted. Strokes/fills carry colours (already theme-resolved
+ * and escaped at the serialization boundary); `width`/`dash` carry *raw* numbers
+ * that each backend formats. The optional `linecap`/`linejoin`/`fillRule` cover
+ * the exact SVG attributes the original element emitters used, so the SVG
+ * serializer reproduces today's output byte-for-byte.
+ */
+/**
+ * Mitre cap for a mitred join, in stroke widths. A mitre's point grows as
+ * `1 / sin(θ/2)`: harmless at the 90° corners the rectilinear wall boolean produces
+ * (1.41×), but 12× the line weight where two walls meet at 10° — a black needle shot
+ * out of the building. 4 is the SVG default (so SVG output is visually unchanged and
+ * the attribute merely makes the contract explicit) and is what the PDF export, whose
+ * own default is 10, is now held to as well.
+ */
+export const MITER_LIMIT = 4;
+
+export interface Paint {
+  /** A colour, `"none"`, or an SVG pattern ref like `"url(#poche)"`. */
+  fill?: string;
+  stroke?: string;
+  /** Raw stroke width in mm (backend applies its own number formatting). */
+  width?: number;
+  /** `stroke-dasharray` pair in mm (e.g. door swing arc). */
+  dash?: [number, number];
+  linecap?: "square";
+  linejoin?: "miter";
+  /**
+   * Cap on a mitred join's spike, as a multiple of the stroke width. A mitre grows as
+   * `1 / sin(θ/2)`, so at an ACUTE wall joint the point runs away — 12× the line weight
+   * at 10°. Beyond the limit the renderer bevels the corner instead. Carried on the
+   * paint (not hardcoded per backend) because the backends' own defaults DISAGREE: SVG
+   * defaults to 4, PDF to 10, so the same drawing spiked in one export and not the other.
+   */
+  miterLimit?: number;
+  fillRule?: "nonzero";
+}
+
+/**
+ * One edge of a {@link PathLoop}: a straight run to `to`, or a **minor** circular arc to
+ * `to` about `center`. `sweep` is the SVG sweep flag — `1` = clockwise as drawn, the same
+ * sense the {@link ScenePrim} `arc` variant carries, so the two never disagree.
+ */
+export type PathEdge = { t: "line"; to: Point } | { t: "arc"; to: Point; center: Point; r: number; sweep: 0 | 1 };
+
+/**
+ * One closed loop of a `path` primitive: a start point and the edges that walk back to
+ * it. The closing edge is PRESENT (the last edge's `to` is the loop's `start`), so no
+ * backend has to synthesise it — `Z` merely confirms what the last edge already drew.
+ */
+export interface PathLoop {
+  start: Point;
+  edges: PathEdge[];
+}
+
+/**
+ * A positioned drawing primitive. Coordinates are absolute millimetres in the
+ * plan's space (origin top-left, +x right, +y down — SVG convention); backends
+ * apply their own transforms (e.g. DXF's Y-flip).
+ */
+export type ScenePrim =
+  /** A filled/stroked closed polygon (room, furniture, column, opening cover, per-segment wall fill). */
+  | { t: "polygon"; pts: Point[] }
+  /** A single straight segment (wall face, door leaf, window pane, dimension lines/ticks). */
+  | { t: "line"; a: Point; b: Point }
+  /**
+   * A multi-loop closed region drawn as one path (`fill-rule` nonzero), used for
+   * unioned orthogonal walls so the poché fills with proper holes and the outline
+   * has no internal seams.
+   */
+  | { t: "region"; loops: Point[][] }
+  /**
+   * A multi-loop closed region **whose edges may CURVE** — the `region` primitive
+   * generalised from polylines to a real path. Emitted by the wall-joinery layer, which
+   * produces one boundary for a whole set of walls and cannot express a curved facade as
+   * a polygon without faceting it.
+   *
+   * `region` is kept, not replaced: a rectilinear plan's boundary is all straight edges,
+   * and routing it through `region` is what keeps those drawings byte-identical.
+   *
+   * Every `arc` edge is a MINOR arc of at most 120°, exactly as the {@link ScenePrim}
+   * `arc` variant is — the SVG and PDF serializers hardcode the large-arc flag to `0`
+   * and the DXF one calls `minorArcDegrees`, so a longer curve must arrive already cut
+   * into pieces (`arcPieces` does the cutting). Do not widen this contract without
+   * widening `arc`'s at the same time; two primitives disagreeing about what a stored
+   * sweep means is how a backend comes to draw the complement of the intended curve.
+   */
+  | { t: "path"; loops: PathLoop[] }
+  /**
+   * A circular arc (door swing). Carries the `center`/`r` a CAD backend needs to
+   * emit a native arc, plus the explicit `start`/`end` points + `sweep` flag an
+   * SVG `A` command needs — so neither backend re-derives endpoints from trig.
+   */
+  | { t: "arc"; center: Point; r: number; start: Point; end: Point; sweep: 0 | 1 }
+  /**
+   * A full circle (an axis bubble). Kept distinct from `arc` so a CAD backend emits one
+   * native `CIRCLE` entity rather than two half-arcs, and so a raster/vector backend
+   * needs no sweep bookkeeping. Nothing else emits one.
+   */
+  | { t: "circle"; center: Point; r: number }
+  /**
+   * A hatched (poché) region: closed loops filled with a named material pattern,
+   * scaled and rotated. The SVG backend bakes `scale`→tile size and `angle`→
+   * `patternTransform`; the DXF backend emits a real `HATCH` entity. `origin` is
+   * the optional pattern anchor (defaults to the drawing origin) and `zoom` an optional
+   * scale of the tile about it (default 1): the SVG backend honours both — they re-frame the
+   * one shared `<pattern>` for a single region (a legend swatch) without a second pattern —
+   * and a node that sets neither draws exactly as it always has.
+   */
+  | { t: "hatch"; region: Point[][]; material: string; scale: number; angle: number; origin?: Point; zoom?: number }
+  /** A text label. `value` is the raw (unescaped) string; backends escape on emit. */
+  | {
+      t: "text";
+      at: Point;
+      value: string;
+      size: number;
+      anchor: "start" | "middle" | "end";
+      baseline: "central";
+      /** SVG `font-weight` (e.g. 600 for a room name). */
+      weight?: number;
+      /** Rotation in degrees about `at` (e.g. dimension text along its line). */
+      rotate?: number;
+      /**
+       * A name WRAPPED onto several lines (`relocateLabels`' wrap step, `src/label-placement.ts`):
+       * `lines` drawn `pitch` apart and centred on `at`, which stays where the one-line text
+       * would have been centred. `value` keeps the whole one-line name, so whatever reads a
+       * text node's string (the ASCII backend, a font planner) still reads the name. Never set
+       * together with `rotate`. Every backend places the lines through `textLines`
+       * (`src/text-layout.ts`), so none of them can disagree about where a line goes; a node
+       * without it draws exactly as before.
+       */
+      block?: { lines: readonly string[]; pitch: number };
+    };
+
+/**
+ * Default AIA (American Institute of Architects) CAD layer name for a draw pass.
+ * A node may override this via {@link SceneNode.layerName} (e.g. a column lives in
+ * the `furniture` pass but belongs on `A-COLS`).
+ */
+export function aiaLayer(pass: RenderPass): string {
+  switch (pass) {
+    case "floor":
+      return "A-FLOR";
+    // The AIA layer for a planning/structural grid — a CAD user freezes A-GRID to get
+    // the drawing without its datum lines.
+    case "axes":
+      return "A-GRID";
+    case "furniture":
+      return "A-FURN";
+    case "wallFill":
+    case "wallFace":
+      return "A-WALL";
+    case "doors":
+    // A cased opening is a door-family void, not glazing — it belongs on A-DOOR
+    // (an `openings` node on A-GLAZ made a leaf-less passage read as a window).
+    case "openings":
+      return "A-DOOR";
+    case "windows":
+      return "A-GLAZ";
+    case "labels":
+      return "A-ANNO-TEXT";
+    case "dims":
+      return "A-ANNO-DIMS";
+    case "annotations":
+      return "A-ANNO";
+  }
+}
+
+/** One drawable: a primitive on a layer, with paint and an optional source span.
+ *
+ * `lineWeight`/`lineType`/`layerName` are optional *semantic* style metadata.
+ * When `lineWeight` is set a backend derives the stroke width from the named ramp (overriding `paint.width`); when `lineType` is set
+ * (and not `continuous`) it derives the dash pattern. `layerName` names the CAD
+ * layer (AIA) the node belongs to. All are additive: a node that sets none
+ * renders exactly as before. */
+export interface SceneNode {
+  layer: RenderPass;
+  prim: ScenePrim;
+  paint: Paint;
+  lineWeight?: LineWeight;
+  lineType?: LineType;
+  layerName?: string;
+  span?: Span;
+  /** Resolved element id (e.g. "room_1", user-provided via `id=`). Annotate mode only. */
+  elementId?: string;
+  /** Element kind ("room" | "door" | ...). Annotate mode only. */
+  elementKind?: string;
+  /**
+   * The element's human NAME — the authored `label` (the very string the drawing's
+   * own `<text>` prints), falling back to the furniture `category` / outdoor
+   * `surface`, which is the only name the compiler knows for an unlabelled one.
+   * Absent when the plan names the element nothing at all (every door, window and
+   * cased opening). Annotate mode only; metadata, never read by geometry.
+   */
+  elementLabel?: string;
+  /**
+   * The {@link SceneNode.elementLabel} came from the CATALOGUE (a fixture's `category`,
+   * a surface's `surface`) rather than from an authored `label`. Read only by the SVG
+   * backend's composed `aria-label`, which capitalises a catalogue word because that
+   * string is a sentence read aloud, and leaves an authored one as the author cased it.
+   * Annotate mode only.
+   */
+  elementLabelDerived?: true;
+  /**
+   * This room's position among the rooms the plan never NAMED — 1, 2, 3 … in element
+   * order. Present only on an unlabelled room, so several of them are still told apart by
+   * ear. It is not a `data-arch-label` (the plan calls the room nothing, and that
+   * attribute reports what the plan calls things) — it reaches the SVG only through the
+   * composed `aria-label`. Annotate mode only.
+   */
+  elementOrdinal?: number;
+  /**
+   * The label of the room this element sits IN — furniture only, from the declared
+   * `in <room>` clause, and only when that room is itself labelled. It exists so a
+   * consumer can say "Bed, Kitchen" without a second index of the plan. Annotate
+   * mode only.
+   */
+  elementRoomLabel?: string;
+  /**
+   * Set on **exactly one node per `elementId`**: the shape a consumer should make
+   * clickable/focusable. It is the element's first non-`text` primitive — the floor
+   * polygon of a room, the symbol outline of a fixture — so a drawn name is never
+   * the thing that carries a control's role. Annotate mode only.
+   */
+  elementPrimary?: true;
+}
+
+/** Effective CAD layer for a node: explicit `layerName`, else the pass default. */
+export function layerOf(node: SceneNode): string {
+  return node.layerName ?? aiaLayer(node.layer);
+}
+
+/**
+ * A complete, backend-neutral drawing. `nodes` is the geometry; the remaining
+ * fields are the page-level context backends need (viewBox sizing, theme colours
+ * for chrome, north/scale/title block, hatch materials in use). Theme is baked
+ * into node paint already — it is carried here only for the page chrome.
+ */
+export interface Scene {
+  /** Padded page width/height in mm (drawing extent + annotation margin — or the
+   *  sheet, when {@link sheet} is set). */
+  width: number;
+  height: number;
+  /** Tight drawing bounds (before margin), for chrome placement. */
+  bounds: Bounds;
+  nodes: SceneNode[];
+  theme: Theme;
+  sizes: RenderSizes;
+  north: NorthDir;
+  /** The north arrow's word, when the plan's `sheet text` writes one; else `N`. */
+  northLabel?: string;
+  /** `north … hidden`: no arrow is drawn. The other two marks live on {@link Scene.chrome}. */
+  northHidden?: true;
+  scale?: string;
+  title?: TitleNode;
+  /**
+   * The plan name. In accessible mode (`compile(src, { accessible: true })`) it is
+   * the effective accessible title — the plan name, or an explicit `accTitle "…"`
+   * override — which the SVG backend emits as `<title>`. Read nowhere else, so the
+   * override is invisible to default output.
+   */
+  name: string;
+  /**
+   * Deterministic natural-language caption for the accessible `<desc>`: the
+   * `describe()` sentence, or an explicit `accDescr "…"` override. Set by `toScene`
+   * only in accessible mode (`compile(src, { accessible: true })`). Absent by
+   * default → output unchanged.
+   */
+  caption?: string;
+  /** Distinct hatch specs in use (stable order), so the SVG backend can emit a `<pattern>` per spec. */
+  hatches: HatchSpec[];
+  /**
+   * Page-chrome layout computed by `toScene` (the margins already shape
+   * `width`/`height`). Backends use it when present instead of re-running
+   * `layoutChrome`; optional so hand-built Scenes keep working (append-only).
+   */
+  chrome?: ChromeLayout;
+  /**
+   * The sheet this drawing is issued on (`paper …`), with the page rectangle the
+   * backends must use for the viewBox / PDF page instead of deriving one from the
+   * drawing extent. Absent for a plan with no `paper` — optional so hand-built Scenes
+   * and every existing plan keep working (append-only).
+   */
+  sheet?: SceneSheet;
+  /**
+   * The axonometric view this Scene draws, or absent for the ordinary plan —
+   * which is every Scene `toScene` has ever produced, so existing output is untouched.
+   *
+   * It is a **presentation flag for the page chrome, and nothing else**: the backends
+   * skip the north arrow, the scale bar and the title block when it is set, because all
+   * three are false on a pictorial view (an arrow points at a compass direction on a
+   * drawing whose plan has been turned; a scale bar measures a foreshortened axis; a
+   * title block makes a drawing look issuable, which this one must never be). No
+   * geometry reads it — every face is already an ordinary Scene primitive by the time it
+   * gets here. See `src/view/`.
+   */
+  view?: import("./view/camera.js").ViewName;
+  /**
+   * The walls the `wallFill`/`wallFace` nodes were lowered from, in the order they were
+   * lowered (the joinery's tie-break order), so re-joining the list reproduces those nodes.
+   * A storey with a `status demolish` wall is lowered in two calls, the standing walls (as the
+   * plan after the demolition has them) and the demolished ones (drawn dashed); the list is the
+   * standing walls then the demolished ones, each in source order, so each call's walls are its
+   * sublist by `status`.
+   * `toScene` sets it on a plan with walls, as a lazy getter (`attachSceneWalls`,
+   * `src/wall-lowering.ts`): a compile that never exports DXF never projects it.
+   * **Export metadata, never drawn**: no backend draws from it — the drawing is the nodes. It exists for an export that must know WHICH wall drew a
+   * face, which the joined outline no longer says: the DXF re-files the wall nodes onto its
+   * exterior and interior wall layers through `classifyWallSet` (`src/wall-lowering.ts`).
+   * Absent on a hand-built Scene, whose wall nodes then export exactly as before.
+   */
+  walls?: readonly SceneWall[];
+  /**
+   * Which runs of {@link nodes} are one door, window, catalogued fixture or dimension, so the DXF
+   * can write them as a `BLOCK` and an `INSERT`, or a `DIMENSION`. **Export metadata, never drawn**,
+   * and non-enumerable: it is not part of the Scene as data, so `JSON.stringify(scene)` does not
+   * show it, and a copy of a Scene does not carry it and exports flat. `toScene` sets it as a lazy
+   * getter (`attachSceneParts`, `src/scene-build.ts`): a compile that never exports DXF never
+   * computes it. The runs are in node order and never overlap.
+   */
+  parts?: readonly ScenePart[];
+}
+
+/** A dimension's tick, as a fraction of {@link RenderSizes.refDim}: half its length along the slant. */
+export const DIM_TICK = 0.012;
+
+/** A turn by a whole number of quarters, counter-clockwise as the sheet reads. */
+export type CadTurn = 0 | 90 | 180 | 270;
+
+/**
+ * What an element is to a CAD file ({@link Scene.parts}), which its own module declares
+ * (`ElementDef.cadPart`). A `block` is a shape stood at a point: `name` is the stem of its block
+ * name, and `turn` takes the block's own frame to the plan. An element whose frame is not a
+ * quarter-turn has `turn` 0, and its block is simply drawn as the plan has it.
+ */
+export type CadPart =
+  | { t: "block"; name: string; at: Point; turn: CadTurn }
+  /**
+   * A rotated linear dimension: the extent of `a`–`b` along `angle` (degrees, counter-clockwise as
+   * the sheet reads), on the line through `line`. `text` is what a plan wrote or a call-out derived;
+   * without it the number is the measure.
+   */
+  | { t: "dimension"; a: Point; b: Point; line: Point; angle: number; text?: string };
+
+/** A {@link CadPart} and the run of {@link Scene.nodes} it drew, `from` up to but not including `to`. */
+export type ScenePart = CadPart & { from: number; to: number };
+
+/**
+ * The turn that takes a block's own +x onto `dir`, a unit vector in plan coordinates (y down), or 0
+ * when `dir` is not along an axis. Tested exactly: a wall at any other angle is not a quarter-turn,
+ * and a float rotation would have the exploded block disagree with the drawing.
+ */
+export function cadTurnOf(dir: Point): CadTurn {
+  if (dir.y === 0) return dir.x > 0 ? 0 : 180;
+  if (dir.x === 0) return dir.y > 0 ? 270 : 90;
+  return 0;
+}
+
+/**
+ * A wall as {@link Scene.walls} carries it: what the joinery reads (band, hatch, the
+ * openings cut through it — each only its `at`/`width`) plus the `category` and the written
+ * `status` an export classifies by. Plain data with no id, so two plans that draw the same walls
+ * carry the same walls (in statement order, which may differ), with one exception: `_derived`,
+ * present only on a derived wall, as `{ from }`, with an empty `open` on an `open between` run,
+ * which the joinery reads to clear a crossing. Its underscore means what it means on the IR: no
+ * public promise (ADR 0031).
+ * `status` is present only when the plan wrote one.
+ */
+export type SceneWall = Pick<
+  import("./ir.js").RWall,
+  | "category"
+  | "status"
+  | "_derived"
+  | "thickness"
+  | "points"
+  | "arcs"
+  | "closed"
+  | "material"
+  | "hatchScale"
+  | "hatchAngle"
+  | "openings"
+>;

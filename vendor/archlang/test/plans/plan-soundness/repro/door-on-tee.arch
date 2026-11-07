@@ -1,0 +1,11 @@
+plan "tee" {
+  units mm
+  grid 50
+  wall id=shell exterior thickness 200 { (0,0) (8000,0) (8000,5000) (0,5000) close }
+  wall id=p partition thickness 100 { (4000,0) (4000,5000) }
+  room id=a at (0,0) size 4000x5000 label "A"
+  room id=b at (4000,0) size 4000x5000 label "B"
+  door on shell at 4000 width 900
+  window on shell at 3800 width 1200
+  door on p at 50% width 800
+}

@@ -1,0 +1,19 @@
+# class: clearances
+# origin: audits/showcase-and-examples.md X6 (hillside L2 bed x 1300-2800, wardrobe 2900-3500); BE3
+# expect: W_WARDROBE_FRONT_CLEARANCE
+# status: todo
+# fact: the bed's foot is at x=2100 and the wardrobe's front at x=2200: 100 mm in front of the wardrobe
+plan "Wardrobe facing the bed" {
+  units mm
+  grid 50
+  wall id=shell exterior thickness 200 { (0,0) (7000,0) (7000,4500) (0,4500) close }
+  wall id=w_mid partition thickness 100 { (2850,0) (2850,4500) }
+  room id=r_bed at (0,0) size 2850x4500 label "Bedroom 2" uses bedroom
+  room id=r_living at (2850,0) size 4150x4500 label "Living Room" uses living
+  door id=d_entry at (5000,4500) width 900 wall shell
+  door id=d_bed at (2850,800) width 800 wall w_mid swing into r_living
+  window at (1400,4500) width 1200 wall shell
+  window at (5000,0) width 1500 wall shell
+  furniture double_bed against wall shell segment 3 offset 2000 in r_bed
+  furniture wardrobe against wall w_mid offset 2500 in r_bed
+}

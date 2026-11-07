@@ -1,0 +1,31 @@
+# criterion: R14
+# twin-of: r14-living-off-to-one-side
+# origin: the same rooms with the corridor's door moved from the hall to the living room, so the
+#   living room joins the entrance to the bedroom wing
+# fact: total depths corridor 9, living room 10, hall 13: the living room ranks 2 of 6 (⌈6/3⌉ = 2),
+#   R14 = 1; depths hall 1, living room 2, bedrooms 4, so R3 = 1 as in the case
+plan "R14 living at the heart" {
+  units mm
+  grid 100
+  room id=r_hall at (0,0) size 2000x3000 label "Hall" uses hall
+  room id=r_living at (2000,0) size 6000x3000 label "Living Room" uses living
+  room id=r_corr at (0,3000) size 8000x1200 label "Corridor" uses circulation
+  room id=r_bed1 at (0,4200) size 3000x3600 label "Bedroom 1" at (2200,5100) uses bedroom
+  room id=r_bath at (3000,4200) size 2000x3600 label "Bathroom" uses bath
+  room id=r_bed2 at (5000,4200) size 3000x3600 label "Bedroom 2" uses bedroom
+  walls from rooms exterior 200 partition 100
+  door id=d_front on r_hall.left at center width 900 swing into r_hall
+  door id=d_hall_living between r_hall and r_living at center width 900 swing into r_living
+  door id=d_link between r_living and r_corr at center width 900 swing into r_corr
+  door id=d_bed1 between r_corr and r_bed1 at center width 900 swing into r_bed1
+  door id=d_bath between r_corr and r_bath at center width 800 swing into r_bath
+  door id=d_bed2 between r_corr and r_bed2 at center width 900 swing into r_bed2
+  window id=w_living on r_living.top at center width 2400
+  window id=w_bed1 on r_bed1.bottom at center width 1500
+  window id=w_bed2 on r_bed2.bottom at center width 1500
+  furniture bed in r_bed1 anchor bottom-left flush inset 300 size 1400x2000 label "Bed"
+  furniture bed in r_bed2 anchor bottom-right flush inset 300 size 1400x2000 label "Bed"
+  furniture wc against r_bath.bottom offset 1450 size 400x700
+  furniture basin in r_bath anchor right flush size 450x600
+  furniture shower in r_bath anchor bottom-left flush size 900x900
+}

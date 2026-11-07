@@ -1,0 +1,18 @@
+# class: clearances
+# twin-of: leaf-across-doorway
+# origin: audits/2026-10-18-first-contact.md A1 with d_front hinged at its other jamb
+# expect: none
+# fact: d_front is hinged at (4150,0) and its open leaf lies along x 4150, 1100 mm clear of the d_bed doorway's hall
+#   face x 3050
+plan "Front door leaf across a bedroom door" {
+  units mm
+  grid 50
+  wall id=shell exterior thickness 200 { (0,0) (6000,0) (6000,5000) (0,5000) close }
+  wall id=w_mid partition thickness 100 { (3000,0) (3000,5000) }
+  room id=r_bed at (0,0) size 3000x5000 label "Bedroom 2" uses bedroom
+  room id=r_hall at (3000,0) size 3000x5000 label "Hall" uses hall
+  door id=d_front at (3700,0) width 900 wall shell hinge near end swing into r_hall
+  door id=d_bed at (3000,650) width 800 wall w_mid swing into r_bed
+  window at (1500,5000) width 1200 wall shell
+  window at (4500,5000) width 1200 wall shell
+}

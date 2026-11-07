@@ -1,0 +1,238 @@
+/**
+ * Room circulation as a fact: can a person actually step through a room's door and
+ * reach its floor, or do furniture, fixtures and door swings seal it off?
+ *
+ * This is the one place ArchLang borrows a game/robotics idea — a grid **flood-fill
+ * over a navmesh**. Each room is rasterised to a coarse occupancy grid; cells whose
+ * centre falls inside a furniture/fixture footprint are blocked; we flood-fill the free
+ * cells from the room's doorways and measure how much clear floor the entrance can
+ * actually reach. (Door *swing* arcs are deliberately NOT occupancy here — the leaf
+ * opens flat against a wall and you stand in the doorway to enter; swing clearance is
+ * its own rule, `W_SWING_OBSTRUCTED`.) Pure and deterministic: one cell size per room,
+ * derived closed-form from that room's area by {@link roomCellSizeMm}, integer cell
+ * coordinates, source-ordered seeds, row-major iteration — no floats as keys.
+ *
+ * It computes a **fact** (reachable clear floor area); the lint rule decides whether
+ * that is too little. It never moves anything — see ADR 0006.
+ */
+
+import type { RRoom, RDoor, ROpening, RFurniture, RWall } from "../ir.js";
+import { rectOf, roomBox, pointOnRoomEdge } from "../analyze.js";
+import { solidFurniture } from "../fixtures-catalog.js";
+import { pointInRect } from "../geometry/rect.js";
+import { pointInPolygon } from "../geometry/polygon.js";
+import { neighbours4 } from "./grid.js";
+
+export interface RoomClearance {
+  roomId: string;
+  /** Has at least one door/opening on its perimeter (else circulation is moot). */
+  hasConnector: boolean;
+  /** Clear floor area (m²) the entrance(s) can actually reach by walking. */
+  reachableClearAreaM2: number;
+  /** Total clear floor area (m²) in the room, reachable or not. */
+  totalClearAreaM2: number;
+}
+
+/**
+ * Occupancy-grid resolution, the per-room counterpart of the whole-plan nav grid's
+ * budget (`circulation.ts`, ADR 0008 addendum): the knob is a target cell **size**
+ * bounded by a total cell **budget**, `cell = max(MIN_CELL_MM, ceil(sqrt(roomArea /
+ * MAX_CELLS_ROOM)))`, so a big room is measured at the same resolution as a small one
+ * instead of having a fixed cell count divided out of its area. A fixed count made a
+ * 26 × 26 m gallery grid at ~520 mm, where blocking is "is the cell CENTRE inside the
+ * footprint" — a 600 mm-deep counter could fall between two centres and vanish.
+ *
+ * `MIN_CELL_MM` keeps every room up to MAX_CELLS_ROOM · MIN_CELL_MM² = 250 m² on the
+ * 100 mm cells it has always used, and the budget alone bounds the work (nx·ny ≤
+ * roomArea / cell² ≤ MAX_CELLS_ROOM), so no per-axis clamp is needed.
+ */
+const MIN_CELL_MM = 100;
+const MAX_CELLS_ROOM = 25_000;
+/** Hard ceiling on one room's nx·ny, for the thin-and-huge rooms the area budget does not bound. */
+const MAX_GRID_CELLS_ROOM = 250_000;
+
+/**
+ * The occupancy-grid cell size (mm) for a room of `areaMm2`. Closed-form, integral and
+ * monotonic in the area — the same room always grids the same way.
+ */
+export function roomCellSizeMm(areaMm2: number): number {
+  return Math.max(MIN_CELL_MM, Math.ceil(Math.sqrt(areaMm2 / MAX_CELLS_ROOM)));
+}
+
+/** Two distances closer than this (mm) are a tie: the same pair of points read in a turned or
+ *  flipped frame differs only by rounding noise, many orders of magnitude below it. */
+const TIE_MM = 1e-6;
+
+/**
+ * The cells along one axis whose CLOSED span holds coordinate `v` (relative to the room's
+ * min corner), as an inclusive index range clamped into the grid: one cell, or the two either
+ * side of a cell line `v` lies on (to {@link TIE_MM}, since a stretched cell is not exact in
+ * floats) — the occupancy-grid twin of the nav grid's `axisCells` (`circulation.ts`).
+ */
+function spanCells(v: number, cell: number, n: number): [number, number] {
+  const line = Math.round(v / cell);
+  const clampI = (i: number): number => Math.min(n - 1, Math.max(0, i));
+  if (Math.abs(line * cell - v) <= TIE_MM) return [clampI(line - 1), clampI(line)];
+  const f = clampI(Math.floor(v / cell));
+  return [f, f];
+}
+
+/**
+ * Compute, per room, how much clear floor its doorways can reach. Deterministic and
+ * allocation-light: one boolean grid per room, 4-connected BFS from the doorway cells.
+ */
+export function computeRoomClearances(
+  rooms: RRoom[],
+  furniture: RFurniture[],
+  doors: RDoor[],
+  openings: ROpening[],
+  _walls: RWall[],
+  tolMm: number,
+): RoomClearance[] {
+  // An underlay (a rug) is walked ON, not round, so it is not an obstacle here either — the
+  // predicate is `fixtures-catalog.ts`'s, shared with the whole-plan nav grid so the two
+  // cannot disagree about what a rug is.
+  const furnRects = solidFurniture(furniture).map((f) => rectOf(f));
+  const connectors: Array<{ at: { x: number; y: number } }> = [
+    ...doors.map((d) => ({ at: d.at })),
+    ...openings.map((o) => ({ at: o.at })),
+  ];
+
+  return rooms.map((r) => {
+    const rb = roomBox(r);
+    const onPerim = connectors.filter((c) => pointOnRoomEdge(c.at, rb, tolMm));
+    if (onPerim.length === 0) {
+      return { roomId: r.id, hasConnector: false, reachableClearAreaM2: 0, totalClearAreaM2: 0 };
+    }
+
+    // Cell size: never coarser than the room's area budget asks for, never finer than
+    // MIN_CELL_MM. The cell is then stretched to tile the room exactly (cellW/cellH),
+    // so the measured areas still sum to the room's own area.
+    const cell = roomCellSizeMm(rb.w * rb.h);
+    let nx = Math.max(1, Math.floor(rb.w / cell));
+    let ny = Math.max(1, Math.floor(rb.h / cell));
+    // The area budget bounds nx·ny only when both axes span a cell; a room long on one
+    // axis and thin on the other is clamped to 1 on the thin one. Past the hard cap the
+    // grid gets FEWER, larger cells (cellW/cellH below stretch to tile the room exactly,
+    // so areas still sum to the room's). Unreachable for any real room: nx·ny ≤ 25,000.
+    if (nx * ny > MAX_GRID_CELLS_ROOM) {
+      nx = Math.min(nx, MAX_GRID_CELLS_ROOM);
+      ny = Math.min(ny, MAX_GRID_CELLS_ROOM);
+      const s = Math.min(1, Math.sqrt(MAX_GRID_CELLS_ROOM / (nx * ny)));
+      nx = Math.max(1, Math.floor(nx * s));
+      ny = Math.max(1, Math.floor(ny * s));
+    }
+    const cellW = rb.w / nx;
+    const cellH = rb.h / ny;
+    const area1 = (cellW * cellH) / 1_000_000;
+
+    // free[iy*nx+ix] — true when the cell centre is clear of every furniture footprint.
+    // Every cell starts free and each piece then clears the cells inside its own bbox
+    // window (the exact containment test still runs per cell, widened by one so a
+    // boundary centre is never missed). Same predicate on the same cells as a per-cell
+    // scan over every piece, but O(cells + covered) instead of O(cells × pieces) —
+    // which is what makes the finer, area-budgeted grid affordable.
+    const free = new Uint8Array(nx * ny).fill(1);
+    // A POLYGON room is rasterised onto the same bbox grid, with every cell whose CENTRE
+    // falls outside the ring taken out first — the same "is the centre inside?" rule the
+    // rect path applies implicitly, so the flood-fill measures the real floor and the
+    // notch of an L never counts as reachable area.
+    if (r.poly) {
+      const ring = r.poly;
+      for (let iy = 0; iy < ny; iy++) {
+        const cy = rb.y + (iy + 0.5) * cellH;
+        for (let ix = 0; ix < nx; ix++) {
+          if (!pointInPolygon(rb.x + (ix + 0.5) * cellW, cy, ring)) free[iy * nx + ix] = 0;
+        }
+      }
+    }
+    for (const fr of furnRects) {
+      const ix0 = Math.max(0, Math.floor((fr.x - rb.x) / cellW) - 1);
+      const ix1 = Math.min(nx - 1, Math.ceil((fr.x + fr.w - rb.x) / cellW));
+      const iy0 = Math.max(0, Math.floor((fr.y - rb.y) / cellH) - 1);
+      const iy1 = Math.min(ny - 1, Math.ceil((fr.y + fr.h - rb.y) / cellH));
+      for (let iy = iy0; iy <= iy1; iy++) {
+        const cy = rb.y + (iy + 0.5) * cellH;
+        for (let ix = ix0; ix <= ix1; ix++) {
+          const k = iy * nx + ix;
+          if (free[k] && pointInRect(rb.x + (ix + 0.5) * cellW, cy, fr)) free[k] = 0;
+        }
+      }
+    }
+    let totalFree = 0;
+    for (let k = 0; k < free.length; k++) if (free[k]) totalFree++;
+
+    // Seed BFS from the doorway. The connector sits on a room edge, so step inward
+    // (perpendicular to that edge) to the first free cell — a doorway whose whole
+    // inward column/row is blocked by furniture contributes no seed (it's sealed).
+    const seen = new Uint8Array(nx * ny);
+    const queue: number[] = [];
+    const seed = (k: number): void => {
+      if (!seen[k]) {
+        seen[k] = 1;
+        queue.push(k);
+      }
+    };
+    for (const c of onPerim) {
+      // Every cell whose CLOSED span holds the connector, per axis: one, or the two either
+      // side of a cell line the connector sits on. Flooring alone put a doorway on a line on
+      // its +x/+y side, so a mirrored plan seeded the other side — a different column, which
+      // furniture could seal on one side only (backlog PS0.13).
+      const [ixLo, ixHi] = spanCells(c.at.x - rb.x, cellW, nx);
+      const [iyLo, iyHi] = spanCells(c.at.y - rb.y, cellH, ny);
+      // A POLYGON room's doorway is not on a bbox side, so "step inward perpendicular to
+      // the edge it lies on" has no meaning: seed the FREE cells nearest the connector
+      // instead — EVERY one at the nearest distance (to a micron), never a row-major first,
+      // which is a page-order pick a turn or flip does not preserve. Equivalent in spirit —
+      // you stand in the doorway and take the first clear floor — and a doorway sealed by
+      // furniture still contributes no seed, because a blocked cell is never free.
+      if (r.poly) {
+        let bestD = Infinity;
+        const dist = (k: number): number =>
+          Math.hypot(rb.x + ((k % nx) + 0.5) * cellW - c.at.x, rb.y + (Math.floor(k / nx) + 0.5) * cellH - c.at.y);
+        for (let k = 0; k < free.length; k++) if (free[k]) bestD = Math.min(bestD, dist(k));
+        // Out of reach of the doorway (further than a cell diagonal + the tolerance) is
+        // a sealed entrance, not a seed.
+        const reach = Math.hypot(cellW, cellH) + tolMm;
+        if (bestD <= reach) for (let k = 0; k < free.length; k++) if (free[k] && dist(k) <= bestD + TIE_MM) seed(k);
+        continue;
+      }
+      // Inward step from whichever edge the connector lies on, from each of its cells.
+      const dx = Math.abs(c.at.x - rb.x) <= tolMm ? 1 : Math.abs(c.at.x - (rb.x + rb.w)) <= tolMm ? -1 : 0;
+      const dy = Math.abs(c.at.y - rb.y) <= tolMm ? 1 : Math.abs(c.at.y - (rb.y + rb.h)) <= tolMm ? -1 : 0;
+      for (let ix = ixLo; ix <= ixHi; ix++) {
+        for (let iy = iyLo; iy <= iyHi; iy++) {
+          for (let step = 0; step < nx + ny; step++) {
+            const sx = Math.min(nx - 1, Math.max(0, ix + dx * step));
+            const sy = Math.min(ny - 1, Math.max(0, iy + dy * step));
+            const k = sy * nx + sx;
+            if (free[k]) {
+              seed(k);
+              break;
+            }
+            if ((dx === 0 || sx === (dx > 0 ? nx - 1 : 0)) && (dy === 0 || sy === (dy > 0 ? ny - 1 : 0))) break;
+          }
+        }
+      }
+    }
+    let reached = queue.length;
+    const nb4 = new Int32Array(4);
+    for (let h = 0; h < queue.length; h++) {
+      for (let i = 0, m = neighbours4(queue[h]!, nx, ny, nb4); i < m; i++) {
+        const nb = nb4[i]!;
+        if (free[nb] && !seen[nb]) {
+          seen[nb] = 1;
+          queue.push(nb);
+          reached++;
+        }
+      }
+    }
+
+    return {
+      roomId: r.id,
+      hasConnector: true,
+      reachableClearAreaM2: Math.round(reached * area1 * 100) / 100,
+      totalClearAreaM2: Math.round(totalFree * area1 * 100) / 100,
+    };
+  });
+}

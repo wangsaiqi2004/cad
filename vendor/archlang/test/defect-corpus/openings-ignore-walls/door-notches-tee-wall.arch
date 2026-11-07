@@ -1,0 +1,16 @@
+# class: openings-ignore-walls
+# origin: audits/showcase-and-examples.md F1 (friends d_exit notches 25 mm into the party wall w_corr_east)
+# expect: W_OPENING_AT_JUNCTION
+# status: done
+# fact: d_exit spans x 3875-4875 on the north run; the 300 mm party wall's west face is at 4850, so the
+#   east jamb sits 25 mm inside that wall's body
+plan "Door notched into a party wall" {
+  units mm
+  grid 25
+  wall id=shell exterior thickness 200 { (0,0) (8000,0) (8000,5000) (0,5000) close }
+  wall id=w_party partition thickness 300 { (5000,0) (5000,5000) }
+  room id=a at (0,0) size 5000x5000 label "Stair hall" uses circulation
+  room id=b at (5000,0) size 3000x5000 label "Flat" uses living
+  door id=d_exit on shell at 4375 width 1000
+  door on w_party at 50% width 900
+}

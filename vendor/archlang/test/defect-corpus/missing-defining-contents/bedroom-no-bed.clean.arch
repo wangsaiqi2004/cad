@@ -1,0 +1,19 @@
+# class: missing-defining-contents
+# twin-of: bedroom-no-bed
+# origin: repro/family-apartment.arch Bedroom 3 with a bed added
+# expect: none
+# fact: r_bed holds a wardrobe and a double bed
+plan "Bedroom with a bed" {
+  units mm
+  grid 50
+  wall id=shell exterior thickness 200 { (0,0) (8000,0) (8000,4000) (0,4000) close }
+  wall id=w_mid partition thickness 100 { (4000,0) (4000,4000) }
+  room id=r_living at (0,0) size 4000x4000 label "Living Room" uses living
+  room id=r_bed at (4000,0) size 4000x4000 label "Bedroom 3" uses bedroom
+  door id=d_entry at (2000,4000) width 900 wall shell
+  door id=d_bed at (4000,2000) width 800 wall w_mid swing into r_bed
+  window at (2000,0) width 1500 wall shell
+  window at (8000,2000) width 1200 wall shell
+  furniture wardrobe against wall shell segment 0 offset 6000 in r_bed
+  furniture double_bed against wall shell segment 2 offset 2000 in r_bed
+}

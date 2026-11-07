@@ -1,0 +1,18 @@
+# class: openings-ignore-walls
+# twin-of: opening-crossed-by-partition
+# origin: audits/showcase-and-examples.md X3 with the opening moved clear of the partition
+# expect: none
+# fact: o_dining spans x 5100-6700: a 225 mm nib to the w_liv_din face at 4875
+plan "Opening beside a partition" {
+  units mm
+  grid 25
+  wall id=shell exterior thickness 200 { (0,0) (9000,0) (9000,5000) (0,5000) close }
+  wall id=w_band partition thickness 150 { (0,3000) (9000,3000) }
+  wall id=w_liv_din partition thickness 150 { (4800,0) (4800,3000) }
+  room id=r_living at (0,0) size 4800x3000 label "Living" uses living
+  room id=r_dining at (4800,0) size 4200x3000 label "Dining" uses dining
+  room id=r_entry at (0,3000) size 9000x2000 label "Entry" uses entry
+  door id=d_front on shell at 18500 width 900
+  door on w_band at 2000 width 900
+  opening id=o_dining on w_band at 5900 width 1600
+}

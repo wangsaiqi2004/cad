@@ -1,0 +1,69 @@
+plan "Three-bed family house" {
+  units mm
+  grid 100
+  paper A3 landscape
+  north up
+  dims auto all
+  height 2700
+
+  strip right at (0,0) gap 0 height 4000 {
+    room id=garage size 3600 uses garage
+    room id=living size 5200 uses living
+    room id=kitchen size 4200 label "Kitchen / Dining" uses kitchen
+  }
+  strip right at (0,4000) gap 0 height 1200 {
+    room id=utility size 3600 uses utility
+    room id=hall size 9400 label "Entrance Hall" uses hall
+  }
+  strip right at (0,5200) gap 0 height 3800 {
+    room id=ensuite size 1800 label "Ensuite" uses bath
+    room id=master size 3600 label "Master Bedroom" uses bedroom
+    room id=bed2 size 3000 label "Bedroom 2" uses bedroom
+    room id=bed3 size 2800 label "Bedroom 3" uses bedroom
+    room id=bath size 1800 label "Bathroom" uses bath
+  }
+
+  walls from rooms exterior 250 partition 100 { open between living and hall }
+
+  door on hall.right at center width 800 swing into hall
+  door garage on garage.top at center width 2400
+  door between garage and utility at center width 800 swing into utility
+  door between utility and hall at center width 800 swing into hall
+  door between kitchen and hall at 700 from kitchen.left width 800 swing into kitchen
+  door between master and hall at 900 from start width 800 swing into master
+  door between bed2 and hall at center width 800 swing into bed2
+  door between bed3 and hall at center width 800 swing into bed3
+  door between bath and hall at center width 800 swing into bath
+  door between ensuite and master at center width 800 swing into ensuite
+
+  window on living.top at center width 3000
+  window on kitchen.top at center width 1800
+  window on kitchen.right at center width 1200
+  window on utility.left at center width 800
+  window on ensuite.bottom at center width 600
+  window on master.bottom at center width 1500
+  window on bed2.bottom at center width 1500
+  window on bed3.bottom at center width 1500
+  window on bath.bottom at center width 600
+
+  furniture sofa in living anchor bottom inset 700 size 2200x900
+  furniture tv_unit in living anchor top flush size 1600x450
+  furniture counter against kitchen.top
+  furniture kitchen_sink in kitchen anchor top-right flush size 800x600
+  furniture stove in kitchen anchor top-left flush size 600x600
+  furniture fridge against kitchen.right
+  furniture table in kitchen anchor left inset 800 size 1800x1000
+  furniture washer against utility.left
+  furniture bed in master anchor bottom flush size 1800x2000
+  furniture wardrobe against master.right offset 2600
+  furniture wc against ensuite.left
+  furniture basin against ensuite.top
+  furniture shower against ensuite.bottom
+  furniture bed in bed2 anchor bottom flush size 1500x2000
+  furniture bed in bed3 anchor bottom flush size 1000x2000
+  furniture bathtub against bath.right offset 2700
+  furniture wc against bath.left offset 1500
+  furniture basin against bath.left offset 3000
+
+  title { project "Three-bed family house" drawn_by "Claude" date "2026-10-25" number "H-02" revision "A" }
+}

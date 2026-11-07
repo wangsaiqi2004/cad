@@ -1,0 +1,21 @@
+# class: stair-safety
+# origin: audits/showcase-and-examples.md X5 (examples/hillside-villa.arch L2: the ensuite door swings over the top tread; reduced to one storey)
+# expect: W_SWING_OVER_STAIR
+# status: done
+# fact: d_en_corr (x 4550-5250 on w_land, hinged at 4550) swings out over the landing, sweeping y 2600-3300; the
+#   stair's footprint starts at x 4900, y 2700 and its DN (top) end is the west end
+plan "Door swinging over the stair head" {
+  units mm
+  grid 50
+  wall id=shell exterior thickness 200 { (0,0) (8000,0) (8000,4500) (0,4500) close }
+  wall id=w_land partition thickness 100 { (0,2600) (8000,2600) }
+  wall id=w_en partition thickness 100 { (3500,0) (3500,2600) }
+  room id=r_bed at (0,0) size 3500x2600 label "Bedroom 2" uses bedroom
+  room id=r_en at (3500,0) size 4500x2600 label "Ensuite" uses bath
+  room id=r_landing at (0,2600) size 8000x1900 label "Landing" uses circulation
+  door id=d_front at (1000,4500) width 900 wall shell
+  door id=d_bed at (1750,2600) width 800 wall w_land swing into r_bed
+  door id=d_en_corr at (4900,2600) width 700 wall w_land hinge near start swing into r_landing
+  window at (1750,0) width 1200 wall shell
+  stair id=stair at (4900,2700) size 2200x1000 dir down
+}

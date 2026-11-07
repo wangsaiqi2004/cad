@@ -1,0 +1,22 @@
+{
+  "name": "archlang-docs",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "description": "Documentation site for ArchLang (VitePress). Not published.",
+  "scripts": {
+    "sync": "node sync-docs.mjs",
+    "standalone": "tsx ../packages/web-component/scripts/build.ts --standalone-to public/arch-plan.standalone.js",
+    "dev": "npm run sync && npm run standalone && vitepress dev",
+    "build": "npm run sync && npm run standalone && vitepress build",
+    "preview": "vitepress preview",
+    "typecheck": "npm run sync && vue-tsc --noEmit -p . && tsc -p tsconfig.e2e.json --noEmit"
+  },
+  "devDependencies": {
+    "@fontsource-variable/archivo": "^5.3.0",
+    "@fontsource-variable/public-sans": "^5.3.0",
+    "@fontsource/ibm-plex-mono": "^5.3.0",
+    "vitepress": "^1.6.3",
+    "vue-tsc": "^3.3.13"
+  }
+}

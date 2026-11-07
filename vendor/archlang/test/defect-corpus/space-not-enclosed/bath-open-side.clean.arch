@@ -1,0 +1,21 @@
+# class: space-not-enclosed
+# twin-of: bath-open-side
+# origin: evidence.md section 3 class 2 with the partition run to the far wall
+# expect: none
+# fact: p_bath runs x 0-2000, so every edge of the bath has a wall
+plan "Bath walled on every side" {
+  units mm
+  grid 50
+  wall id=shell exterior thickness 200 { (0,0) (6000,0) (6000,4000) (0,4000) close }
+  wall id=p_mid partition thickness 100 { (2000,0) (2000,4000) }
+  wall id=p_bath partition thickness 100 { (0,2000) (2000,2000) }
+  room id=r_bath at (0,0) size 2000x2000 label "Bathroom" uses bath
+  room id=r_hall at (0,2000) size 2000x2000 label "Hall" uses hall
+  room id=r_living at (2000,0) size 4000x4000 label "Living" uses living
+  door id=d_entry on shell at 15000 width 900
+  door on p_mid at 1000 width 700
+  door on p_mid at 3000 width 900
+  window on shell at 4000 width 1500
+  furniture wc at (350,100) size 400x700
+  furniture basin at (1000,100) size 600x450
+}

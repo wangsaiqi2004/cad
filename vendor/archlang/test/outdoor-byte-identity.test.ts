@@ -1,0 +1,395 @@
+/**
+ * The byte-identity law for `outdoor`, `fence` and `site { boundary … }`.
+ *
+ * **Every new language form ships with a byte-identity law, pinned by test: a plan that
+ * does not use it renders, describes and lints exactly as before.** `site`, the door
+ * kinds, `zone`, `paper`, `polygon`, `arc`, `roof` and `void` each have one; this is the
+ * three ground forms'.
+ *
+ * ## Where the hashes came from
+ *
+ * They were measured on `5298b99`, the last commit before the ground forms,
+ * **before the first `src/` edit of this branch**, by running the existing
+ * `test/roof-void-byte-identity.test.ts` and confirming its four digests green. That
+ * suite's `BASELINE` covers the same four examples with the same `digest()` body, so the
+ * numbers below are that measurement, carried across rather than re-derived.
+ *
+ * Carrying them is deliberate and is the cheapest correct thing available: taking a
+ * "fresh" baseline from a tree that already contains the change would prove determinism,
+ * not identity, and would stay green through a change that moved every byte. The standing
+ * warning applies unchanged — take a baseline with the SAME `digest()` body the test will
+ * run, never a lookalike in a throwaway script; the first attempt at the `roof`/`void` law used a
+ * scratch script whose payload separator differed by one character and produced four
+ * "failures" over artifacts that were in fact byte-identical.
+ *
+ * The payload is the WHOLE agent-facing surface — SVG, `describe()` AND `lint()` — not
+ * just the drawing. A new element that quietly appended an empty key to every summary, or
+ * shifted a diagnostic's order, would leave the SVG untouched and still be a behaviour
+ * change for every consumer of `arch describe --json`. That is not hypothetical here:
+ * this branch appends `outdoor`/`fences` to `SceneSummary`, `outdoor_area_m2` to
+ * `totals`, two fields to `site`, and two rules to the END of `LINT_RULES` — four chances
+ * to move a byte on a plan that mentions none of it.
+ *
+ *
+ * ## The furniture-pass re-measurement — six furniture symbols were REDRAWN
+ *
+ * Three of the four moved, and `studio` did NOT — that asymmetry is the finding, so read it
+ * before touching a number. The living/bedroom/office track redraws eight fixture symbols (`coffee_table`,
+ * `table`, `stool`, `bench`, `chair`, `tv_unit`, `nightstand`, `desk`), so a plan that draws
+ * one of the eight renders different bytes and a plan that does not is untouched. `studio`
+ * places only bath and kitchen fixtures, so its digest is UNCHANGED — the same number, not a
+ * re-blessing — which is the control saying the redraw stayed inside the glyph layer and did
+ * not reach the shared paths this law exists to watch.
+ *
+ * **`describe()` and `lint()` were held SHA-256 identical across the whole change**, measured
+ * example by example against `8fc432a`'s `src/` (extracted with `git archive`) for all 28
+ * import-free examples: 22 SVGs moved, 0 summaries and 0 diagnostic sets. The bytes that moved
+ * here are SVG bytes, and the net lint change across the shipped examples is zero.
+ *
+ * The four examples are import-free (so no `World` is needed), none of them uses any
+ * ground form, and they span the shapes most likely to be disturbed: the signature
+ * dwelling, the flagship, a CONCAVE polygon plan (whose ring code the ground surfaces
+ * share a module with) and a CURVED sheet plan on `paper` (whose auto-fit reads the same
+ * `planBounds` and the same legend row count the ground now contributes to).
+ *
+ * ## RE-MEASURED for the furniture pass, and how it was proved
+ *
+ * All four digests below moved, and it is not this law breaking. The furniture pass redraws FOURTEEN symbols across both furniture tracks — `island`,
+ * `upper_cabinet`, `dishwasher`, `oven`, `fridge` and `washer` in the kitchen and bath
+ * modules, and `coffee_table`, `table`, `stool`, `bench`, `chair`, `tv_unit`, `nightstand`
+ * and `desk` in the living, bedroom and office ones, so every plan that places one draws different bytes ON
+ * PURPOSE. Which track moved which is itself a useful reading: `studio` places only bath and
+ * kitchen fixtures and moved under that track alone; `gallery-l` and `aquarium` place none of
+ * those six and moved only under the living/bedroom/office one; `laneway-house` moved under
+ * both.
+ *
+ * That was proved by SUBSTITUTION rather than assumed, and the proof is reproducible. The
+ * committed `examples/<name>.svg` files are the compiler's own output, drift-gated as such,
+ * so the BASE drawing of any of these plans is `git show <the commit before the redraw>:`
+ * `examples/<name>.svg`. Feeding that into this file's digest body — with `describe()` and
+ * `lint()` taken from the MERGED code — reproduces the OLD hex exactly, for every plan here.
+ * Only the drawing moved.
+ *
+ * So that the next such release need not repeat the argument, each example now also carries a
+ * pin over the SUMMARY half alone (`semanticDigestWith`: the same payload with the SVG
+ * removed). Those numbers are the original measurement, unchanged, and a drawing change can
+ * never move them. If one of THEM moves, the finding is real.
+ *
+ * Re-measured for the visual-polish symbol redraw: SVG only, describe/lint/diagnostics unchanged
+ * (substitution check reproduces the old digests).
+ */
+
+import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
+import { describe, expect, it } from "vitest";
+import { compile, describe as describePlan, lint, planToJson } from "../src/index.js";
+import { type CompilerApi, semanticDigestWith } from "./byte-identity-digest.js";
+
+/** SHA-256 over the SVG + `describe()` + `lint()` of one example, as measured at `5298b99`.*
+ *
+ * ## The circulation-fix re-measurement — the SUMMARY moved, and that is the point
+ *
+ * This is the case the message on the summary half describes: **a moved lint rule and a
+ * changed `describe()` value**, not a drawing. Nothing in the circulation fix touches a
+ * glyph, and the SVG half moved only because its payload contains `describe()`.
+ *
+ * Exactly what changed on `studio.arch`, measured field by field against the previous
+ * commit: **one number.** `circulation.rooms[r_bath].bottleneckClearWidthMm` and the
+ * `r_bed -> r_bath` route's copy of it both go **700 -> 740**. Every other key of the whole
+ * summary — rooms, areas, adjacency, openings, freedom, totals — is byte-identical, and
+ * `lint(studio)` is unchanged (still empty). 740 is the interior door's own clear width
+ * (800 - 60); the old 700 was a FURNITURE pinch reported one body diameter short, so the
+ * flagship sat exactly on the 700 mm minimum by arithmetic accident and one cell of drift
+ * would have made it warn.
+ *
+ * `furnished-flat.arch`, where this suite also pins one: `circulation` gains an `r_bath`
+ * entry and the two bedroom->bath routes that depend on it (the room was silently dropped
+ * because its label point sat in a pocket the entrance could not reach), and gains
+ * `blocked: [{ roomId: "r_kitchen", widestWayInMm: 400 }]` — a real, previously
+ * unreported finding about that plan, carrying the MEASURED width of the best way in
+ * rather than a fabricated zero.
+ * Nothing else in its summary moved.
+ *
+ * Do not read this entry as permission either. A summary digest still moves only for a
+ * named, measured reason, written down here.
+ *
+ * ## Amendment — the threshold carve, and why more plans moved
+ *
+ * The connector carve was centre-first-then-stop: if the opening's midpoint happened to
+ * be walkable, ONE cell of the threshold was opened and the rest of its width was never
+ * tried. Every walkable part is now carved. That is strictly MORE free cells, so a route
+ * can only gain options, and the measured effect across the shipped examples is exactly
+ * that: **every `walkDistanceMm` and `detourRatio` on the affected plans falls or stays
+ * equal, and every `bottleneckClearWidthMm` is unchanged — with one exception**,
+ * `aquarium`'s `rotunda_r`, 2340 -> 1740. That one is the carve's stamp, not the route: a
+ * carved cell is stamped with `min(existing, connector clear width)`, so opening more of
+ * a narrower connector's threshold stamps more cells at its width. It is a lower number
+ * for a real reason and it moves no diagnostic.
+ *
+ * **`lint()` over all 30 shipped examples is byte-identical across this amendment** —
+ * the only two diagnostics this branch adds were already added before it.
+ *
+ * ## The curved-wall re-measurement — a curved wall stopped being rasterised as its chord
+ *
+ * ONE example moved: `aquarium`, on BOTH halves. `studio`, `gallery-l` and `laneway-house`
+ * are unchanged, and that is the control — none of them has an `arc`.
+ *
+ * The nav grid blocked every wall segment against the straight CHORD between its endpoints,
+ * ignoring the `arcs[]` solve `resolve` had already done. For a curve that is not a coarser
+ * version of the same wall, it is a DIFFERENT wall somewhere else: `aquarium`'s rotunda is
+ * two semicircular `arc` edges sharing endpoints, so it rasterised to a bar along its own
+ * DIAMETER — a route could walk through the masonry, while the round room inside was severed
+ * into two caps and the `plant` room beyond one of them dropped out of the facts with nothing
+ * said. Segments now block against `distPointToArc`.
+ *
+ * Field by field against the previous commit, `aquarium`'s summary changes ONLY inside
+ * `circulation`: a new `rooms[]` entry for `plant` (walk 36 900, bottleneck 1140 — exactly
+ * `d_rot_n`'s own clear width, which is the narrowest thing on the only route in), and
+ * `rotunda_r`'s walk 25 600 -> 25 700, one cell, for having to use the carved threshold
+ * instead of walking through the wall. Every other key — rooms, areas, adjacency, openings,
+ * freedom, totals — is byte-identical.
+ *
+ * **The SVG is byte-identical**, which is the constructive half of the argument: the DRAWING
+ * always had the arc. Only the nav grid had a chord. And `lint()` over all 30 shipped
+ * examples is byte-identical across the change.
+ *
+ * Do not read this entry as permission either.
+ *
+ * ## Stepped-facade dimensions — two example SOURCES gained hand dimensions
+ *
+ * `aquarium` and `gallery-l` moved in the DRAWING half only, and not because the compiler
+ * changed under them: each example gained hand-written `dim`s on the openings no
+ * `dims auto` chain can measure (two windows on the curve, a door on the angled face).
+ * That is the remedy the new `W_OPENING_NOT_DIMENSIONED` asks for, and the dims draw. The
+ * SEMANTIC rows below did not move: the dims do not appear in `describe()`, and they close
+ * the warning, so both plans lint exactly as before. `studio` and `laneway-house` are the
+ * control and are unchanged.
+ *
+ * ## `aquarium` again, on BOTH halves: its rooms stopped overhanging the curve
+ *
+ * The example's `cafe` and `concourse` rectangles ran into the bowed south-east corner and
+ * claimed floor outside the curved wall (cafe 200 m² against about 169 m² inside it). They
+ * are now polygons following the arc, so the SUMMARY moves, and only by what that implies:
+ * cafe 167.97 m², concourse 479.8 m², total 2028.83 m², the two arc windows now lighting
+ * `cafe`, and two walk distances one nav-grid cell different. The compiler did not change;
+ * `test/byte-identity-baseline.ts` has the field-by-field account.
+ *
+ * Do not read this entry as permission either.
+ *
+ * ## `laneway-house` and `aquarium` re-measured for circulation (W3b)
+ *
+ * Only `describe().circulation` moved; SVG and `lint()` are byte-identical. `laneway-house`
+ * has two entrances and each room now walks from its nearest (r_bed 9200 → 4400); `aquarium`'s
+ * rotunda detour 1.01 → 1 is the nav grid sampling in its own snapped frame.
+ * `test/byte-identity-baseline.ts` has the account ("Fourteen rows re-measured").
+ */
+// Rows re-measured for circulation v2 (backlog E.6–E.10) with this file's own digest body:
+// SVG and lint() byte-identical, only describe().circulation moved — each field, and the
+// rule that moved it, in ./byte-identity-baseline.ts ("Circulation v2").
+// `laneway-house`, `gallery-l` and `aquarium` re-measured again for the thickness call-out
+// station, the drawing only: the OLD SVG put back into the new payload reproduces each old
+// row, and SEMANTIC_BASELINE did not move. Each moved call-out in ./byte-identity-baseline.ts
+// ("thickness call-outs keep off doorways and fixtures").
+// Every row re-measured once for net internal area (owner decision 2): describe() gains
+// net_area_m2 / totals.net_floor_area_m2; SVG and lint unchanged except room schedules.
+// A hybrid run of this file, unedited, with describe() from the pre-change tree (1eb1bf9)
+// reproduces every old SUMMARY row and every old whole-surface row but `aquarium`'s, which
+// set `schedule rooms` and gain the NET AREA column; with compile() too from that tree
+// they reproduce as well. The account is in ./byte-identity-baseline.ts ("EVERY row
+// re-measured, once"). Those schedule rows were re-measured once more, alone, when the
+// AREA column took the label `AREA (CENTRELINE, m²)`; SEMANTIC_BASELINE did not move.
+// Re-measured once more when net area became the room less every wall band on it (ADR
+// 0027): `aquarium`'s two rows, because the curved shell's band covers 0.28 + 1.14 m² of
+// the concourse and cafe; its SUMMARY row moves with describe(). Field by field in
+// ./byte-identity-baseline.ts ("Six plans re-measured again").
+// `aquarium`'s two rows re-measured for plan-soundness PS2.4: its source was fixed (the galleries
+// reach the north wall, the concourse takes the bay round the drum), and the new rules move lint() only —
+// the new SVG and describe() with the previous lint() reproduce both rows on the previous
+// source. ./byte-identity-baseline.ts ("the space-enclosure rules").
+// `laneway-house`'s two rows re-measured for plan-soundness PS0.10: describe().access gains the
+// appended `mainEntrance` and each room's `depthFromMainEntrance`; SVG and lint() byte-identical,
+// and the previous describe() put back reproduces both previous rows
+// (./byte-identity-baseline.ts, "`describe().access` names the main entrance").
+// Re-measured 2026-10-23 (PS3.7): aquarium, gallery-l (both tables): chairs turned to the table they sit at, a real
+// defect `W_SEAT_FACING_AWAY` found (ADR 0029 §6); the cause and the proof that nothing else
+// moved are in `test/byte-identity-baseline.ts`'s header.
+// Re-measured 2026-10-24 (PS2.12): the annotation-collision examples (aquarium); why, and the swap-back proof, in `test/byte-identity-baseline.ts`'s header.
+// Re-measured 2026-10-25 (PS2.11a/b): laneway-house (its WC moved off the corner); why, and the proof that nothing else moved, in `test/byte-identity-baseline.ts`'s header.
+// Re-measured 2026-10-26 (PS2.11e/PS2.46): laneway-house and studio (hob and fridge apart, whole payload only), gallery-l and aquarium (their wide leaves now `door double` pairs, so `describe()` names the kind: both tables); why, in `test/byte-identity-baseline.ts`'s header.
+// Re-measured 2026-10-26 (PR #283 red-team round 1): gallery-l and aquarium widen a `double` pair to 2000 and `describe()` reads one leaf's clear width (both tables); why, in `test/byte-identity-baseline.ts`'s header.
+const BASELINE: [string, string][] = [
+  // PS4.4: every row whose plan resolves re-measured once for the new totals key (gross internal area); see test/byte-identity-baseline.ts.
+  // Both laneway-house rows re-measured 2026-10-20 (PS2.17): its kitchen gained a worktop; the new
+  // compiler on the previous source, the worktop finding removed, reproduces 1e163ea9… and f3afd6b5….
+  ["laneway-house", "2ac23ea67c6a4241a26e39e753229b5ac552dc939a6cc4ce500e8c7c8353e7d7"], // PS2.11e, see header
+  ["studio", "7dac86ce77ab71a1d3be8eda909e523aba3655579103db09b061e003ab8287c6"], // PS2.11e, see header
+  ["gallery-l", "cfecaf8961e2bba24cd3e508418a15634ba62812a0f5c01ae6e4b7f6ae6bf3aa"], // PS2.10 dims fixed (byte-identity-baseline.ts); PS2.11e, see header
+  ["aquarium", "e0a8d48404f923552b8259f744f7ba35fde1e81e6b3c8a86685203935a35c3a9"], // re-measured for PS2.4, see header; PS2.10 dims fixed (byte-identity-baseline.ts); PS2.11e, see header
+];
+
+/** The SUMMARY half of the same law — see the header. Re-measured for `aquarium` twice, both times because its rooms were wrong (the second: PS2.4). */
+const SEMANTIC_BASELINE: [string, string][] = [
+  // PS4.4: every row whose plan resolves re-measured once for the new totals key (gross internal area); see test/byte-identity-baseline.ts.
+  ["laneway-house", "55f68cc66a633508a2442aafa4dcf60d38076c2f54470c3a56ad3107493839d0"],
+  ["studio", "8ec08c91405139bf3d9979ad20d712299e82409bbec8d6ec9e70e89a856973e4"],
+  ["gallery-l", "5dec4904ac00c1d5a20747336ec0acaa4b6682f40b02008aad554ccfa87f0025"], // PS2.11e, see header
+  ["aquarium", "323cc760461ca7f9461d99e3cae6d38943e844b31a4308a7830d47cc7d1ae841"], // re-measured for PS2.4, see header; PS2.11e, see header
+];
+
+/** The compiler surface the summary-half pins are taken over. */
+const API: CompilerApi = { compile, describe: describePlan, lint };
+
+/** The exact payload the baseline digests were taken over — do not change its shape. */
+function digest(src: string): string {
+  const { svg } = compile(src, { noCache: true });
+  const payload = [svg, JSON.stringify(describePlan(src)), JSON.stringify(lint(src))].join("\n \n");
+  return createHash("sha256").update(payload).digest("hex");
+}
+
+describe("outdoor/fence/boundary byte-identity — a plan that uses none of them is unchanged", () => {
+  for (const [name, sha] of BASELINE) {
+    it(`${name}.arch renders, describes and lints exactly as on main`, () => {
+      const src = readFileSync(`examples/${name}.arch`, "utf8");
+      // COMMENTS ARE STRIPPED FIRST. `boundary` is an ordinary English word and
+      // `aquarium.arch` uses it in prose ("# room boundary and connects two spaces"),
+      // which the first draft of this guard read as a language use and refused. The guard
+      // is about what the plan COMPILES, so it has to look at what the compiler looks at.
+      const code = src.replace(/#.*$/gm, "");
+      expect(code).not.toMatch(/(?<![\w-])(outdoor|fence|boundary)(?![\w-])/);
+      expect(
+        digest(src),
+        `${name}.arch changed. Nothing on this branch touches it, so either a shared code path ` +
+          `moved (the hatch list the SVG defs are built from, the legend row count, planBounds, ` +
+          `the describe() key order, the LINT_RULES order) or an element table grew a field every ` +
+          `plan pays for. Find out WHICH before updating this digest — the point of the number is ` +
+          `that it does not move.`,
+      ).toBe(sha);
+    });
+  }
+
+  for (const [name, sha] of SEMANTIC_BASELINE) {
+    it(`${name}.arch describes and lints exactly as on main — no drawing in the payload`, () => {
+      expect(
+        semanticDigestWith(API, readFileSync(`examples/${name}.arch`, "utf8")),
+        `${name}.arch's SUMMARY changed. A redrawn symbol cannot do this; a new describe() key, ` +
+          `a moved lint rule or a catalog flag that changed an existing category's semantics can. ` +
+          `This number is not re-measured for a drawing change.`,
+      ).toBe(sha);
+    });
+  }
+});
+
+describe("the three forms are absent from the Plan JSON projection", () => {
+  const PLAN = (extra: string): string =>
+    `plan "J" {\n  units mm\n` +
+    `  wall id=w1 exterior thickness 200 { (0,0) (8000,0) (8000,5000) (0,5000) close }\n` +
+    `  room id=r1 at (0,0) size 8000x5000 label "Hall" uses living\n` +
+    `  door id=d on w1 at 50% width 900\n` +
+    `${extra}}\n`;
+
+  /**
+   * The control carries the `site` block already, and that is the whole point of it.
+   *
+   * `site` HAS entered Plan JSON — as `{street, hemisphere}` — so a control
+   * with no `site` at all would differ from the test plan for a reason unrelated to the
+   * ground forms, and the first draft of this test failed exactly that way.
+   * Holding the block fixed and adding only the three ground forms to it isolates the
+   * claim being made, which is sharper than the version that accidentally passed would
+   * have been: it says `boundary` does not join the projection even though the block it
+   * sits in already does.
+   */
+  const SITE = `  site {\n    street south\n`;
+
+  it("adding ground, a fence and a lot line does not change one byte of `planToJson`", () => {
+    const bare = planToJson(PLAN(`${SITE}  }\n`));
+    const all = planToJson(
+      PLAN(
+        `${SITE}    boundary (-4000,-4000) (14000,-4000) (14000,11000) (-4000,11000)\n  }\n` +
+          `  outdoor lawn at (-3000,-3000) size 16000x13000 label "Garden"\n` +
+          `  outdoor balcony at (2000,5000) size 3000x1500\n` +
+          `  fence picket { (-4000,-4000) (14000,-4000) }\n`,
+      ),
+    );
+    expect(bare.diagnostics.filter((d) => d.severity === "error")).toEqual([]);
+    expect(all.diagnostics.filter((d) => d.severity === "error")).toEqual([]);
+    expect(JSON.stringify(all.json)).toBe(JSON.stringify(bare.json));
+  });
+
+  it("…and neither does each form ON ITS OWN, against a plan with no `site` at all", () => {
+    // The per-form version of the same law. It runs against the bare control precisely
+    // BECAUSE the site case cannot: it proves that `outdoor` and `fence` add nothing even
+    // to a projection that has no `site` key to hide behind.
+    const bare = JSON.stringify(planToJson(PLAN("")).json);
+    for (const extra of [
+      `  outdoor lawn at (-3000,-3000) size 16000x13000 label "Garden"\n`,
+      `  outdoor balcony at (2000,5000) size 3000x1500\n`,
+      `  outdoor paving polygon (0,0) (4000,0) (4000,3000)\n`,
+      `  fence picket { (-4000,-4000) (14000,-4000) }\n`,
+    ]) {
+      expect(JSON.stringify(planToJson(PLAN(extra)).json), extra.trim()).toBe(bare);
+    }
+  });
+
+  it("no new keyword appears in either committed schema", () => {
+    for (const f of ["schemas/plan.schema.json", "schemas/intent.schema.json"]) {
+      expect(readFileSync(f, "utf8")).not.toMatch(/"(outdoor|fence|boundary|rail)"/);
+    }
+  });
+});
+
+describe("additive to the drawing — and the page growth is stated, not hidden", () => {
+  /** The same plan with and without ground, a fence and a lot line. */
+  const pair = (settings: string): [string, string] => {
+    const body =
+      `  units mm\n  north up\n${settings}` +
+      `  wall id=w1 exterior thickness 200 { (0,0) (8000,0) (8000,5000) (0,5000) close }\n` +
+      `  room id=r1 at (0,0) size 8000x5000 label "Hall" uses living\n`;
+    return [
+      compile(`plan "G" {\n${body}}\n`, { noCache: true }).svg,
+      compile(
+        `plan "G" {\n${body}` +
+          `  outdoor lawn at (-3000,-3000) size 16000x13000\n` +
+          `  fence post { (-3000,-3000) (13000,-3000) }\n` +
+          `}\n`,
+        { noCache: true },
+      ).svg,
+    ];
+  };
+
+  /** Every CAD-layer group in the SVG, keyed by layer name. */
+  const layers = (svg: string): Map<string, string> =>
+    new Map([...svg.matchAll(/<g id="([^"]+)"[\s\S]*?<\/g>/g)].map((m) => [m[1]!, m[0]!]));
+
+  it("on a `paper` plan, every existing layer is byte-identical and only L-SITE/L-PLNT are new", () => {
+    // With a sheet the render sizes come from the PAPER, so nothing rescales and the claim
+    // is exact: the ground adds groups and touches no other. This is the strong form of
+    // "additive" — ground that had moved a label, a wall or a dimension would fail here
+    // rather than hide inside a page-size difference.
+    const [bare, ground] = pair(`  paper A2 landscape\n  scale 1:100\n`);
+    const a = layers(bare);
+    const b = layers(ground);
+    expect([...b.keys()].filter((k) => !a.has(k)).sort()).toEqual(["L-PLNT", "L-SITE"]);
+    for (const [name, group] of a) expect(b.get(name), `layer ${name} moved`).toBe(group);
+  });
+
+  it("without `paper`, the ground rescales the whole drawing — and that is the pre-existing rule", () => {
+    // A plan with no sheet sizes every font and stroke from its own reference dimension
+    // (`max(drawW, drawH)`), so ANY element that grows the extent rescales the drawing — a
+    // far-flung `column`, a wide `dim` offset and a `roof overhang` all do exactly the
+    // same. Pinned rather than papered over, so nobody reads the sheet-mode test above as
+    // a promise the no-sheet path also makes. It is why a site plan wants `paper`.
+    const [bare, ground] = pair("");
+    const fontOf = (svg: string): string => /font-size="([\d.]+)"[^>]*font-weight="600"/.exec(svg)![1]!;
+    expect(Number(fontOf(ground))).toBeGreaterThan(Number(fontOf(bare)));
+  });
+
+  it("a plan with no ground emits no ground `<pattern>` and no extra legend row", () => {
+    // The other direction of the hatch widening: `hatchesUsed(walls, ground)` must add
+    // exactly nothing when there is no ground, or every existing legend gains a row and
+    // every existing sheet reserves space for it.
+    const sheet = `  paper A2 landscape\n  scale 1:100\n  legend\n`;
+    const [bare] = pair(sheet);
+    const ids = [...bare.matchAll(/<pattern id="([^"]+)"/g)].map((m) => m[1]!);
+    expect(ids).toEqual(["poche"]);
+  });
+});

@@ -1,0 +1,17 @@
+# class: clearances
+# twin-of: fridge-in-swing
+# origin: railroad "fridge in swing" with the fridge moved along the north wall
+# expect: none
+# fact: the fridge spans x 5700-6300, clear of the swing (x 3050-3850)
+plan "Fridge clear of the door swing" {
+  units mm
+  grid 50
+  wall id=shell exterior thickness 200 { (0,0) (7000,0) (7000,4000) (0,4000) close }
+  wall id=w_mid partition thickness 100 { (3000,0) (3000,4000) }
+  room id=r_hall at (0,0) size 3000x4000 label "Hall" uses hall
+  room id=r_kitchen at (3000,0) size 4000x4000 label "Kitchen" uses kitchen
+  door id=d_entry at (1500,4000) width 900 wall shell
+  door id=d_kitchen at (3000,900) width 800 wall w_mid hinge near start swing into r_kitchen
+  window at (7000,2000) width 1200 wall shell
+  furniture fridge against wall shell segment 0 offset 6000 in r_kitchen
+}

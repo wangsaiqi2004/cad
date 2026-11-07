@@ -1,0 +1,135 @@
+/**
+ * Embed page (embed.html) — chrome-less, fills the iframe. Uses .pz-* and
+ * .room-tip from panels.css (the viewport paper + drafting grid comes from
+ * .pz-viewport there) plus the body.embed layout below. Owned by W4.
+ */
+
+/* ── embed page (embed.html) — chrome-less, fills the iframe ── */
+body.embed {
+  display: block;
+}
+.embed-app {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  grid-template-columns: 1fr;
+  grid-template-rows: 1fr;
+}
+.embed-app:has(.embed-editor:not([hidden])) {
+  grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
+}
+/* editor pane stays a light paper editor, with a slim plum top rule — the compile
+   seam — whispering the source world into it */
+.embed-editor {
+  min-width: 0;
+  border-right: 1px solid var(--hairline);
+  border-top: 3px solid var(--plum);
+  background: var(--paper-panel);
+}
+.embed-editor[hidden] {
+  display: none;
+}
+.embed-editor textarea {
+  width: 100%;
+  height: 100%;
+  border: 0;
+  resize: none;
+  padding: 12px 14px;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--ink);
+  background: var(--paper-panel);
+  outline: none;
+}
+.embed-preview {
+  position: relative;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.embed-preview .pz-viewport {
+  flex: 1;
+}
+/* the "ArchLang" attribution, bottom-left — a mini TITLE-BLOCK cell:
+   squared hairline chip, icon + caps micro-label + sheet number. */
+.embed-brand {
+  position: absolute;
+  left: 8px;
+  bottom: 8px;
+  z-index: 6;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 4px 9px;
+  border: 1px solid var(--hairline);
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--paper-panel) 92%, transparent);
+  backdrop-filter: blur(6px);
+  text-decoration: none;
+  color: var(--ink);
+}
+.embed-brand img {
+  display: block;
+}
+.embed-brand .embed-brand-name {
+  font-family: var(--font-display);
+  font-variation-settings: "wdth" 85;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--ink);
+}
+.embed-brand .embed-brand-sheet {
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-muted);
+  padding-left: 7px;
+  border-left: 1px solid var(--hairline);
+}
+.embed-brand:hover {
+  border-color: var(--redline);
+}
+.embed-brand:hover .embed-brand-name {
+  color: var(--redline-ink);
+}
+/* shared-plan notice, embed variant — the same strip panels.css defines, tightened
+   for someone else's iframe. It carries the SHORT sentence (shared-notice.ts), which
+   fits one line at the widths embeds actually use, and it deliberately WRAPS rather
+   than clipping when it does not: an ellipsis here ate the second half of the
+   sentence — the "not by ArchLang" half — which is the only part that matters. */
+.embed .shared-notice {
+  padding: 6px 10px;
+  gap: 10px;
+  font-size: 12px;
+}
+
+/* error bar — redline treatment on paper */
+.embed-err {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 20;
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  color: var(--redline-ink);
+  padding: 8px 12px;
+  background: color-mix(in srgb, var(--redline) 8%, var(--paper));
+  border-top: 2px solid var(--redline);
+}
+.embed-err[hidden] {
+  display: none;
+}
+@media (max-width: 640px) {
+  .embed-app:has(.embed-editor:not([hidden])) {
+    grid-template-columns: 1fr;
+    grid-template-rows: 1fr 1fr;
+  }
+  .embed-editor {
+    border-right: 0;
+    border-bottom: 1px solid var(--hairline);
+  }
+}

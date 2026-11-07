@@ -1,0 +1,17 @@
+# class: openings-ignore-walls
+# origin: repro/door-on-tee.arch (window removed); README PS0.1, PS2.3
+# expect: W_CONNECTOR_AMBIGUOUS
+# status: done
+# fact: d_front spans x 3550-4450 on the north run, centred on the tee where partition p (faces 3950-4050)
+#   meets the shell; describe reads it as the entrance, between [exterior, a] with straddles [a, b] and
+#   ambiguous:false, so the door lands on the junction and no code reports it
+plan "Door on an exterior tee" {
+  units mm
+  grid 50
+  wall id=shell exterior thickness 200 { (0,0) (8000,0) (8000,5000) (0,5000) close }
+  wall id=p partition thickness 100 { (4000,0) (4000,5000) }
+  room id=a at (0,0) size 4000x5000 label "A"
+  room id=b at (4000,0) size 4000x5000 label "B"
+  door id=d_front on shell at 4000 width 900
+  door on p at 50% width 800
+}

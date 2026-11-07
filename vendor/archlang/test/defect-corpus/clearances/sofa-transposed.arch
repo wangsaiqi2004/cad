@@ -1,0 +1,19 @@
+# class: clearances
+# origin: audits/2026-10-18-first-contact.md H2 (first-contact-plans/2-house.arch `sofa at (5400,5200) size
+#   900x2200`, no rotate); T3 (first-contact-plans/5-townhouse.arch, 900x2000), C4 (first-contact-plans/4-cafe.arch
+#   bar_counter 700x1900)
+# expect: W_FOOTPRINT_TRANSPOSED
+# status: todo
+# fact: the sofa is `at (4200,1150) size 900x2200` with no rotate; rotate 0 puts its back on the 900 mm north edge,
+#   so it draws one seat wide and 2.2 m deep, facing south (PNG checked), while the tv_unit on the west wall faces
+#   east
+plan "Sofa written as a transposed footprint" {
+  units mm
+  grid 50
+  wall id=shell exterior thickness 200 { (0,0) (6000,0) (6000,4500) (0,4500) close }
+  room id=r_liv at (0,0) size 6000x4500 label "Living Room" uses living
+  door id=d_entry at (3000,4500) width 900 wall shell
+  window at (3000,0) width 1500 wall shell
+  furniture tv_unit against wall shell segment 3 offset 2250 in r_liv
+  furniture sofa at (4200,1150) size 900x2200 label "Sofa"
+}

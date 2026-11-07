@@ -1,0 +1,14 @@
+plan "Stair nowhere" {
+  units mm
+  grid 50
+  wall id=shell exterior thickness 200 { (0,0) (8000,0) (8000,7000) (0,7000) close }
+  wall id=hall_w partition thickness 100 { (2200,0) (2200,7000) }
+  room id=hall at (0,0) size 2200x7000 label "Hall" uses hall
+  room id=living at (2200,0) size 5800x7000 label "Living" uses living
+  door id=d_front at (1100,0) width 1000 wall shell
+  window id=d_patio at (5000,7000) width 2400 wall shell
+  door id=d_l on hall_w at 1800 width 900
+  furniture sofa at (2300,1300) size 900x1100 label "Blocker"
+  window id=w2 at (5000,0) width 1800 wall shell
+  stair id=stair at (100,3500) size 900x2600 dir up
+}

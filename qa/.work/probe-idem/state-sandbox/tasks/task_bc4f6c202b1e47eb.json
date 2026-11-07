@@ -1,0 +1,107 @@
+{
+  "taskId": "task_bc4f6c202b1e47eb",
+  "projectId": "qa-prj",
+  "versionId": "v001",
+  "state": "DONE",
+  "stateEnteredAt": "2026-11-07T07:13:50.884Z",
+  "subProgress": {
+    "done": 0,
+    "total": 0,
+    "unit": "外部等待"
+  },
+  "events": [
+    {
+      "at": "2026-11-07T07:13:50.778Z",
+      "type": "state_transition",
+      "from": "DRAFT",
+      "to": "INGESTING",
+      "reason": "QA 真实推进 INGESTING",
+      "actor": "system"
+    },
+    {
+      "at": "2026-11-07T07:13:50.789Z",
+      "type": "state_transition",
+      "from": "INGESTING",
+      "to": "EXTRACTING",
+      "reason": "QA 真实推进 EXTRACTING",
+      "actor": "system"
+    },
+    {
+      "at": "2026-11-07T07:13:50.800Z",
+      "type": "state_transition",
+      "from": "EXTRACTING",
+      "to": "AWAITING_CALIBRATION",
+      "reason": "QA 真实推进 AWAITING_CALIBRATION",
+      "actor": "system"
+    },
+    {
+      "at": "2026-11-07T07:13:50.810Z",
+      "type": "state_transition",
+      "from": "AWAITING_CALIBRATION",
+      "to": "STRUCTURE_READY",
+      "reason": "QA 真实推进 STRUCTURE_READY",
+      "actor": "system"
+    },
+    {
+      "at": "2026-11-07T07:13:50.820Z",
+      "type": "state_transition",
+      "from": "STRUCTURE_READY",
+      "to": "LAYOUT_PLANNING",
+      "reason": "QA 真实推进 LAYOUT_PLANNING",
+      "actor": "system"
+    },
+    {
+      "at": "2026-11-07T07:13:50.830Z",
+      "type": "state_transition",
+      "from": "LAYOUT_PLANNING",
+      "to": "CAD_BUILDING",
+      "reason": "QA 真实推进 CAD_BUILDING",
+      "actor": "system"
+    },
+    {
+      "at": "2026-11-07T07:13:50.840Z",
+      "type": "state_transition",
+      "from": "CAD_BUILDING",
+      "to": "CAD_CHECKING",
+      "reason": "QA 真实推进 CAD_CHECKING",
+      "actor": "system"
+    },
+    {
+      "at": "2026-11-07T07:13:50.852Z",
+      "type": "state_transition",
+      "from": "CAD_CHECKING",
+      "to": "IMAGE_AWAITING_CONFIRM",
+      "reason": "QA 真实推进 IMAGE_AWAITING_CONFIRM",
+      "actor": "system"
+    },
+    {
+      "at": "2026-11-07T07:13:50.862Z",
+      "type": "state_transition",
+      "from": "IMAGE_AWAITING_CONFIRM",
+      "to": "IMAGE_GENERATING",
+      "reason": "QA 真实推进 IMAGE_GENERATING",
+      "actor": "system"
+    },
+    {
+      "at": "2026-11-07T07:13:50.873Z",
+      "type": "state_transition",
+      "from": "IMAGE_GENERATING",
+      "to": "PACKAGING",
+      "reason": "QA 真实推进 PACKAGING",
+      "actor": "system"
+    },
+    {
+      "at": "2026-11-07T07:13:50.884Z",
+      "type": "state_transition",
+      "from": "PACKAGING",
+      "to": "DONE",
+      "reason": "QA 真实推进 DONE",
+      "actor": "system"
+    }
+  ],
+  "errorCode": null,
+  "idempotencyKey": null,
+  "chargeSubmittedCount": 0,
+  "redoOf": null,
+  "createdAt": "2026-11-07T07:13:50.772Z"
+}

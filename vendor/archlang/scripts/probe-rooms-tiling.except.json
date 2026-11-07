@@ -1,0 +1,12 @@
+{
+  "$comment": "Reviewed exclusions for figure (b) of scripts/probe-rooms-tiling.ts (ADR 0028 Acceptance). Each entry was reviewed by reading the plan. `no-use-outdoor`: the room declares no use kind and the plan shows it is open-air floor outside the enclosed building (the probe checks it has no `uses`); never chosen by its label alone. `not-enclosed-floor`: a declared room that is not part of the floor the derived walls would bound. Every other room with no use kind (70 of the corpus's 71) is enclosed floor (a studio, a gallery, the rooms of `relational.arch`) and stays in the set. A stale entry (no such room) fails the probe.",
+  "entries": [
+    {
+      "file": "examples/hillside-villa.arch",
+      "level": 1,
+      "room": "r_terrace",
+      "rule": "no-use-outdoor",
+      "reason": "Declares no use kind (ADR 0028: outdoor). The plan treats it as outside: the kitchen/terrace wall w_kit_terr is category exterior with a sliding door onto it, and it holds sun loungers. The authored shell ring does wrap it, so with it excluded the derived ring would stop at y 8200 east of x 8000."
+    }
+  ]
+}

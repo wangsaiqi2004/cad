@@ -1,0 +1,101 @@
+plan "Corner Cafe" {
+  units mm
+  grid 50
+  paper A3 landscape
+  north up
+  dims auto all
+  height 3000
+
+  title { project "Corner cafe" drawn_by "AI first-contact" date "2026-10-18" number "C-101" revision "A" }
+
+  # Streets run along the south and west faces; the public entrance is the chamfered SW corner.
+  # Rooms to wall centrelines: ~88 m2 gross.
+
+  # ---- rooms ----
+  room id=r_din polygon (2400,0) (6000,0) (6000,9000) (1800,9000) (0,7200) (0,2600) (2400,2600) label "Cafe seating" uses dining
+  room id=r_awc  at (0,0)       size 2400x2600 label "Accessible WC" uses wc
+  room id=r_kit  at (6000,0)    size 4000x3600 label "Kitchen" uses kitchen
+  room id=r_serv at (6000,3600) size 4000x2000 label "Counter / servery" uses kitchen
+  room id=r_swc  at (6000,5600) size 1600x3400 label "Staff WC" uses wc
+  room id=r_store at (7600,5600) size 2400x3400 label "Store" uses storage
+
+  # ---- exterior shell ----
+  wall id=w_n  exterior thickness 250 { (0,0) (10000,0) }
+  wall id=w_e  exterior thickness 250 { (10000,0) (10000,9000) }
+  wall id=w_s  exterior thickness 250 { (1800,9000) (10000,9000) }
+  wall id=w_ch exterior thickness 250 { (0,7200) (1800,9000) }
+  wall id=w_w  exterior thickness 250 { (0,0) (0,7200) }
+
+  # ---- interior walls ----
+  wall id=w_v1 partition thickness 150 { (6000,0) (6000,3600) }
+  wall id=w_v2 partition thickness 150 { (6000,5600) (6000,9000) }
+  wall id=w_h1 partition thickness 100 { (6000,3600) (10000,3600) }
+  wall id=w_h2 partition thickness 100 { (6000,5600) (10000,5600) }
+  wall id=w_v3 partition thickness 100 { (7600,5600) (7600,9000) }
+  wall id=w_wc1 partition thickness 100 { (0,2600) (2400,2600) }
+  wall id=w_wc2 partition thickness 100 { (2400,0) (2400,2600) }
+
+  # ---- doors ----
+  door id=d_entry_a on w_ch at 823 width 850 hinge near start swing into r_din
+  door id=d_entry_b on w_ch at 1750 width 850 hinge near end swing into r_din
+  door id=d_awc sliding on w_wc1 at 1200 width 1000
+  door id=d_pass on w_v1 at 1500 width 1000 swing into r_kit
+  door id=d_kit_serv on w_h1 at 1500 width 1000 swing into r_kit
+  door id=d_store on w_h2 at 2800 width 900 swing into r_store
+  door id=d_swc on w_h2 at 800 width 800 swing into r_swc
+  door id=d_back on w_n at 8000 width 1000 swing out
+  door id=d_delivery on w_e at 7300 width 1000 swing out
+
+  # hand dimensions for the two chamfer doors (auto chains only run along x or y)
+  dim (281,7481)->(883,8083) offset 0
+  dim (937,8137)->(1538,8738) offset 0
+
+  # ---- windows ----
+  window on w_n at 1200 width 600
+  window on w_n at 4200 width 2400
+  window on w_n at 6800 width 1000
+  window on w_w at 4200 width 2400
+  window on w_s at 1100 width 1600
+  window on w_s at 3100 width 1600
+  window on w_e at 4600 width 1000
+  window on w_s at 5600 width 600
+
+  # ---- seating: 4 four-tops + 4 two-tops = 24 seats ----
+  let FX = [2800, 4400, 2500, 4000]
+  let FY = [700, 700, 3700, 3700]
+  for i in 0..4 {
+    furniture table at (FX[i], FY[i]) size 1200x800 label "T{i + 1}"
+    furniture chair at (FX[i] + 150, FY[i] - 450) size 450x450
+    furniture chair at (FX[i] + 600, FY[i] - 450) size 450x450
+    furniture chair at (FX[i] + 150, FY[i] + 800) size 450x450
+    furniture chair at (FX[i] + 600, FY[i] + 800) size 450x450
+  }
+  let TX = [300, 2300, 3900, 3900]
+  let TY = [3500, 5700, 5700, 7500]
+  for i in 0..4 {
+    furniture table at (TX[i], TY[i]) size 800x800 label "T{i + 5}"
+    furniture chair at (TX[i] + 175, TY[i] - 450) size 450x450
+    furniture chair at (TX[i] + 175, TY[i] + 800) size 450x450
+  }
+
+  # ---- counter ----
+  furniture bar_counter at (5650,3650) size 700x1900 label "Counter"
+  furniture counter against wall w_e offset 4350 size 1400x600 in r_serv
+  furniture fridge against wall w_h2 offset 2000 in r_serv
+
+  # ---- kitchen ----
+  furniture fridge against wall w_e offset 600 in r_kit
+  furniture stove against wall w_e offset 1600 in r_kit
+  furniture kitchen_sink against wall w_e offset 2700 in r_kit
+  furniture table at (7200,1500) size 1400x800 label "Prep table"
+
+  # ---- store ----
+  furniture bookshelf against wall w_s offset 7000 in r_store
+  furniture bookshelf against wall w_v3 offset 1700 in r_store
+
+  # ---- WCs ----
+  furniture wc against wall w_n offset 1500 in r_awc
+  furniture basin against wall w_wc2 offset 1900 in r_awc
+  furniture wc against wall w_v2 offset 1500 in r_swc
+  furniture basin against wall w_v2 offset 2300 in r_swc
+}

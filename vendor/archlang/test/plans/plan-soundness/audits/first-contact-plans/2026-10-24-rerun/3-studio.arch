@@ -1,0 +1,25 @@
+plan "Studio flat 30 m2" {
+  units mm
+  grid 100
+  paper A3 landscape
+  north up
+  dims auto all
+  room id=living at (0,0) size 4500x5000 label "Studio" uses living
+  room id=bath right-of living align top size 1500x2500 uses bath
+  room id=entry below bath size 1500x2500 uses entry
+  walls from rooms exterior 200 partition 100 { open between entry and living }
+  door on entry.right at center width 900 swing into entry
+  door sliding between bath and entry at center width 800
+  window on living.left at center width 1500
+  window on living.top at 1500 from start width 1400
+  window on living.bottom at center width 1400
+  furniture sink against living.top offset 3600 size 1200x600
+  furniture stove against living.top offset 2400 size 600x600
+  furniture fridge against living.top offset 1700 size 600x600
+  furniture bed in living anchor bottom-left flush size 1600x2000
+  furniture sofa_l in living anchor bottom-right flush size 1800x900
+  furniture wc against bath.right offset 1500
+  furniture basin against bath.right offset 700
+  furniture shower in bath anchor top-left flush size 800x800
+  title { project "Studio flat" drawn_by "Claude" date "2026-10-24" number "A-03" revision "A" }
+}

@@ -1,0 +1,28 @@
+# class: circulation-privacy
+# origin: audits/2026-10-18-first-contact.md C5's second finding (first-contact-plans/4-cafe.arch d_swc: the staff WC
+#   opens straight onto the counter / servery, `uses kitchen`), kept under PS2.18 because the kitchen arm is food
+#   hygiene, not a dwelling rule: the plan reads as non-residential ("Cafe seating", "Lobby") and still warns
+# expect: W_WET_ROOM_DOOR
+# status: done
+# fact: the WC's only door, d_wc, joins it to "Counter / servery" (uses kitchen); "Cafe seating" and "Lobby" make
+#   the plan read as non-residential, so only the kitchen arm judges
+plan "Staff WC opening straight onto the servery" {
+  units mm
+  grid 50
+  wall id=shell exterior thickness 200 { (0,0) (8000,0) (8000,4500) (0,4500) close }
+  wall id=w_v partition thickness 100 { (4000,0) (4000,4500) }
+  wall id=w_h partition thickness 100 { (4000,2200) (8000,2200) }
+  wall id=w_v2 partition thickness 100 { (6000,2200) (6000,4500) }
+  room id=r_seat at (0,0) size 4000x4500 label "Cafe seating" uses dining
+  room id=r_serv at (4000,0) size 4000x2200 label "Counter / servery" uses kitchen
+  room id=r_lobby at (4000,2200) size 2000x2300 label "Lobby" uses circulation
+  room id=r_wc at (6000,2200) size 2000x2300 label "Staff WC" uses wc
+  door id=d_entry at (2000,4500) width 1000 wall shell
+  door id=d_serv at (4000,1100) width 900 wall w_v swing into r_serv
+  door id=d_lobby at (4000,3400) width 900 wall w_v swing into r_lobby
+  door id=d_wc at (7000,2200) width 800 wall w_h swing into r_wc
+  window at (2000,0) width 2000 wall shell
+  window at (6000,0) width 1500 wall shell
+  furniture wc against wall shell segment 1 offset 3700 in r_wc
+  furniture basin against wall shell segment 2 offset 1600 in r_wc
+}

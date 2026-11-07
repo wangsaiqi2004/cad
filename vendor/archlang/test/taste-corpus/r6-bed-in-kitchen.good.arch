@@ -1,0 +1,21 @@
+# criterion: R6
+# twin-of: r6-bed-in-kitchen
+# origin: the same plan with the bed moved from the kitchen into the bedroom
+# fact: judged pieces sink, hob and bed, each in a room of its use: R6 = 3/3
+plan "R6 bed in the bedroom" {
+  units mm
+  grid 100
+  room id=r_hall at (0,0) size 2000x7000 label "Hall" uses hall
+  room id=r_kitchen at (2000,0) size 4000x4000 label "Kitchen" uses kitchen
+  room id=r_bed at (2000,4000) size 4000x3000 label "Bedroom" uses bedroom
+  walls from rooms exterior 200 partition 100
+  door id=d_front on r_hall.left at center width 900 swing into r_hall
+  door id=d_kitchen between r_hall and r_kitchen at center width 900 swing into r_kitchen
+  door id=d_bed between r_hall and r_bed at center width 900 swing into r_bed
+  window id=w_kitchen on r_kitchen.top at center width 1500
+  window id=w_bed on r_bed.bottom at center width 1500
+  furniture kitchen_sink against r_kitchen.right offset 600 in r_kitchen
+  furniture stove against r_kitchen.right offset 1500 in r_kitchen
+  furniture counter against r_kitchen.right offset 2200 in r_kitchen
+  furniture bed in r_bed anchor bottom-right flush inset 300 size 1400x2000 label "Bed"
+}

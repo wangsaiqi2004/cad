@@ -1,0 +1,447 @@
+# Release (npm + MCP registry) via trusted publishing (OIDC)
+#
+# WHAT THIS DOES
+#   On a version tag (v*) — or a manual dispatch — this publishes, in order:
+#     0. the CJK font      @chanmeng666/archlang-font-cjk (packages/font-cjk) → npm, with
+#        provenance — FIRST, because the core names it (exact version) in optionalDependencies,
+#        so a core release must never reach npm pointing at a font version that is not there
+#     1. the core package  @chanmeng666/archlang       (repo root)   → npm, with provenance
+#     2. the MCP shim      @chanmeng666/archlang-mcp    (packages/mcp) → npm, with provenance
+#     3. the MCP server manifest (packages/mcp/server.json) → the official MCP registry
+#     4. the embed element @chanmeng666/arch-plan (packages/web-component) → npm, with
+#        provenance — in its OWN job (publish-arch-plan) that needs `publish`: the core must be
+#        on npm first (its peer range), and a failure there must not block steps 1-3
+#     5. the 3D preview    @chanmeng666/archlang-3d (packages/archlang-3d) → npm, with provenance,
+#        in its OWN job (publish-archlang-3d) on the same terms; it does nothing at all until the
+#        package exists on npm and its version in package.json is new
+#   Each step is idempotent: it reads the version from the package's own package.json and
+#   skips the publish when that exact version already exists on the registry, so re-running
+#   a partially-failed release (or dispatching after a fix) is safe.
+#
+# TRUSTED PUBLISHING — NO NPM TOKEN EXISTS ANYWHERE
+#   Publishing authenticates via GitHub OIDC (`permissions: id-token: write`), not a stored
+#   secret. There is deliberately NO npm automation token in repo secrets, org secrets, or
+#   .npmrc. This works only because each package is registered ONCE, by hand, as a trusted
+#   publisher on npmjs.com:
+#     npmjs.com → each package → Settings → Trusted Publisher → GitHub Actions, with
+#       Owner/Repo = ChanMeng666/archlang  and  Workflow filename = release.yml
+#   @chanmeng666/archlang, @chanmeng666/archlang-mcp, @chanmeng666/archlang-font-cjk,
+#   @chanmeng666/arch-plan AND @chanmeng666/archlang-3d must each have that one-time registration pointing at THIS file. npm only offers the Trusted
+#   Publisher setting on a package that already EXISTS, so a brand-new package's very first
+#   version is published once BY HAND by the owner (`npm publish -w packages/font-cjk
+#   --access public`, with 2FA) — see CONTRIBUTING.md#releasing — and only then registered. Without it, `npm publish` here fails with an auth
+#   error — that is the expected signal to (re)do the npmjs registration, not to add a token.
+#   A new registration expires unless a publish goes through it within 2 days
+#   (https://docs.npmjs.com/trusted-publishers), and a version already on npm is skipped here, so
+#   the publish that validates it must be a NEW version (`.claude/commands/release-check.md`):
+#   @chanmeng666/archlang-3d goes 0.1.0 by hand, register, 0.1.1 through here, as arch-plan did.
+#
+#   The MCP registry publish (step 3) also uses GitHub OIDC (`mcp-publisher login
+#   github-oidc`) — no secret. The registry validates server.json against the just-published
+#   npm package (mcpName ↔ name, case-sensitive io.github.ChanMeng666/… owner, ≤100-char
+#   description). NOTE: the MCP registry is in public preview and may reset data / change
+#   behaviour; this step is kept strict (fails loudly) so a regression surfaces here.
+#
+# House style mirrors ci.yml / deploy.yml (actions/checkout@v7.0.1, actions/setup-node@v7.0.0).
+
+name: Release (npm + MCP registry via OIDC)
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  id-token: write # OIDC token exchange for npm trusted publishing + mcp-publisher
+  contents: write # create the GitHub Release for the pushed v* tag (read is not enough)
+
+jobs:
+  publish:
+    name: Publish (npm + MCP registry)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+          check-latest: true
+          registry-url: 'https://registry.npmjs.org' # required for OIDC token exchange
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci # with the bundled npm, like ci.yml
+
+      # Trusted publishing needs npm >= 11.5.1. Pin to 11.x on purpose, NOT npm@latest:
+      # npm 12 defaults allowScripts off, which would block esbuild's postinstall — and we
+      # only upgrade AFTER `npm ci` above has already run its install scripts.
+      - name: Pin npm to 11.x (trusted-publishing minimum)
+        run: |
+          npm install -g npm@11.18.0
+          npm --version
+
+      # Idempotency: resolve each package's declared version and check whether it is already
+      # on the registry. `npm view pkg@ver version` prints the version if it exists, nothing
+      # if that version is absent, and errors if the package name is unknown (|| true).
+      - name: Resolve versions and decide what to publish
+        id: check
+        run: |
+          font_version=$(node -p "require('./packages/font-cjk/package.json').version")
+          core_version=$(node -p "require('./package.json').version")
+          mcp_version=$(node -p "require('./packages/mcp/package.json').version")
+
+          # The core pins the font EXACTLY in optionalDependencies; a mismatch would publish a
+          # core whose CJK font can never resolve. Fail before anything reaches npm.
+          pinned_font=$(node -p "require('./package.json').optionalDependencies['@chanmeng666/archlang-font-cjk']")
+          if [ "$pinned_font" != "$font_version" ]; then
+            echo "::error::package.json pins @chanmeng666/archlang-font-cjk@$pinned_font but packages/font-cjk is $font_version."
+            exit 1
+          fi
+          font_on_registry=$(npm view "@chanmeng666/archlang-font-cjk@$font_version" version 2>/dev/null || true)
+          if [ "$font_on_registry" = "$font_version" ]; then
+            echo "font_exists=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::@chanmeng666/archlang-font-cjk@$font_version already on npm — skipping font publish."
+          else
+            echo "font_exists=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Will publish @chanmeng666/archlang-font-cjk@$font_version to npm."
+          fi
+          echo "core_version=$core_version" >> "$GITHUB_OUTPUT"
+          echo "mcp_version=$mcp_version" >> "$GITHUB_OUTPUT"
+
+          core_on_registry=$(npm view "@chanmeng666/archlang@$core_version" version 2>/dev/null || true)
+          mcp_on_registry=$(npm view "@chanmeng666/archlang-mcp@$mcp_version" version 2>/dev/null || true)
+
+          if [ "$core_on_registry" = "$core_version" ]; then
+            echo "core_exists=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::@chanmeng666/archlang@$core_version already on npm — skipping core publish."
+          else
+            echo "core_exists=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Will publish @chanmeng666/archlang@$core_version to npm."
+          fi
+
+          if [ "$mcp_on_registry" = "$mcp_version" ]; then
+            echo "mcp_exists=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::@chanmeng666/archlang-mcp@$mcp_version already on npm — skipping mcp npm publish."
+          else
+            echo "mcp_exists=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Will publish @chanmeng666/archlang-mcp@$mcp_version to npm."
+          fi
+
+          # The MCP-registry state is checked INDEPENDENTLY of npm: if a previous run
+          # published to npm but died before the registry sync, `mcp_exists` is true on the
+          # re-run and must not also skip the sync. The search API is best-effort (the
+          # registry is in preview): if the probe fails or the shape changes, we attempt the
+          # sync and let `mcp-publisher publish` be the arbiter (a duplicate fails loudly).
+          # `version=latest`: the plain search returns the oldest entries first, one page only, so a
+          # version published by an earlier attempt was never seen and the re-run failed on a
+          # duplicate (v1.56.0, 2026-11-06).
+          reg_json=$(curl -fsSL "https://registry.modelcontextprotocol.io/v0/servers?search=io.github.ChanMeng666/archlang-mcp&version=latest" || echo "")
+          if echo "$reg_json" | grep -q "\"version\": *\"$mcp_version\""; then
+            echo "registry_synced=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::MCP registry already has $mcp_version — skipping registry sync."
+          else
+            echo "registry_synced=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Will sync io.github.ChanMeng666/archlang-mcp@$mcp_version to the MCP registry."
+          fi
+
+      # prepublishOnly is `npm run build && npm run test`, and `npm run test` is the WHOLE
+      # monorepo suite — which includes `editors/vscode/test/stdio.test.ts`. That suite hard-fails
+      # under CI when the core is built but `editors/vscode/dist/server.js` is not, on the
+      # (correct) reasoning that a present core plus an absent bundle means nothing about the
+      # shipped bundle was verified. `npm run build` does not build that bundle, so the publish
+      # path has to, or the gate fires on an artifact the CORE publish never had a reason to make.
+      # Building it here keeps the gate at full strength instead of narrowing it: the bundle is
+      # genuinely verified during the release. (v1.25.0 was the first release after the bundle
+      # tests landed, and the first to hit this.)
+      - name: Build the core and the VS Code bundle (prepublishOnly runs the bundle tests)
+        run: npm run build && npm run vscode:build:only
+
+      # The CJK font goes BEFORE the core (see the header). It has no build step; the package
+      # is the committed, generator-pinned font file. If this is the package's first-ever
+      # version and the owner has not yet published it by hand, this fails with an auth
+      # error and the core is NOT published — the intended stop.
+      - name: Publish CJK font to npm (@chanmeng666/archlang-font-cjk)
+        if: ${{ success() && steps.check.outputs.font_exists != 'true' }}
+        run: npm publish -w packages/font-cjk --provenance --access public
+
+      # prepublishOnly (build + full test suite) is the release gate for the core.
+      - name: Publish core to npm (@chanmeng666/archlang)
+        if: ${{ success() && steps.check.outputs.core_exists != 'true' }}
+        run: npm publish --provenance --access public
+
+      # The shim loads core subpaths lazily (`link` loads `@chanmeng666/archlang/link`), so a shim
+      # whose range admits a core without them publishes fine and fails at the first call — e.g.
+      # a workflow_dispatch run that skips the already-published core. Ask npm what the oldest core
+      # the range admits exports (published by the step above when it was new) and stop otherwise.
+      - name: Refuse a shim whose core range admits a core without its subpaths
+        if: ${{ success() && steps.check.outputs.mcp_exists != 'true' }}
+        run: npx tsx packages/mcp/scripts/check-core-exports.ts
+
+      # Runs only after the core step. prepack builds the shim (core stays external — the
+      # shim never re-bundles it, so it does not need the core's dist/ to be freshly built).
+      - name: Publish MCP shim to npm (@chanmeng666/archlang-mcp)
+        if: ${{ success() && steps.check.outputs.mcp_exists != 'true' }}
+        run: npm publish -w packages/mcp --provenance --access public
+
+      # MCP registry sync — whenever the registry lags server.json's version (independent of
+      # whether npm published this run: by this point npm has the version either way, and the
+      # registry validates against npm). Official install/auth flow from
+      # https://modelcontextprotocol.io/registry/github-actions (GitHub OIDC variant).
+      # server.json lives in packages/mcp, so run from there.
+      - name: Install mcp-publisher CLI
+        if: ${{ success() && steps.check.outputs.registry_synced != 'true' }}
+        working-directory: packages/mcp
+        # Pinned + checksum-verified (the runner is linux/amd64). To bump: update VERSION
+        # and SHA256 together (sha256sum of the linux_amd64 tarball).
+        env:
+          MCP_PUBLISHER_VERSION: v1.7.9
+          MCP_PUBLISHER_SHA256: ab128162b0616090b47cf245afe0a23f3ef08936fdce19074f5ba0a4469281ac
+        run: |
+          curl -fsSLo mcp-publisher.tar.gz "https://github.com/modelcontextprotocol/registry/releases/download/${MCP_PUBLISHER_VERSION}/mcp-publisher_linux_amd64.tar.gz"
+          echo "${MCP_PUBLISHER_SHA256}  mcp-publisher.tar.gz" | sha256sum -c -
+          tar xz -f mcp-publisher.tar.gz mcp-publisher
+          test -x ./mcp-publisher && echo "mcp-publisher installed"
+
+      - name: Authenticate to MCP Registry (GitHub OIDC)
+        if: ${{ success() && steps.check.outputs.registry_synced != 'true' }}
+        working-directory: packages/mcp
+        run: ./mcp-publisher login github-oidc
+
+      # Wait for npm to SHOW the shim version before asking the registry to validate it. The
+      # registry looks the version up on npm, and npm makes a just-published version visible only
+      # minutes later: on v1.43.1 the shim publish returned at 13:36:16 UTC, every one of the six
+      # retries below 404'd up to 13:38:01, and `npm view` first answered at 13:39:17 (docs/backlog.md
+      # 4.7). This turns the blind retry into a precondition: poll every 20 s for up to 10 minutes,
+      # go on as soon as the version resolves, and stop with an error if it never does.
+      # --prefer-online skips npm's local cache, which the "Resolve versions" step filled with this
+      # same lookup while the version was still absent.
+      - name: Wait for npm to show the shim version
+        if: ${{ success() && steps.check.outputs.registry_synced != 'true' }}
+        env:
+          MCP_VERSION: ${{ steps.check.outputs.mcp_version }}
+        run: |
+          for attempt in $(seq 1 30); do
+            seen=$(npm view "@chanmeng666/archlang-mcp@$MCP_VERSION" version --prefer-online 2>/dev/null || true)
+            if [ "$seen" = "$MCP_VERSION" ]; then
+              echo "::notice::npm shows @chanmeng666/archlang-mcp@$MCP_VERSION (check $attempt/30)."
+              exit 0
+            fi
+            if [ "$attempt" -lt 30 ]; then
+              sleep 20
+            fi
+          done
+          echo "::error::npm still does not show @chanmeng666/archlang-mcp@$MCP_VERSION after 10 minutes; the MCP registry would reject it. Check the shim publish step, then re-run with gh run rerun --failed."
+          exit 1
+
+      # Bounded retry, and the reason is a RACE we have actually seen. The registry validates
+      # `server.json` against the npm package it names — and on the v1.30.0 release that
+      # validation 404'd on a version this same job had published moments earlier, because
+      # the npm registry had not yet made it visible to a third party. `gh run rerun --failed`
+      # then succeeded with no change, which is the signature of a race and not of a broken
+      # manifest. Six attempts, 20 s apart, is ~2 minutes; since v1.43.1 they are the SECOND line,
+      # after the npm wait above, for a registry that still lags npm. A genuinely bad manifest
+      # still fails, two minutes later, and the last attempt's output is what the log shows.
+      - name: Publish server to MCP Registry
+        if: ${{ success() && steps.check.outputs.registry_synced != 'true' }}
+        working-directory: packages/mcp
+        run: |
+          for attempt in 1 2 3 4 5 6; do
+            if ./mcp-publisher publish; then
+              echo "::notice::MCP registry publish succeeded on attempt $attempt."
+              exit 0
+            fi
+            if [ "$attempt" -lt 6 ]; then
+              echo "::warning::MCP registry publish failed (attempt $attempt/6) — retrying in 20s."
+              sleep 20
+            fi
+          done
+          echo "::error::MCP registry publish failed after 6 attempts."
+          exit 1
+
+      # The GitHub Release. This step used to not exist: releases were created by hand, so
+      # they drifted — 23 tags shipped with NO Release at all, including the two newest, and
+      # the Releases page advertised v1.13.0 as "Latest" while npm served 1.15.0.
+      #
+      # Notes are EXTRACTED from CHANGELOG.md (the canonical release narrative — AGENTS.md
+      # keeps it there and nowhere else) rather than hand-written or derived from commit
+      # subjects, so the Release page cannot say something the changelog doesn't. The
+      # extractor exits non-zero when a version has no section, so an undocumented release
+      # fails loudly instead of shipping with an empty body.
+      #
+      # Last, and only on success: a Release is the human-visible announcement, so it must
+      # not appear for a run whose npm/registry publish failed. Idempotent — a re-run over an
+      # existing Release skips instead of failing (matching how the publish steps behave).
+      - name: Create the GitHub Release
+        if: ${{ success() && startsWith(github.ref, 'refs/tags/v') }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "::notice::GitHub Release $TAG already exists — skipping."
+            exit 0
+          fi
+          node scripts/changelog-section.mjs "$TAG" > release-notes.md
+          gh release create "$TAG" \
+            --title "$TAG" \
+            --notes-file release-notes.md \
+            --verify-tag
+          echo "::notice::Created GitHub Release $TAG from its CHANGELOG.md section."
+
+      # The Claude Desktop extension bundle (`archlang-mcp-<mcp version>.mcpb`),
+      # attached to the Release so there is a stable download URL. Strictly an add-on, so it is
+      # LAST (after npm, the registry and the Release: nothing it does can undo or block them) and
+      # `continue-on-error` (a failure here is a yellow step, never a red release). No secret.
+      # It is built from source and run once over stdio
+      # before upload, so a bundle that does not start is never attached.
+      - name: Attach the MCPB bundle to the GitHub Release
+        if: ${{ success() && startsWith(github.ref, 'refs/tags/v') }}
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          npm run build:mcpb
+          npm run prove:mcpb
+          gh release upload "$TAG" dist-mcpb/*.mcpb --clobber
+          echo "::notice::Attached the MCPB bundle to GitHub Release $TAG."
+
+  # The embed element, in its own job so a failure here (the trusted publisher not registered
+  # yet) never blocks the core, the shim or the registry above. The owner registers it ONCE on
+  # npmjs.com → @chanmeng666/arch-plan → Settings → Trusted Publisher → GitHub Actions, repo
+  # ChanMeng666/archlang, workflow release.yml, no environment. Until then this job fails with
+  # an auth error and nothing else is affected. `needs: publish` because the package's peer range
+  # names the core; its `prepack` refuses a stale root dist/, hence the root build before publish.
+  publish-arch-plan:
+    name: Publish arch-plan (npm)
+    needs: publish
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write # OIDC token exchange for npm trusted publishing
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+          check-latest: true
+          registry-url: 'https://registry.npmjs.org' # required for OIDC token exchange
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci # with the bundled npm, like ci.yml
+
+      # Same pin and reason as the publish job.
+      - name: Pin npm to 11.x (trusted-publishing minimum)
+        run: |
+          npm install -g npm@11.18.0
+          npm --version
+
+      - name: Build the core (prepack refuses a stale root dist/)
+        run: npm run build
+
+      - name: Resolve the version and decide whether to publish
+        id: check
+        run: |
+          version=$(node -p "require('./packages/web-component/package.json').version")
+          on_registry=$(npm view "@chanmeng666/arch-plan@$version" version 2>/dev/null || true)
+          if [ "$on_registry" = "$version" ]; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::@chanmeng666/arch-plan@$version already on npm — skipping publish."
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Will publish @chanmeng666/arch-plan@$version to npm."
+          fi
+
+      - name: Publish arch-plan to npm (@chanmeng666/arch-plan)
+        if: ${{ success() && steps.check.outputs.exists != 'true' }}
+        run: npm publish -w packages/web-component --provenance --access public
+
+  # The 3D preview, in its own job for the same reason as arch-plan, and quieter still: a core
+  # release must never go red because of it. OIDC cannot create a package, so while the name is not
+  # on npm this job skips with a notice. The plan: the owner publishes 0.1.0 by hand (no provenance),
+  # registers it (npmjs.com → @chanmeng666/archlang-3d → Settings → Trusted Publisher → GitHub Actions,
+  # repo ChanMeng666/archlang, workflow release.yml, no environment), and 0.1.1 comes through this job
+  # within 2 days, which validates the registration; every later version comes this way too, with
+  # provenance. An unreadable registry (a failed request, a body that does not parse) skips with a
+  # warning: a dispatch re-runs it. Once the package exists, a version not on npm is built, proved and
+  # published; an auth failure then means the registration lapsed, and only this job is red. Nothing
+  # is installed unless there is something to publish.
+  publish-archlang-3d:
+    name: Publish archlang-3d (npm)
+    needs: publish
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write # OIDC token exchange for npm trusted publishing
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+          check-latest: true
+          registry-url: 'https://registry.npmjs.org' # required for OIDC token exchange
+          cache: npm
+
+      - name: Resolve the version and decide whether to publish
+        id: check
+        run: |
+          version=$(node -p "require('./packages/archlang-3d/package.json').version")
+          packument=$(mktemp)
+          status=$(curl -s -o "$packument" -w '%{http_code}' 'https://registry.npmjs.org/@chanmeng666%2farchlang-3d' || true)
+          publish=false
+          case "$status" in
+            200)
+              # One read decides: a body that does not parse skips, as an unreadable registry does.
+              if ! known=$(VERSION="$version" PACKUMENT="$packument" node -p "!!JSON.parse(require('fs').readFileSync(process.env.PACKUMENT,'utf8')).versions[process.env.VERSION]" 2>/dev/null); then
+                echo "::warning::The registry's answer for @chanmeng666/archlang-3d did not parse — skipping publish; dispatch this workflow to retry."
+              elif [ "$known" = "true" ]; then
+                echo "::notice::@chanmeng666/archlang-3d@$version already on npm — skipping publish."
+              else
+                publish=true
+                echo "::notice::Will publish @chanmeng666/archlang-3d@$version to npm."
+              fi
+              ;;
+            404)
+              echo "::notice::@chanmeng666/archlang-3d is not on npm yet; the owner publishes 0.1.0 by hand — skipping publish."
+              ;;
+            *)
+              echo "::warning::The registry answered '$status' for @chanmeng666/archlang-3d — skipping publish; dispatch this workflow to retry."
+              ;;
+          esac
+          echo "publish=$publish" >> "$GITHUB_OUTPUT"
+
+      - name: Install dependencies
+        if: ${{ success() && steps.check.outputs.publish == 'true' }}
+        run: npm ci # with the bundled npm, like ci.yml
+
+      # Same pin and reason as the publish job.
+      - name: Pin npm to 11.x (trusted-publishing minimum)
+        if: ${{ success() && steps.check.outputs.publish == 'true' }}
+        run: |
+          npm install -g npm@11.18.0
+          npm --version
+
+      - name: Build the core (the package's declarations read its types)
+        if: ${{ success() && steps.check.outputs.publish == 'true' }}
+        run: npm run build
+
+      - name: Run the package's tests (licence gate, manifest, geometry pins)
+        if: ${{ success() && steps.check.outputs.publish == 'true' }}
+        run: npx vitest run packages/archlang-3d
+
+      # The real tarball, installed into an empty project beside the core on npm and used from
+      # outside: every entry, the types, a checked GLB, a replay that fetches nothing.
+      - name: Prove the tarball
+        if: ${{ success() && steps.check.outputs.publish == 'true' }}
+        run: npm -w packages/archlang-3d run prove:pack -- --dir "$RUNNER_TEMP/prove-archlang-3d"
+
+      # prepack rebuilds what was just proved.
+      - name: Publish archlang-3d to npm (@chanmeng666/archlang-3d)
+        if: ${{ success() && steps.check.outputs.publish == 'true' }}
+        run: npm publish -w packages/archlang-3d --provenance --access public

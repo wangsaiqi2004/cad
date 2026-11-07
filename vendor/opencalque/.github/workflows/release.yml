@@ -1,0 +1,65 @@
+# Pushing a tag such as v0.2.0 builds the installers on each system and publishes a release on
+# GitHub with them attached, described by that version's section of CHANGELOG.md. A tag with a
+# hyphen (v1.0.0-rc.1) is published as a pre-release. Nothing is published unless every system
+# built: a release missing its macOS or Windows installer would be worse than a late one.
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      # Fails early when the tag has no section in the changelog, or when the versions disagree.
+      - run: node scripts/release-notes.mjs "${{ github.ref_name }}"
+      - run: pnpm test
+      - run: pnpm dist
+        env:
+          # The builds are not signed: there is no certificate to sign them with.
+          CSC_IDENTITY_AUTO_DISCOVERY: false
+      - uses: actions/upload-artifact@v4
+        with:
+          name: installers-${{ matrix.os }}
+          if-no-files-found: error
+          # latest*.yml and the blockmaps are what an installed app reads to update itself
+          # (apps/desktop/src/main/updates.ts): the version, and the sha512 its download must have.
+          path: |
+            apps/desktop/dist/*.exe
+            apps/desktop/dist/*.dmg
+            apps/desktop/dist/*.AppImage
+            apps/desktop/dist/latest*.yml
+            apps/desktop/dist/*.blockmap
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: installers
+          merge-multiple: true
+      - run: node scripts/release-notes.mjs "$GITHUB_REF_NAME" > notes.md
+      - run: |
+          # A version with a hyphen (1.0.0-rc.1) is a pre-release.
+          prerelease=""
+          if [[ "$GITHUB_REF_NAME" == *-* ]]; then prerelease="--prerelease"; fi
+          gh release create "$GITHUB_REF_NAME" installers/* --title "OpenCalque ${GITHUB_REF_NAME#v}" --notes-file notes.md $prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}

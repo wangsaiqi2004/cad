@@ -1,0 +1,31 @@
+{
+  "name": "archlang-playground",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "description": "Live web playground for ArchLang — CodeMirror 6 editor + SVG preview. Not published; depends on the built core.",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build && node scripts/gen-static.mjs",
+    "typecheck": "tsc -p . --noEmit && tsc -p tsconfig.e2e.json --noEmit",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@chanmeng666/archlang-3d": "*",
+    "@codemirror/autocomplete": "^6.20.3",
+    "@codemirror/commands": "^6.11.1",
+    "@codemirror/language": "^6.10.8",
+    "@codemirror/lint": "^6.8.4",
+    "@codemirror/state": "^6.7.6",
+    "@codemirror/view": "^6.43.14",
+    "@fontsource-variable/archivo": "^5.3.0",
+    "@fontsource-variable/public-sans": "^5.3.0",
+    "@fontsource/ibm-plex-mono": "^5.3.0",
+    "@lezer/highlight": "^1.2.1",
+    "@resvg/resvg-wasm": "2.6.2",
+    "jspdf": "^4.2.1"
+  },
+  "devDependencies": {
+    "vite": "^8.3.5"
+  }
+}

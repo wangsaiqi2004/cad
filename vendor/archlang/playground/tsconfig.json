@@ -1,0 +1,41 @@
+{
+  // Playground app typecheck config. Extends the core's compiler options but
+  // targets a Vite/browser ESM bundle: Bundler module resolution, `vite/client`
+  // ambient types (for `?raw` imports), and DOM.Iterable so NodeList/Map/Set
+  // spread & for..of work. noUncheckedIndexedAccess is deliberately relaxed here
+  // (the DOM/regex-heavy UI code reads indices it has already length-checked).
+  "extends": "../tsconfig.json",
+  "compilerOptions": {
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "types": ["vite/client"],
+    "allowJs": true,
+    "noUncheckedIndexedAccess": false,
+    "declaration": false,
+    "noEmit": true,
+    // Mirror the Vite alias (`archlang` → the built core): a repo-root
+    // `node_modules/archlang` symlink points at the vscode extension, so without
+    // this TS would resolve the bare specifier to the wrong package. archlang-3d is read from
+    // source, as the Vite alias does (its published `exports` name a dist/ that may not be built).
+    "baseUrl": ".",
+    "paths": {
+      "archlang": ["../dist/index.d.ts"],
+      // The review sheet (vite.config.js aliases it to `dist/cli/review.js`, which the build
+      // gives no declaration file): its types are read from the source.
+      "archlang/review": ["../src/cli/review.ts"],
+      "@chanmeng666/archlang-3d": ["../packages/archlang-3d/src/index.ts"],
+      "@chanmeng666/archlang-3d/browser": ["../packages/archlang-3d/src/browser.ts"]
+    }
+  },
+  // `test` is included so the playground's own vitest suites are typechecked too —
+  // they were previously invisible to every typecheck in the repo. `e2e/` is NOT
+  // here: the Playwright specs run in Node (`node:fs/promises`, `Buffer`) under a
+  // different lib/types set, so they get their own `tsconfig.e2e.json`, which the
+  // workspace `typecheck` script runs straight after this one. `worker/` is the short-link
+  // Worker (ADR 0034): Web-standard APIs only, which the DOM lib already types. The 3D package's
+  // declaration for glTF-Validator (which ships no types) comes too: `test/glb-export.test.ts`
+  // runs the package's CLI `build`, whose checks import it.
+  "include": ["src", "test", "worker", "../packages/archlang-3d/src/types/gltf-validator.d.ts"],
+  "exclude": ["node_modules", "dist", "e2e"]
+}

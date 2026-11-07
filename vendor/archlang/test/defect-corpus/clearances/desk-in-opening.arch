@@ -1,0 +1,18 @@
+# class: clearances
+# origin: audits/archcanvas-public-examples.md FH3 (family-house desk 50 mm in front of o_entry, blocking 400 of its 1200 mm)
+# expect: W_DOORWAY_BLOCKED
+# status: done
+# fact: o_study spans y 1400-2600 on w_mid (study face x=4950); the desk spans x 4100-4900, y 2200-3800: 50 mm
+#   off the face and across 400 mm of the opening
+plan "Desk in front of an opening" {
+  units mm
+  grid 50
+  wall id=shell exterior thickness 200 { (0,0) (8000,0) (8000,4000) (0,4000) close }
+  wall id=w_mid partition thickness 100 { (5000,0) (5000,4000) }
+  room id=r_study at (0,0) size 5000x4000 label "Study" uses office
+  room id=r_entry at (5000,0) size 3000x4000 label "Entry" uses entry
+  door id=d_entry at (6500,4000) width 900 wall shell
+  opening id=o_study at (5000,2000) width 1200 wall w_mid
+  window at (2500,0) width 1500 wall shell
+  furniture desk at (4100,2200) size 800x1600 in r_study
+}

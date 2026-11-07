@@ -1,0 +1,58 @@
+{
+  "name": "@chanmeng666/arch-plan",
+  "version": "0.1.1",
+  "description": "<arch-plan>: a custom element that compiles an ArchLang (.arch) floor plan to SVG in the browser and renders the drawing, or its diagnostics.",
+  "keywords": [
+    "archlang",
+    "floor-plan",
+    "web-component",
+    "custom-element",
+    "svg"
+  ],
+  "license": "MIT",
+  "author": "Chan Meng <chanmeng.dev@gmail.com>",
+  "homepage": "https://archlang.uk/embed",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ChanMeng666/archlang.git",
+    "directory": "packages/web-component"
+  },
+  "bugs": {
+    "url": "https://github.com/ChanMeng666/archlang/issues"
+  },
+  "type": "module",
+  "main": "./dist/arch-plan.js",
+  "module": "./dist/arch-plan.js",
+  "types": "./dist/arch-plan.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/arch-plan.d.ts",
+      "import": "./dist/arch-plan.js"
+    },
+    "./standalone": {
+      "types": "./dist/arch-plan.d.ts",
+      "import": "./dist/arch-plan.standalone.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "sideEffects": true,
+  "scripts": {
+    "build": "tsx scripts/build.ts && tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "prepack": "npm run build"
+  },
+  "peerDependencies": {
+    "@chanmeng666/archlang": "^1.42.1"
+  },
+  "devDependencies": {
+    "@types/jsdom": "^21.1.7",
+    "esbuild": "^0.28.2",
+    "jsdom": "^26.1.0",
+    "tsx": "^4.23.15",
+    "typescript": "^5.7.2"
+  }
+}

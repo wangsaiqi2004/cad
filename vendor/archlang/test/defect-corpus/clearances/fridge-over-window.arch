@@ -1,0 +1,19 @@
+# class: clearances
+# origin: audits/showcase-and-examples.md M4 (mccallister fridge x 12050-12750 over win_kit_n2 x 11000-12400); CY2, TT1
+# expect: W_FURNITURE_OVER_WINDOW
+# status: done
+# fact: the window spans x 1000-2400 on the north wall and the fridge against it x 2050-2650: 350 mm of glass behind the fridge
+plan "Fridge in front of a window" {
+  units mm
+  grid 50
+  wall id=shell exterior thickness 200 { (0,0) (6000,0) (6000,4000) (0,4000) close }
+  wall id=w_mid partition thickness 100 { (4000,0) (4000,4000) }
+  room id=r_kitchen at (0,0) size 4000x4000 label "Kitchen" uses kitchen
+  room id=r_living at (4000,0) size 2000x4000 label "Living Room" uses living
+  door id=d_entry at (2000,4000) width 900 wall shell
+  door id=d_mid at (4000,2000) width 800 wall w_mid
+  window id=win_kit at (1700,0) width 1400 wall shell
+  window at (6000,2000) width 1200 wall shell
+  furniture kitchen_sink against wall shell segment 0 offset 1200 in r_kitchen
+  furniture fridge against wall shell segment 0 offset 2350 in r_kitchen
+}

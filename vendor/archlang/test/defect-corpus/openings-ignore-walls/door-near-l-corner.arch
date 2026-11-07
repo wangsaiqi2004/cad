@@ -1,0 +1,14 @@
+# class: openings-ignore-walls
+# origin: audits/showcase-and-examples.md R1 (railroad d_front: 50 mm into the 300 mm east wall at the corner)
+# expect: W_DOOR_NEAR_CORNER
+# status: done
+# fact: d_front spans x 2400-3300 on the south run; the east wall's centreline is at 3400 and its inner face
+#   at 3250, so the jamb is 100 mm from the corner and 50 mm inside the wall body
+plan "Door at an L-corner" {
+  units mm
+  grid 50
+  wall id=shell exterior thickness 300 { (0,0) (3400,0) (3400,8000) (0,8000) close }
+  room id=a at (0,0) size 3400x8000 label "Front room" uses living
+  door id=d_front at (2850,8000) width 900 wall shell
+  window on shell at 1700 width 1200
+}

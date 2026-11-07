@@ -1,0 +1,15 @@
+# criterion: R16
+# origin: design 2026-10-24-ps5-taste-design.md §3 R16 acceptance (a 3 × 3 m bedroom door
+#   centred on its 3000 mm edge)
+# fact: the bedroom (9 m², under 15) is entered by a 900 mm door centred on its 3000 mm edge:
+#   the nearer jamb is 1050 mm from the room's corner, over max(100, 600): R16 = 0/1
+plan "R16 door mid-wall" {
+  units mm
+  grid 100
+  room id=r_hall at (0,0) size 2000x3000 label "Hall" uses hall
+  room id=r_bed at (2000,0) size 3000x3000 label "Bedroom" uses bedroom
+  walls from rooms exterior 200 partition 100
+  door id=d_front on r_hall.left at center width 900 swing into r_hall
+  door id=d_bed between r_hall and r_bed at center width 900 swing into r_bed
+  window id=w_bed on r_bed.right at center width 1500
+}

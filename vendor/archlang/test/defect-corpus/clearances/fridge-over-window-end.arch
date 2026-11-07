@@ -1,0 +1,22 @@
+# class: clearances
+# origin: audits/2026-10-18-first-contact.md T5 (first-contact-plans/5-townhouse.arch L0: the fridge x 150-750 covers
+#   150 mm of window_2 x 600-1800)
+# expect: W_FURNITURE_OVER_WINDOW
+# status: done
+# fact: win_kit spans x 900-2100 on the north wall and the fridge against it x 1950-2550: 150 mm of glass behind the
+#   fridge
+plan "Fridge over the end of a window" {
+  units mm
+  grid 50
+  wall id=shell exterior thickness 200 { (0,0) (6000,0) (6000,4000) (0,4000) close }
+  wall id=w_mid partition thickness 100 { (4000,0) (4000,4000) }
+  room id=r_kitchen at (0,0) size 4000x4000 label "Kitchen" uses kitchen
+  room id=r_living at (4000,0) size 2000x4000 label "Living Room" uses living
+  door id=d_entry at (2000,4000) width 900 wall shell
+  door id=d_mid at (4000,2000) width 800 wall w_mid
+  window id=win_kit at (1500,0) width 1200 wall shell
+  window at (6000,2000) width 1200 wall shell
+  furniture kitchen_sink against wall shell segment 0 offset 1500 in r_kitchen
+  furniture stove against wall shell segment 3 offset 3000 in r_kitchen
+  furniture fridge against wall shell segment 0 offset 2250 in r_kitchen
+}

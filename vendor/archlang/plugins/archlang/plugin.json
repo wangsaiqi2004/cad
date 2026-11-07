@@ -1,0 +1,46 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "archlang",
+  "description": "ArchLang: write floor plans as code, compiled and checked by a deterministic compiler. Skills to author, edit, review and export .arch plans through the archlang CLI, and the ArchLang MCP server.",
+  "author": {
+    "name": "Chan Meng",
+    "url": "https://github.com/ChanMeng666"
+  },
+  "homepage": "https://archlang.uk",
+  "repository": "https://github.com/ChanMeng666/archlang",
+  "license": "MIT",
+  "keywords": [
+    "floor-plan",
+    "architecture",
+    "dsl",
+    "svg",
+    "dxf",
+    "cad"
+  ],
+  "extensions": {
+    "com.openai": {
+      "interface": {
+        "displayName": "ArchLang",
+        "shortDescription": "Floor plans as checked code",
+        "longDescription": "ArchLang: write floor plans as code, compiled and checked by a deterministic compiler. Skills to author, edit, review and export .arch plans through the archlang CLI, and the ArchLang MCP server. The MCP server is hosted at https://mcp.archlang.uk/mcp with no sign-in: it compiles a plan to an SVG drawing and returns the plan's measured facts and lint findings.",
+        "developerName": "Chan Meng",
+        "category": "Developer Tools",
+        "capabilities": [
+          "Read",
+          "Write"
+        ],
+        "websiteURL": "https://archlang.uk",
+        "supportURL": "https://github.com/ChanMeng666/archlang/issues",
+        "privacyPolicyURL": "https://archlang.uk/privacy",
+        "termsOfServiceURL": "https://archlang.uk/terms",
+        "defaultPrompt": [
+          "Design a two-bedroom flat of about 75 m² as an ArchLang plan and check it against the brief.",
+          "Make the bedroom in plan.arch 1 m wider and show me what changed.",
+          "Put plan.arch on an A3 sheet and give me a link to download it as a PDF."
+        ],
+        "composerIcon": "./assets/icon.png",
+        "logo": "./assets/icon.png"
+      }
+    }
+  }
+}

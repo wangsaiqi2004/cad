@@ -1,0 +1,352 @@
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { dirname, join } from "node:path";
+import { describe, expect, it } from "vitest";
+import { compile, describe as describePlan, makeVirtualWorld } from "../src/index.js";
+import { resolve } from "../src/ir.js";
+import { parse } from "../src/parser.js";
+import type { RRoom } from "../src/ir.js";
+import type { Scene, SceneNode } from "../src/scene.js";
+import { roomLabelAnchor } from "../src/elements/room.js";
+import { outdoorLabelAnchor, outdoorRing } from "../src/elements/outdoor.js";
+import { COLLIDE_MIN, FRACTIONS } from "../src/label-placement.js";
+import { pointInPolygon, rectRing } from "../src/geometry/polygon.js";
+import { textWidth } from "../src/text-metrics.js";
+import type { ROutdoor } from "../src/ir.js";
+
+/**
+ * Obstacle-aware room-label placement (`src/label-placement.ts`).
+ *
+ * Two halves, and the second is the one that protects every drawing shipped before it:
+ *
+ *  1. A label whose box is genuinely buried — in furniture, in a door's swing, in a
+ *     dimension number — moves off it, taking its area text with it, and lands inside
+ *     its own room.
+ *  2. A label that is already clear **does not move at all**. That is asserted directly
+ *     against `roomLabelAnchor`, the anchor the room element computes, so the byte
+ *     identity of an unobstructed plan is a property of the pass, not of a snapshot.
+ */
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const example = (name: string) => readFileSync(join(__dirname, "..", "examples", name), "utf8");
+
+const sceneOf = (src: string): Scene => {
+  const res = compile(src, { noCache: true });
+  if (!res.scene) throw new Error(`no scene: ${res.errors.join("; ")}`);
+  return res.scene;
+};
+
+const roomsOf = (src: string): RRoom[] =>
+  resolve(parse(src).plan!).ir.elements.filter((e): e is RRoom => e.kind === "room");
+
+const outdoorsOf = (src: string): ROutdoor[] =>
+  resolve(parse(src).plan!).ir.elements.filter((e): e is ROutdoor => e.kind === "outdoor");
+
+/** Every `labels`-pass text node, in draw order. */
+const labelTexts = (scene: Scene): Array<{ value: string; x: number; y: number; size: number }> =>
+  scene.nodes
+    .filter((n: SceneNode) => n.layer === "labels" && n.prim.t === "text")
+    .map((n) => {
+      if (n.prim.t !== "text") throw new Error("unreachable");
+      return { value: n.prim.value, x: n.prim.at.x, y: n.prim.at.y, size: n.prim.size };
+    });
+
+/** The drawn position of one room's name. */
+const nameAt = (scene: Scene, label: string): { x: number; y: number } => {
+  const t = labelTexts(scene).find((n) => n.value === label);
+  if (!t) throw new Error(`no label "${label}"`);
+  return { x: t.x, y: t.y };
+};
+
+/** How far the drawn name sits from the anchor the room element computed. */
+const drift = (src: string, id: string, label: string): { dx: number; dy: number } => {
+  const room = roomsOf(src).find((r) => r.id === id)!;
+  const a = roomLabelAnchor(room);
+  const scene = sceneOf(src);
+  const at = nameAt(scene, label);
+  return { dx: at.x - a.x, dy: at.y - (a.y - scene.sizes.roomFont * 0.2) };
+};
+
+/** How far the drawn name of an `outdoor` surface sits from its own computed anchor. */
+const outdoorDrift = (src: string, id: string, label: string): { dx: number; dy: number } => {
+  const o = outdoorsOf(src).find((x) => x.id === id)!;
+  const a = outdoorLabelAnchor(o);
+  const scene = sceneOf(src);
+  const at = nameAt(scene, label);
+  return { dx: at.x - a.x, dy: at.y - (a.y - scene.sizes.furnFont * 0.2) };
+};
+
+/** A 5 × 4 m room with a wall round it, and whatever else the caller adds. */
+const plan = (body: string): string =>
+  `plan "P" {
+  units mm
+  grid 50
+  wall exterior thickness 200 { (0,0) (5000,0) (5000,4000) (0,4000) close }
+  ${body}
+}`;
+
+const CLEAR = plan(`room id=r at (0,0) size 5000x4000 label "Hall"`);
+const BLOCKED = plan(`room id=r at (0,0) size 5000x4000 label "Hall"
+  furniture bed at (1000,1000) size 3000x2000 label "Bed"`);
+
+describe("label placement — a clear label never moves", () => {
+  it("sits exactly on the room element's own anchor when nothing is drawn there", () => {
+    expect(drift(CLEAR, "r", "Hall")).toEqual({ dx: 0, dy: 0 });
+  });
+
+  it("EVERY room name in the obstacle-free shipped examples is still on its anchor", () => {
+    // These four cover the shapes the pass could most easily disturb: the large-building
+    // flagship on a sheet with `dims auto` + axes, the polygon flagship (whose label
+    // point is pinned to the exact centroid by test/polygon-rooms.test.ts), the curved
+    // flagship, and a relationally-placed plan. Almost none of them has furniture or a
+    // swing under a room name, so almost none of them may move a byte.
+    //
+    // Two exceptions, both from the gallery refresh's furnishing pass, both a
+    // real obstruction and not a regression: `museum.arch`'s cafe got two tables that now
+    // sit under "Cafe", and `relational.arch`'s kitchen got a dining table and two chairs
+    // that now sit under "Kitchen". Both labels are CORRECTLY relocated by this same pass
+    // — the premise this loop tests (no obstacle, so no move) no longer holds for those
+    // two rooms specifically, so they are excluded here rather than asserted false.
+    const NOW_FURNISHED = new Set(["museum.arch:cafe", "relational.arch:kitchen"]);
+    for (const file of ["museum.arch", "gallery-l.arch", "aquarium.arch", "relational.arch"]) {
+      const src = example(file);
+      const scene = sceneOf(src);
+      for (const room of roomsOf(src)) {
+        if (!room.label) continue;
+        if (NOW_FURNISHED.has(`${file}:${room.id}`)) continue;
+        const a = roomLabelAnchor(room);
+        expect({ file, id: room.id, ...nameAt(scene, room.label) }).toEqual({
+          file,
+          id: room.id,
+          x: a.x,
+          y: a.y - scene.sizes.roomFont * 0.2,
+        });
+      }
+    }
+  });
+
+  it("a zero-area LINE is never an obstacle — a diagonal leader does not evict a label", () => {
+    // The aquarium's `R12000` leader runs diagonally across the Cafe. Its bounding box
+    // covers 8.5 × 8.5 m of empty floor; its ink covers none of the label. Boxing a line
+    // would have moved that name 6 m.
+    const src = example("aquarium.arch");
+    expect(drift(src, "cafe", "Cafe")).toEqual({ dx: 0, dy: 0 });
+  });
+
+  it("keeps the incumbent on a TIE — the candidate lattice can never win by equal score", () => {
+    // The room centre IS lattice point (0.5, 0.5), so the two are geometrically the same
+    // place and score identically. Strict improvement is what stops the pass rewriting
+    // the drawing for nothing.
+    expect(FRACTIONS[0]).toBe(0.5);
+    expect(drift(CLEAR, "r", "Hall")).toEqual({ dx: 0, dy: 0 });
+  });
+});
+
+describe("label placement — a buried label moves", () => {
+  it("moves off a furniture rectangle it was drawn on top of", () => {
+    const { dx, dy } = drift(BLOCKED, "r", "Hall");
+    expect(dx !== 0 || dy !== 0).toBe(true);
+    const scene = sceneOf(BLOCKED);
+    const at = nameAt(scene, "Hall");
+    const w = textWidth("Hall", scene.sizes.roomFont) / 2;
+    const h = scene.sizes.roomFont / 2;
+    // Clear of the bed's own rectangle (1000,1000)–(4000,3000) on at least one axis.
+    const clearX = at.x + w < 1000 || at.x - w > 4000;
+    const clearY = at.y + h < 1000 || at.y - h > 3000;
+    expect(clearX || clearY).toBe(true);
+  });
+
+  it("the AREA text travels with the name — the pair never separates", () => {
+    const before = sceneOf(CLEAR);
+    const after = sceneOf(BLOCKED);
+    const pair = (s: Scene) => {
+      const name = labelTexts(s).find((t) => t.value === "Hall")!;
+      const area = labelTexts(s).find((t) => t.value.endsWith(" m²"))!;
+      return { dx: area.x - name.x, dy: area.y - name.y };
+    };
+    expect(pair(after).dx).toBeCloseTo(pair(before).dx, 6);
+    expect(pair(after).dy).toBeCloseTo(pair(before).dy, 6);
+  });
+
+  it("lands INSIDE its own room", () => {
+    const room = roomsOf(BLOCKED)[0]!;
+    const ring = rectRing({ x: room.at.x, y: room.at.y, w: room.size.w, h: room.size.h });
+    const at = nameAt(sceneOf(BLOCKED), "Hall");
+    expect(pointInPolygon(at.x, at.y, ring)).toBe(true);
+  });
+
+  it("moves off REAL SHIPPED furniture — museum's cafe and relational's kitchen", () => {
+    // The companion half of the exclusion in the "obstacle-free" corpus test above: these
+    // two rooms are excluded from "must not move" specifically because the
+    // gallery refresh gave each one furniture that now sits under its name, so this
+    // asserts what actually happens to them instead of merely skipping them.
+    const { dx: mdx, dy: mdy } = drift(example("museum.arch"), "cafe", "Cafe");
+    expect(mdx !== 0 || mdy !== 0).toBe(true);
+    const { dx: rdx, dy: rdy } = drift(example("relational.arch"), "kitchen", "Kitchen");
+    expect(rdx !== 0 || rdy !== 0).toBe(true);
+  });
+
+  it("moves off a DOOR SWING — the quarter disc is an obstacle, not just the leaf", () => {
+    const src = plan(`room id=r at (0,0) size 5000x4000 label "Hall"
+  door at (2500,4000) width 3000 wall exterior hinge left swing in`);
+    const { dx, dy } = drift(src, "r", "Hall");
+    expect(dx !== 0 || dy !== 0).toBe(true);
+  });
+
+  it("moves off a DIMENSION NUMBER — the reason this is a post-pass and not an element rule", () => {
+    // A `dim` is lowered during `toScene`, not by an element, and its text is placed by
+    // the dim element from the measured length. No `RenderCtx` can see it; only a pass
+    // running after the dims are rendered can. Same plan, same room, same anchor — the
+    // only difference is a dimension string laid across the middle of the room.
+    const bare = plan(`room id=r at (0,0) size 5000x4000 label "Hall"`);
+    const dimmed = plan(`room id=r at (0,0) size 5000x4000 label "Hall"
+  dim (500,2000)->(4500,2000) offset 0`);
+    expect(drift(bare, "r", "Hall")).toEqual({ dx: 0, dy: 0 });
+    const { dx, dy } = drift(dimmed, "r", "Hall");
+    expect(dx !== 0 || dy !== 0).toBe(true);
+  });
+
+  it("never lands on a label already placed — rooms are resolved in order", () => {
+    // Two long names in two narrow rooms whose only clear floor is the same strip.
+    const src = `plan "P" {
+  units mm
+  grid 50
+  wall exterior thickness 200 { (0,0) (6000,0) (6000,4000) (0,4000) close }
+  wall partition thickness 100 { (3000,0) (3000,4000) }
+  room id=a at (0,0) size 3000x4000 label "Alpha"
+  room id=b at (3000,0) size 3000x4000 label "Bravo"
+  furniture bed at (200,1400) size 2600x1200
+  furniture bed at (3200,1400) size 2600x1200
+}`;
+    const scene = sceneOf(src);
+    const a = nameAt(scene, "Alpha");
+    const b = nameAt(scene, "Bravo");
+    const half = (v: string) => textWidth(v, scene.sizes.roomFont) / 2;
+    const apart = Math.abs(a.x - b.x) >= half("Alpha") + half("Bravo") || Math.abs(a.y - b.y) >= scene.sizes.roomFont;
+    expect(apart).toBe(true);
+  });
+});
+
+describe("label placement — what it is not allowed to touch", () => {
+  it("an explicit `label … at (x,y)` is NEVER relocated, obstacle or no obstacle", () => {
+    // The pin sits squarely on the bed; an unpinned twin in the same plan moves off it.
+    // NOTE the room form: `labelAt` reaches the IR only from the `polygon` and `circle`
+    // resolvers — a RECTANGLE's `label … at` is parsed and then dropped at resolve, and
+    // has been since polygon rooms landed. That is a pre-existing gap, not something this pass created
+    // (a rect room with a pin behaves exactly as an unpinned one, before and after).
+    const pinned = plan(`room id=r polygon (0,0) (5000,0) (5000,4000) (0,4000) label "Hall" at (2500,2000)
+  furniture bed at (1000,1000) size 3000x2000 label "Bed"`);
+    const loose = plan(`room id=r polygon (0,0) (5000,0) (5000,4000) (0,4000) label "Hall"
+  furniture bed at (1000,1000) size 3000x2000 label "Bed"`);
+    const scene = sceneOf(pinned);
+    expect(nameAt(scene, "Hall")).toEqual({ x: 2500, y: 2000 - scene.sizes.roomFont * 0.2 });
+    expect(nameAt(sceneOf(loose), "Hall")).not.toEqual({ x: 2500, y: 2000 - scene.sizes.roomFont * 0.2 });
+  });
+
+  it("W_ROOM_LABEL_OUTSIDE still fires on a pinned anchor — it is about the AUTHOR's point", () => {
+    const src = `plan "P" { room polygon (0,0) (4000,0) (4000,3000) (0,3000) label "Hall" at (9000,9000) }`;
+    expect(compile(src, { noCache: true }).diagnostics.map((d) => d.code)).toContain("W_ROOM_LABEL_OUTSIDE");
+  });
+
+  it("`describe()` is untouched — a label is a drawing fact, not a measured one", () => {
+    // Same plan, same furniture; the only difference is that the second one's label had
+    // to move. Every measured fact must be identical.
+    const moved = describePlan(BLOCKED);
+    const pinned = describePlan(
+      plan(`room id=r at (0,0) size 5000x4000 label "Hall" at (2500,2000)
+  furniture bed at (1000,1000) size 3000x2000 label "Bed"`),
+    );
+    expect(JSON.stringify(moved.rooms)).toBe(JSON.stringify(pinned.rooms));
+    expect(moved.totals).toEqual(pinned.totals);
+    expect(moved.caption).toBe(pinned.caption);
+  });
+
+  it("adds and removes NO nodes — it is a translation, nothing else", () => {
+    const count = (s: Scene) => s.nodes.length;
+    expect(count(sceneOf(BLOCKED))).toBe(count(sceneOf(BLOCKED)));
+    // Two texts per labelled room (name + area), before and after a relocation.
+    expect(labelTexts(sceneOf(CLEAR)).length).toBe(2);
+    expect(labelTexts(sceneOf(BLOCKED)).length).toBe(2);
+  });
+
+  it("is deterministic — the same source renders byte-identically every time", () => {
+    expect(compile(BLOCKED, { noCache: true }).svg).toBe(compile(BLOCKED, { noCache: true }).svg);
+    const world = makeVirtualWorld({});
+    expect(compile(BLOCKED, { noCache: true, world }).svg).toBe(compile(BLOCKED, { noCache: true }).svg);
+  });
+
+  it("the collision threshold is a fraction of the label's OWN box, so it is scale-free", () => {
+    // The same plan at 1× and at 10× must make the same decision — the metric is a ratio,
+    // never a millimetre count.
+    const big = plan(`room id=r at (0,0) size 5000x4000 label "Hall"`).replace(/\d{3,}/g, (m) =>
+      String(Number(m) * 10),
+    );
+    expect(COLLIDE_MIN).toBeGreaterThan(0);
+    expect(drift(big, "r", "Hall")).toEqual({ dx: 0, dy: 0 });
+  });
+});
+
+describe("label placement — an `outdoor` label joins the same pass (v1.31)", () => {
+  // A deck beside a small building, `outdoorLabelAnchor` puts its label + area text
+  // dead centre on the surface. A manual `dim` chain stands in for `dims auto overall`'s
+  // exterior chain text — same collision `garden-house.arch`'s "Deck" had with the
+  // "17300" overall dimension on L1, reproduced minimally.
+  const withoutChain = plan(`room id=r at (0,0) size 5000x4000 label "Hall"
+  outdoor id=d deck at (0,4200) size 5000x3000 label "Deck"`);
+  const withChain = plan(`room id=r at (0,0) size 5000x4000 label "Hall"
+  outdoor id=d deck at (0,4200) size 5000x3000 label "Deck"
+  dim (500,5700)->(4500,5700) offset 0`);
+
+  it("a clear deck label sits exactly on its own anchor — the pass is a no-op", () => {
+    // This is the byte-identity property stated positively: nothing here differs from a
+    // drawing produced by a pass that never ran, because the label never moved.
+    expect(outdoorDrift(withoutChain, "d", "Deck")).toEqual({ dx: 0, dy: 0 });
+  });
+
+  it("moves off a DIMENSION CHAIN laid across it — the same obstacle a room label dodges", () => {
+    const { dx, dy } = outdoorDrift(withChain, "d", "Deck");
+    expect(dx !== 0 || dy !== 0).toBe(true);
+  });
+
+  it("the relocated label lands INSIDE its own ground surface, never off it", () => {
+    const o = outdoorsOf(withChain).find((x) => x.id === "d")!;
+    const ring = outdoorRing(o);
+    const at = nameAt(sceneOf(withChain), "Deck");
+    expect(pointInPolygon(at.x, at.y, ring)).toBe(true);
+  });
+
+  it("the AREA text travels with the deck's name — the pair never separates", () => {
+    // Two labelled elements are drawn (Hall, then Deck), each as a consecutive
+    // name/area pair on the `labels` layer, in that ELEMENT order — the relocation pass
+    // replaces text nodes in place and never reorders them. So Deck's own area is the
+    // entry immediately after its name, not merely the first " m²" text in the scene
+    // (which would be Hall's).
+    const pair = (s: Scene) => {
+      const texts = labelTexts(s);
+      const i = texts.findIndex((t) => t.value === "Deck");
+      const name = texts[i]!;
+      const area = texts[i + 1]!;
+      expect(area.value.endsWith(" m²")).toBe(true);
+      return { dx: area.x - name.x, dy: area.y - name.y };
+    };
+    const before = pair(sceneOf(withoutChain));
+    const after = pair(sceneOf(withChain));
+    expect(after.dx).toBeCloseTo(before.dx, 6);
+    expect(after.dy).toBeCloseTo(before.dy, 6);
+  });
+
+  it("a plan with NO `outdoor` label is untouched — the room's own labels still behave exactly as before", () => {
+    // The group list is built in ELEMENT order and an unlabelled/absent outdoor
+    // contributes no group at all, so a room-only plan takes the identical path it took
+    // before ground surfaces existed — pinned here as the same anchor-equality property, and by the whole
+    // `outdoor-byte-identity.test.ts` suite elsewhere.
+    expect(drift(CLEAR, "r", "Hall")).toEqual({ dx: 0, dy: 0 });
+    const unlabelled = plan(`room id=r at (0,0) size 5000x4000 label "Hall"
+  outdoor id=d deck at (0,4200) size 5000x3000
+  dim (500,5700)->(4500,5700) offset 0`);
+    // The unlabelled deck draws no text at all, so it contributes no label group and the
+    // dim chain — which sits entirely off the room — leaves "Hall" exactly on its anchor.
+    expect(drift(unlabelled, "r", "Hall")).toEqual({ dx: 0, dy: 0 });
+    expect(labelTexts(sceneOf(unlabelled)).map((t) => t.value)).not.toContain("Deck");
+  });
+});

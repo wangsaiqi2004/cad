@@ -1,0 +1,168 @@
+{
+  "name": "@chanmeng666/archlang",
+  "version": "1.57.0",
+  "description": "Floor plans as code. Your AI writes ArchLang; the compiler draws a precise, dimensioned plan and tells it what's wrong.",
+  "keywords": [
+    "architecture",
+    "floor-plan",
+    "dsl",
+    "compiler",
+    "svg",
+    "cad",
+    "parametric",
+    "language",
+    "floorplan",
+    "floor-plans",
+    "dxf",
+    "pdf",
+    "mcp",
+    "llm",
+    "ai-agents"
+  ],
+  "license": "MIT",
+  "author": "Chan Meng <chanmeng.dev@gmail.com>",
+  "homepage": "https://archlang.uk",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ChanMeng666/archlang.git"
+  },
+  "bugs": {
+    "url": "https://github.com/ChanMeng666/archlang/issues"
+  },
+  "type": "module",
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./link": {
+      "types": "./dist/cli/link.d.ts",
+      "import": "./dist/cli/link.js"
+    }
+  },
+  "bin": {
+    "archlang": "dist/cli.js",
+    "arch": "dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "examples",
+    "spec.llm.md",
+    "llms-full.txt",
+    "skills",
+    "CHANGELOG.md",
+    "README.md",
+    "LICENSE",
+    "THIRD-PARTY-NOTICES.md"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "workspaces": [
+    "editors/vscode",
+    "playground",
+    "docs-site",
+    "packages/*"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "typecheck": "tsc --noEmit",
+    "typecheck:dev": "tsc -p tsconfig.dev.json --noEmit",
+    "typecheck:all": "npm run typecheck:dev && npm -w playground run typecheck && npm -w docs-site run typecheck && npm -w packages/mcp run typecheck && npm -w packages/mcp-worker run typecheck && npm -w packages/web-component run typecheck && npm -w packages/archlang-3d run typecheck && npm -w editors/vscode run typecheck",
+    "lint": "biome check .",
+    "lint:fix": "biome check --write .",
+    "test": "vitest run",
+    "test:coverage": "vitest run --coverage",
+    "test:watch": "vitest",
+    "cli": "tsx src/cli.ts",
+    "bench": "tsx bench/run.ts",
+    "bench:json": "tsx bench/run.ts --json",
+    "gen:grammars": "tsx scripts/gen-grammars.ts",
+    "gen:errors": "tsx scripts/gen-error-codes.ts",
+    "gen:cli": "tsx scripts/gen-cli-reference.ts",
+    "gen:spec": "tsx scripts/gen-llm-spec.ts",
+    "gen:llms": "tsx scripts/gen-llms-full.ts",
+    "gen:gbnf": "tsx scripts/gen-gbnf.ts",
+    "gen:plan-schema": "tsx scripts/gen-plan-schema.ts",
+    "gen:intent-schema": "tsx scripts/gen-intent-schema.ts",
+    "gen:example-svgs": "tsx scripts/gen-example-svgs.ts",
+    "gen:plugin": "tsx scripts/gen-plugin.ts",
+    "gen:docs-headers": "tsx scripts/gen-docs-headers.ts",
+    "gen:agent-manifests": "tsx scripts/gen-agent-manifests.ts",
+    "gen:arch-plan": "tsx scripts/gen-arch-plan.ts",
+    "gen:doors": "tsx scripts/gen-doors.ts",
+    "gen:all": "npm run gen:grammars && npm run gen:errors && npm run gen:spec && npm run gen:llms && npm run gen:cli && npm run gen:gbnf && npm run gen:plan-schema && npm run gen:intent-schema && npm run gen:example-svgs && npm run gen:plugin && npm run gen:docs-headers && npm run gen:agent-manifests && npm run gen:arch-plan && npm run gen:doors",
+    "gen:font-cjk": "python scripts/gen-font-cjk.py",
+    "gen:3d-assets": "npm -w packages/archlang-3d run gen:3d-assets --",
+    "check": "npm run typecheck && npm run lint && npm run check:test-wiring && npm test",
+    "check:drift": "tsx scripts/check-drift.ts",
+    "check:quick": "node scripts/check-quick.mjs",
+    "digest:engines": "tsx scripts/engine-digests.ts",
+    "check:test-wiring": "node scripts/check-test-wiring.mjs",
+    "check:3d": "npm -w packages/archlang-3d run e2e",
+    "check:dxf": "tsx scripts/check-dxf.ts",
+    "lint:ci": "biome ci .",
+    "eval": "tsx eval/run.ts",
+    "eval:ci": "tsx eval/run.ts",
+    "eval:fidelity": "tsx eval/fidelity-run.ts",
+    "eval:live": "tsx eval/run.ts --live",
+    "eval:g1": "tsx eval/g1/generate.ts",
+    "eval:l2": "tsx eval/l2-run.ts",
+    "e2e:playground": "playwright test -c playground",
+    "e2e:docs": "playwright test -c docs-site",
+    "dataset:gen": "tsx dataset/generate.ts",
+    "docs:dev": "npm run build && npm -w docs-site run dev",
+    "docs:build": "npm run build && npm -w docs-site run build",
+    "mcp:build": "npm run build && npm -w @chanmeng666/archlang-mcp run build",
+    "playground:dev": "npm run build && npm -w archlang-playground run dev",
+    "playground:build": "npm run build && npm -w archlang-playground run build",
+    "docs:build:only": "npm -w docs-site run build",
+    "mcp:build:only": "npm -w packages/mcp run build",
+    "mcp-worker:build": "npm run build && npm -w packages/mcp-worker run build",
+    "build:mcpb": "npm run build && tsx packages/mcp/scripts/build-mcpb.ts",
+    "prove:mcpb": "tsx packages/mcp/scripts/prove-mcpb.ts",
+    "build:openai-plugin": "tsx scripts/build-openai-plugin.ts",
+    "prove:openai-plugin": "tsx scripts/build-openai-plugin.ts --prove",
+    "playground:build:only": "npm -w playground run build",
+    "vscode:build:only": "npm -w editors/vscode run build",
+    "build:workspaces": "npm run docs:build:only && npm run playground:build:only && npm run mcp:build:only && npm run vscode:build:only",
+    "prepublishOnly": "npm run build && npm run test"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.5.14",
+    "@playwright/test": "^1.64.1",
+    "@types/node": "^22.20.0",
+    "@types/pngjs": "^6.0.5",
+    "@vitest/coverage-v8": "^2.1.9",
+    "clipper2-wasm": "0.4.0",
+    "fast-check": "^4.10.2",
+    "pixelmatch": "^7.2.0",
+    "pngjs": "^7.0.0",
+    "tsup": "^8.3.5",
+    "tsx": "^4.23.15",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8",
+    "vscode-oniguruma": "^2.0.1",
+    "vscode-textmate": "^9.3.2"
+  },
+  "optionalDependencies": {
+    "@chanmeng666/archlang-font-cjk": "1.0.0",
+    "@resvg/resvg-js": "2.6.2",
+    "pdfkit": "^0.20.2"
+  },
+  "overrides": {
+    "vitepress": {
+      "vite": "^6.4.5"
+    },
+    "tsup": {
+      "esbuild": "^0.28.2"
+    },
+    "@azure/identity": {
+      "@azure/msal-node": "^7.1.1"
+    }
+  }
+}

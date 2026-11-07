@@ -1,0 +1,110 @@
+plan "Three-Bed Family House" {
+  units mm
+  grid 50
+  paper A3 landscape
+  north up
+  dims auto all
+  height 2700
+
+  title { project "Three-bed family house" drawn_by "AI first-contact" date "2026-10-18" number "H-101" revision "A" }
+
+  # Street is to the south. Habitable area (everything except the garage) is ~111 m2 gross.
+
+  # ---- rooms ----
+  room id=r_util  at (0,0)        size 3400x2000 label "Utility"          uses utility
+  room id=r_gar   at (0,2000)     size 3400x6000 label "Garage"           uses garage
+  room id=r_kit   at (3400,0)     size 5000x3800 label "Kitchen / Dining" uses kitchen dining
+  room id=r_liv   at (3400,3800)  size 5000x4200 label "Living"           uses living
+  room id=r_bed3  at (8400,0)     size 2800x3800 label "Bedroom 3"        uses bedroom
+  room id=r_mast  at (11200,0)    size 3600x3800 label "Master bedroom"   uses bedroom
+  room id=r_ens   at (14800,0)    size 1600x3800 label "Ensuite"          uses bath
+  room id=r_pass  at (8400,3800)  size 8000x1200 label "Passage"          uses circulation
+  room id=r_hall  at (8400,5000)  size 2000x3000 label "Entrance hall"    uses entry
+  room id=r_bath  at (10400,5000) size 2000x3000 label "Family bathroom"  uses bath
+  room id=r_bed2  at (12400,5000) size 4000x3000 label "Bedroom 2"        uses bedroom
+
+  # ---- exterior shell (each wall drawn start -> end with increasing coordinate) ----
+  wall id=w_n exterior thickness 250 { (0,0) (16400,0) }
+  wall id=w_e exterior thickness 250 { (16400,0) (16400,8000) }
+  wall id=w_s exterior thickness 250 { (0,8000) (16400,8000) }
+  wall id=w_w exterior thickness 250 { (0,0) (0,8000) }
+
+  # ---- interior walls ----
+  wall id=w_h1 partition thickness 100 { (0,2000) (3400,2000) }
+  wall id=w_h2 partition thickness 100 { (3400,3800) (8400,3800) }
+  wall id=w_h3 partition thickness 100 { (8400,3800) (16400,3800) }
+  wall id=w_h4 partition thickness 100 { (8400,5000) (16400,5000) }
+  wall id=w_v1 partition thickness 150 { (3400,0) (3400,8000) }
+  wall id=w_v2 partition thickness 100 { (8400,0) (8400,8000) }
+  wall id=w_v3 partition thickness 100 { (11200,0) (11200,3800) }
+  wall id=w_v4 partition thickness 100 { (14800,0) (14800,3800) }
+  wall id=w_v6 partition thickness 100 { (10400,5000) (10400,8000) }
+  wall id=w_v7 partition thickness 100 { (12400,5000) (12400,8000) }
+
+  # ---- doors and openings ----
+  door id=d_front on w_s at 9400 width 1000 swing into r_hall
+  door id=d_garage garage on w_s at 1700 width 2400
+  door id=d_rear on w_n at 2500 width 900 swing out
+  door id=d_util_gar on w_h1 at 2800 width 800 swing into r_gar
+  door id=d_util_kit on w_v1 at 1400 width 800 swing into r_util
+  opening id=o_kit_liv on w_h2 at 2500 width 2400
+  opening id=o_hall_liv on w_v2 at 6500 width 1400
+  door id=d_hall_pass on w_h4 at 1000 width 900 swing into r_pass
+  door id=d_bath on w_h4 at 3000 width 800 swing into r_bath
+  door id=d_bed2 on w_h4 at 6600 width 900 swing into r_bed2
+  door id=d_bed3 on w_h3 at 2100 width 900 swing into r_bed3
+  door id=d_mast on w_h3 at 5500 width 900 swing into r_mast
+  door id=d_ens sliding on w_v4 at 2400 width 800
+
+  # ---- windows ----
+  window on w_n at 1000 width 800
+  window on w_n at 5200 width 1400
+  window on w_n at 7500 width 1400
+  window on w_n at 9800 width 1400
+  window on w_n at 13000 width 1600
+  window on w_e at 1100 width 600
+  window on w_e at 4400 width 600
+  window on w_e at 6500 width 1200
+  window on w_s at 4600 width 1600
+  window on w_s at 7200 width 1600
+  window on w_s at 11400 width 900
+  window on w_s at 14400 width 1600
+
+  # ---- furniture ----
+  # utility
+  furniture washer against wall w_h1 offset 450 in r_util
+  furniture dryer against wall w_h1 offset 1100 in r_util
+  furniture laundry_sink against wall w_h1 offset 1750 in r_util
+  # garage
+  furniture car at (800,3000) size 1900x4500 label "Car"
+  # kitchen / dining
+  furniture fridge against wall w_n offset 4200 in r_kit
+  furniture kitchen_sink against wall w_n offset 5200 in r_kit
+  furniture stove against wall w_n offset 6400 in r_kit
+  furniture table at (5600,1800) size 1800x1000 label "Dining table"
+  furniture chair at (5900,1300) size 450x450
+  furniture chair at (6800,1300) size 450x450
+  furniture chair at (5900,2850) size 450x450
+  furniture chair at (6800,2850) size 450x450
+  # living
+  furniture tv_unit against wall w_v1 offset 5900 in r_liv
+  furniture sofa at (5400,5200) size 900x2200 label "Sofa"
+  furniture coffee_table at (4500,5700) size 600x1000
+  # hall
+  furniture shoe_cabinet against wall w_v6 offset 1200 in r_hall
+  # bathroom
+  furniture bathtub against wall w_s offset 11400 in r_bath
+  furniture basin against wall w_v6 offset 1000 in r_bath
+  furniture wc against wall w_v7 offset 1400 in r_bath
+  # ensuite
+  furniture shower against wall w_n offset 15600 in r_ens
+  furniture wc against wall w_e offset 2100 in r_ens
+  furniture basin against wall w_e offset 3000 in r_ens
+  # bedrooms
+  furniture double_bed against wall w_v3 offset 1700 size 1800x2000 in r_mast
+  furniture wardrobe against wall w_h3 offset 3900 size 1600x600 in r_mast
+  furniture bed against wall w_v2 offset 1700 size 900x2000 in r_bed3
+  furniture wardrobe against wall w_h3 offset 650 size 1200x600 in r_bed3
+  furniture double_bed against wall w_v7 offset 1800 in r_bed2
+  furniture wardrobe against wall w_h4 offset 5100 size 1600x600 in r_bed2
+}

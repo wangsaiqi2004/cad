@@ -1,0 +1,54 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm run build)",
+      "Bash(npm run typecheck)",
+      "Bash(npm run check:quick)",
+      "Bash(npm run lint)",
+      "Bash(npm run lint:fix)",
+      "Bash(npm run lint:ci)",
+      "Bash(npm run gen:*)",
+      "Bash(npm run cli:*)",
+      "Bash(npm run docs:build)",
+      "Bash(npm run mcp:build)",
+      "Bash(git status)",
+      "Bash(git diff:*)",
+      "Bash(git log:*)",
+      "Bash(git show:*)"
+    ],
+    "ask": [
+      "Bash(npm publish:*)",
+      "Bash(git push origin v*)",
+      "Bash(git push --tags*)",
+      "Bash(git push origin --tags*)",
+      "Bash(git push origin refs/tags/*)"
+    ],
+    "deny": [
+      "Bash(git push origin main:*)",
+      "Bash(git push origin HEAD:main:*)",
+      "Bash(git -C * push origin main*)",
+      "Bash(git -C * push origin HEAD:main*)",
+      "Bash(git push --force:*)",
+      "Bash(git push -f:*)",
+      "Bash(git -C * push --force*)",
+      "Bash(git -C * push -f*)",
+      "PowerShell(git push origin main*)",
+      "PowerShell(git push origin HEAD:main*)",
+      "PowerShell(git push --force*)",
+      "PowerShell(git push -f*)"
+    ]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash|PowerShell",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node .claude/hooks/local-gate.mjs"
+          }
+        ]
+      }
+    ]
+  }
+}

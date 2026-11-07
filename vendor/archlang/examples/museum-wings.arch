@@ -1,0 +1,93 @@
+# COMPONENT v2 — one wing authored once, placed twice (v1.22).
+#
+# The whole building is three statements of composition. `museum-wing.arch` draws ONE
+# gallery wing in its own local coordinates; this file imports that FILE as a component
+# and places it on both sides of a shared entrance hall — the east one MIRRORED, so the
+# pair reads as one symmetrical building instead of two copies facing the same way.
+#
+# Read this the way you would read a React page: `wing` is the component, `place … as`
+# is the element, `at`/`mirror` are its props, and `west.corridor` is how the parent
+# reaches a child by name. Nothing about the wing changed to make it reusable.
+#
+#   west wing  x 0…18000     hall  x 18000…24000     east wing  x 24000…42000
+#
+# The east wing is `mirror x`, not `rotate 180`: mirroring flips it left↔right so its
+# corridor still runs along the SOUTH edge facing the hall, while a 180° turn would swing
+# the corridor round to the north and leave the galleries between it and the entrance.
+# A mirror is a real reflection — the fire exit and every door swing come out
+# mirror-image, which is exactly what a symmetrical building wants.
+plan "Museum — two wings" {
+  units mm
+  grid 100
+  paper A1 landscape
+  north up
+  dims auto all
+  schedule rooms
+
+  # A whole FILE as a component: no `component` declaration, no parameters, no wrapper.
+  import "museum-wing.arch" as wing
+
+  # Structural datums: the wing faces, the hall faces, and the corridor spine.
+  axes {
+    x at 0, 18000, 24000, 42000
+    y at 0, 9000, 12000
+  }
+
+  title {
+    project "Museum ground floor"
+    drawn_by "ArchLang"
+    date "2026-07-26"
+  }
+
+  # The two wings. Each `place` is one addressable instance: every id inside it becomes
+  # `west.<id>` / `east.<id>`, with auto-id counters restarting per instance, so the two
+  # are order-independent.
+  #
+  # Each instance is also implicitly a zone, which is how `describe --zone west` reaches
+  # its rooms — but an instance is a NAMESPACE, not a heading, so the room schedule does
+  # not group by one (six placed consult rooms would otherwise print six one-row groups
+  # with six subtotals; `examples/clinic.arch` records that case). Grouping is something
+  # a drawing says out loud, so the `zone` around each `place` is what puts "West wing"
+  # and "East wing" on the schedule. It costs nothing else: a zone has zero geometric
+  # semantics, and the instance ids are unchanged — `west.shell` is still `west.shell`,
+  # because id namespacing follows the INSTANCE path, not the zone path.
+  zone west "West wing" {
+    place wing() as west at (0,0)
+  }
+  zone east "East wing" {
+    place wing() as east at (42000,0) mirror x
+  }
+
+  # The entrance hall between them. It borrows the wings' own shells for its east and west
+  # sides — the only walls it declares are the two it does not share.
+  wall id=hall_north exterior thickness 300 { (18000,0) (24000,0) }
+  wall id=hall_south exterior thickness 300 { (18000,12000) (24000,12000) }
+
+  room id=hall at (18000,0) size 6000x12000 label "Entrance hall" uses entry hall
+
+  # Main entrance, and the two doors that join the hall to each wing's corridor. These are
+  # the composition: the parent cuts them, by DOTTED reference into the instances' shells
+  # (`west.shell` is the wing's `wall id=shell`, namespaced by `as west`).
+  # `swing into hall` rather than `swing in`: `in`/`out` are relative to the host wall's
+  # TRAVERSAL direction, so the correct answer here depends on which way `hall_south` was
+  # written. Naming the room says what is meant and cannot be broken by editing the wall.
+  #
+  # The main entrance is a DOUBLE door: two 1000 mm leaves meeting at a shared closed jamb
+  # on the axis (x=21000), each hinged on its outer jamb, so they are mirror images.
+  # `hall_south` runs west→east, so the west leaf's outer jamb is `hinge left` and the east
+  # leaf's is `hinge right`. The two swings touch only at the shared jamb, which is not an
+  # obstruction. (`grid 100` rounds a door's `at` to the hundred, so the leaves are an even
+  # 1000 mm: 900 mm leaves would land 50 mm off the axis.)
+  door id=d_main_w at (20500,12000) width 1000 wall hall_south hinge left  swing into hall
+  door id=d_main_e at (21500,12000) width 1000 wall hall_south hinge right swing into hall
+  door id=d_west double at (18000,10500) width 1800 wall west.shell swing into hall
+  #
+  # `d_east` is the mirror image of `d_west`. Each is a `double` pair, a leaf on each jamb,
+  # so it is its own mirror image and takes no `hinge` word: `east.shell` running the
+  # opposite way to `west.shell` (the wing is `mirror x`) changes nothing it draws. With the
+  # main pair mirrored too, the whole building — shell, rooms and every door — is D1 x about
+  # the hall's axis (`arch describe --facts symmetry`).
+  door id=d_east double at (24000,10500) width 1800 wall east.shell swing into hall
+
+  window id=w_hall_n at (21000,0) width 3000 wall hall_north
+}
