@@ -1,7 +1,7 @@
 # QA 独立黑盒验收与回归报告
 
 > QA 工程师：严过关（Yan）｜脚本：`qa/acceptance.mjs`｜语言：中文
-> 生成时间：2026-11-07T09:12:43.959Z｜本报告由脚本依据本次**真实执行结果**自动生成，不虚构任何通过。
+> 生成时间：2026-11-07T11:43:38.609Z｜本报告由脚本依据本次**真实执行结果**自动生成，不虚构任何通过。
 
 ## 0. 执行环境与边界
 
@@ -21,10 +21,10 @@
 
 | 指标 | 值 |
 |---|---|
-| 检查项总数 | 33 |
-| PASS / FAIL / SKIP | 32 / 0 / 1 |
-| 适用项通过率 | 100.0%（32/32，SKIP 不计入） |
-| 路由判定 | NoOne（无 FAIL，但有 SKIP 未完整验收） |
+| 检查项总数 | 36 |
+| PASS / FAIL / SKIP | 36 / 0 / 0 |
+| 适用项通过率 | 100.0%（36/36，SKIP 不计入） |
+| 路由判定 | NoOne（全部通过） |
 
 ## 2. 逐项结果（含真实证据）
 
@@ -58,9 +58,9 @@
 ### APP-01 [PASS] 工程师验收脚本真实执行（记录退出码）
 
 - 检查方式：真实调用
-- 命令=node app/scripts/acceptance.mjs（cwd=app，EXIT=0，耗时=23827ms）
+- 命令=node app/scripts/acceptance.mjs（cwd=app，EXIT=0，耗时=52955ms）
 - IS_PASS=YES，自述验收结果=32/32 通过，失败 0
-- stdout 尾部=try 抛 E_TIMEOUT_UNKNOWN，界面提示「可能已产生费用」 ✓ 上次明确失败后，仅用户显式重试生成新幂等键 — 旧键=idem_54feb34d91e… → 新键=idem_retry_rcd85f2e6…（仅显式触发） --- ⑪ 重做 = 新 Task + 新 versionId，旧版本保留 --- ✓ 重做生成新 Task / 新版本，旧成果哈希不变 — 旧=v001（哈希不变）→ 新=v002, 共 2 个版本 ============================================================ 验收结果：32/32 通过，失败 0 …
+- stdout 尾部=try 抛 E_TIMEOUT_UNKNOWN，界面提示「可能已产生费用」 ✓ 上次明确失败后，仅用户显式重试生成新幂等键 — 旧键=idem_54feb34d91e… → 新键=idem_retry_r60613bd4…（仅显式触发） --- ⑪ 重做 = 新 Task + 新 versionId，旧版本保留 --- ✓ 重做生成新 Task / 新版本，旧成果哈希不变 — 旧=v001（哈希不变）→ 新=v002, 共 2 个版本 ============================================================ 验收结果：32/32 通过，失败 0 …
 - stderr 尾部=(空)
 - 说明：工程师脚本内含明确标注的测试替身（mock-image-server）：能力测试与生图为 mock 验证流程，真实端点待联调
 
@@ -95,7 +95,7 @@
 ### PERM-05 [PASS] 越权请求审计留痕（真实产物）
 
 - 检查方式：产物检查
-- 文件=app\.runtime\boundary-audit.ndjson，字节=2562，sha256=0797a82d5047fbf1…
+- 文件=app\.runtime\boundary-audit.ndjson，字节=2562，sha256=66f3ef5807f4f101…
 - 审计记录=10，denied=8，中文拒绝理由=8
 - 被拒工具=system_run_command, run_script, read_file_any, apply_operations, export_dxf
 
@@ -103,7 +103,9 @@
 
 - 检查方式：静态源码审查
 - pages/**.js 中 `confirmed:` 命中=0（无）→ 必须为 0
-- confirm.js 存在 confirmTool 包装=true；校验工具名∈4 项=true；4 项齐备=true
+- confirm.js 存在 confirmTool 包装=true；校验工具名∈清单=true；清单项全部出现在包装里=true
+- 需确认清单（coreHost.mjs）=5 项〔confirmAndBuild, confirmImageSubmission, packageAndFinish, redo, agentSend〕
+- 需确认清单（confirm.js）=5 项〔confirmAndBuild, confirmImageSubmission, packageAndFinish, redo, agentSend〕；双向集合相等=true
 - 扫描页面文件=6 个（.js，含渲染层）
 - 不误伤说明：`confirmedBy: '量房员工'`（calibration.js 校准记录字段）不计入本项
 
@@ -128,7 +130,7 @@
 ### IDEM-02 [PASS] 无未登记的 setInterval、无定时补发、autoRetry 全为 false
 
 - 检查方式：静态源码审查
-- setInterval 调用命中=1（src\renderer\pages\chat.js:218）；未登记=0（无）；白名单=1 条
+- setInterval 调用命中=1（src\renderer\pages\chat.js:372）；未登记=0（无）；白名单=1 条
 - 白名单：renderer/pages/chat.js→getTaskStatus（等量断言：命中数必须等于白名单条数）
 - 白名单理由：项目工作台 2.5s 轮询只读状态（不发起付费请求、不写成果），unmount() 内 clearInterval 清理
 - 失效白名单条目=无（若轮询被删，须同步更新白名单，否则本条 FAIL）
@@ -169,15 +171,15 @@
 - 检查方式：产物检查
 - manifest.json: 5924 B，chargeSubmittedCount=1
 - idempotency.json 记录数=1
-- idempotencyKey=idem_3cc2981e638297f68ac…
+- idempotencyKey=idem_a8983cf73c33cee6c8e…
 
 ### STATE-01 [PASS] 状态变更与任务事件日志 1:1（每条转移可核对）
 
 - 检查方式：产物检查
-- 文件=app\.runtime\acceptance-projects\prj_246f2efe1ad7\task-log.ndjson，字节=14359，sha256=d974cd8104a3a238…
+- 文件=app\.runtime\acceptance-projects\prj_db47b291231a\task-log.ndjson，字节=14359，sha256=f813374aaae569d3…
 - 日志行=46，state_transition=11，audit task_state=11
 - 每条转移含 from/to 且 state 一致=true
-- 任务文件=2，taskId=task_2e9c4d44c98f4899, task_6430a70e9a654e72
+- 任务文件=2，taskId=task_0fbf0387c4124bdf, task_aa7d49f1a5e14009
 - 说明：命名说明：架构记为 events.ndjson，实现落盘名为 task-log.ndjson（NDJSON 事件日志），语义等价
 
 ### STATE-02 [PASS] AWAITING_CALIBRATION 必经且真实停住（非自动推进）
@@ -190,7 +192,7 @@
 ### STATE-03 [PASS] 重做 = 新 taskId + 新 versionId，旧版本不被覆盖
 
 - 检查方式：产物检查
-- taskId 数=2（task_2e9c4d44c98f4899, task_6430a70e9a654e72），redo 事件=2
+- taskId 数=2（task_0fbf0387c4124bdf, task_aa7d49f1a5e14009），redo 事件=2
 - 版本目录=["v001","v002"]
 - 当前版本 plan.dxf sha256=37db9fa72fa830c2…
 - 说明：旧版本哈希不变由工程师验收脚本第 ⑪ 项断言，QA 另在 CAD-03 核对交付包内哈希一致性
@@ -210,23 +212,23 @@
 - 检查方式：接口级行为探针
 - 状态转移日志=11/11，非法跳跃(DRAFT→STRUCTURE_READY)被拒=true
 - 重做新 taskId=true，新 versionId=v002，旧 Task 仍在=true(v001)
-- 阻塞态展示={"taskId":"task_4eb7697e42114c5f","versionId":"v002","state":"AWAITING_CALIBRATION","stateLabel":"等待尺寸确认","subProgress":{"done":0,"total":0,"unit":"待确认项"},"showPercent":false,"showEta":false,"waitingF
+- 阻塞态展示={"taskId":"task_48aacec2bc6b48db","versionId":"v002","state":"AWAITING_CALIBRATION","stateLabel":"等待尺寸确认","subProgress":{"done":0,"total":0,"unit":"待确认项"},"showPercent":false,"showEta":false,"waitingF
 - 校准：起始待确认=6，isComplete=false，finalize 被阻断=true（中文=true）
 - 仅确认 1 项后仍阻塞=true，全部确认后 isComplete=true 且 finalize 成功=true
 
 ### SECRET-01 [PASS] secrets.json 为密文（不含任何 Key 明文）
 
 - 检查方式：产物检查
-- 文件=app\.runtime\userdata\secrets.json，字节=205，sha256=515ff0c0fa7d8491…
+- 文件=app\.runtime\userdata\secrets.json，字节=205，sha256=4dc88dd0ca096fc3…
 - 密文条目=2，均符合 base64/DPAPI 密文形态=true
 - 测试替身 Key 片段命中=0/4
-- 密文前缀=djEwJzp5mBy8, djEwQjOOcBX5
+- 密文前缀=djEw8nt5t2vT, djEwgkSdDrRv
 
 ### SECRET-02 [PASS] settings.json / 日志 / 对话 / 交付包 全文检索 Key 片段命中数 = 0
 
 - 检查方式：产物检查 + 真实调用(zip_scan.py)
-- 检索文件数=108，测试替身 Key 片段=4 个（test-double-ke…, test-double-ke…, pipeline-text-…, pipeline-image…）
-- 落盘文件命中=0，交付包 ZIP 命中=0（ZIP sha256=5dd8917671bd4cf7…）
+- 检索文件数=183，测试替身 Key 片段=4 个（test-double-ke…, test-double-ke…, pipeline-text-…, pipeline-image…）
+- 落盘文件命中=0，交付包 ZIP 命中=0（ZIP sha256=3e73041306c3ce9e…）
 - 命中明细=无
 - 说明：本项使用【测试替身 Key】验证脱敏流程；本机无客户 API Key，真实端点联调待用户提供
 
@@ -244,15 +246,15 @@
 - env 已移除 ELECTRON_RUN_AS_NODE / NODE_OPTIONS
 - isEncryptionAvailable=true，roundtripOK=true
 - backend=n/a: getSelectedStorageBackend is not a function，electron=44.7.0，node=24.21.0
-- 密文 57 B，hex 头=7631306f971943e3bf40a913，明文泄漏(base64/latin1)=false/false
+- 密文 57 B，hex 头=763130793750487b48870660，明文泄漏(base64/latin1)=false/false
 - 响应文件=qa\.work\run\safe-storage.response.json（334 B）
 
 ### CAD-01 [PASS] 交付 DXF：ezdxf.readfile() + audit() 0 errors + AC1015 + 六类元素齐全
 
 - 检查方式：真实调用(ezdxf)
-- 命令="C:/Users/wang/AppData/Local/Temp/reno-repo-audit/cad/_venv_acp/Scripts/python.exe" "C:\Users\wang\Documents\ChatGPT\cad制图skills+网站\qa\dxf_audit.py" "C:\Users\wang\Documents\ChatGPT\cad制图skills+网站\app\.runtime\acceptance-projects\prj_246f2efe1ad7\versions\v001\plan.dxf"
-- EXIT=0，耗时=1171ms
-- 文件=app\.runtime\acceptance-projects\prj_246f2efe1ad7\versions\v001\plan.dxf，字节=24155，sha256=37db9fa72fa830c2…
+- 命令="C:/Users/wang/AppData/Local/Temp/reno-repo-audit/cad/_venv_acp/Scripts/python.exe" "C:\Users\wang\Documents\ChatGPT\cad制图skills+网站\qa\dxf_audit.py" "C:\Users\wang\Documents\ChatGPT\cad制图skills+网站\app\.runtime\acceptance-projects\prj_db47b291231a\versions\v001\plan.dxf"
+- EXIT=0，耗时=2091ms
+- 文件=app\.runtime\acceptance-projects\prj_db47b291231a\versions\v001\plan.dxf，字节=24155，sha256=37db9fa72fa830c2…
 - ezdxf.readfile() 可读=true，audit errors=0，fixes=5
 - $ACADVER=AC1015，dxfversion=AC1015
 - 实体={"LINE":32,"TEXT":4,"INSERT":7,"HATCH":2,"DIMENSION":2}
@@ -269,7 +271,7 @@
 
 - 检查方式：产物检查 + 静态源码审查
 - app/ 下实际 .dwg 文件数=0
-- 源码中 .dwg 提及=10 处，均为断言/拒绝/声明等合规上下文
+- 源码中 .dwg 提及=12 处，均为断言/拒绝/声明等合规上下文
 - 可疑「写/改名/解析 DWG」代码=0（无）
 - 示例合规代码=assert.equal(files.some((name) => name.toLowerCase().endsWith('.dwg')), false);
 - 边界声明明确「不改名 DWG」=true
@@ -278,7 +280,7 @@
 ### CAD-04 [PASS] 交付包含 DXF+SVG+PDF+效果图占位+边界声明+版本记录
 
 - 检查方式：产物检查 + 真实调用(zip_scan.py)
-- ZIP=app\.runtime\acceptance-projects\deliveries\交付包-v001.zip，字节=418512，sha256=5dd8917671bd4cf7…
+- ZIP=app\.runtime\acceptance-projects\deliveries\交付包-v001.zip，字节=418512，sha256=3e73041306c3ce9e…
 - 条目数=18，清单=plan.dxf, plan.svg, plan.pdf, plan.arch, plan.determinism-check.dxf, ops.json, drawing.opencalque, drawing-working.dxf, drawing-from-delivery-dxf.opencalque, drawing-roundtrip.dxf, structured-plan.json, image-record.json, manifest.json, image/render-v001.png, CAD边界声明.txt, 方案说明.txt, 版本记录.txt, 脱敏自检报告.json
 - 逐项：DXF=true；SVG=true；PDF=true；效果图占位=true；边界声明=true；版本记录=true
 
@@ -288,22 +290,66 @@
 - 扫描界面文案载体文件=19 个 + 交付包文本条目
 - 界面文案（含中文字符串字面量）命中=0，交付包用户可读文本命中=0
 
-### LOOP-01 [SKIP] 双引擎闭环
+### LOOP-01 [PASS] archlang 确定性 DXF 双编 sha256 一致（回归基线）
 
-- 检查方式：真实调用
-- --fast 已指定
-- 说明：SKIP (跳过)：快速模式不执行上游引擎闭环
+- 检查方式：真实调用(archlang CLI)
+- compile #1 EXIT=0，compile #2 EXIT=0
+- #1 6282 B sha256=67ce0c81ebe650cd6a33f11e67f39bf9327897f0812366c0c7ceacc1ef0e76a8
+- #2 6282 B sha256=67ce0c81ebe650cd6a33f11e67f39bf9327897f0812366c0c7ceacc1ef0e76a8
+- 主理人基线 sha256=67ce0c81ebe650cd6a33f11e67f39bf9327897f0812366c0c7ceacc1ef0e76a8 → 一致=true
+
+### LOOP-02 [PASS] 上游 DXF 的 ezdxf audit 0 errors / AC1015 / 六类元素
+
+- 检查方式：真实调用(ezdxf)
+- EXIT=0，可读=true，audit errors=0，fixes=5
+- $ACADVER=AC1015，实体={"LINE":20,"TEXT":2,"INSERT":2,"HATCH":1,"DIMENSION":2}
+- 图层=["A-ANNO-DIMS","A-ANNO-TEXT","A-DOOR","A-FLOR","A-GLAZ","A-WALL-EXTR"]
+- 说明：说明：上游 one-room.arch 示例不含家具块（INSERT 仅 DOOR/WINDOW），六类元素齐全由 CAD-01 对产品交付 DXF 判定
+
+### LOOP-03 [PASS] archlang DXF → import → describe → validate → 再 dxf 导出，全 EXIT=0
+
+- 检查方式：真实调用(opencalque CLI)
+- import:EXIT=0
+- describe:EXIT=0
+- validate:EXIT=0
+- check:EXIT=0
+- dxf:EXIT=0
+- 再导出 qa\.work\run\dual-engine\qa-roundtrip.dxf：4692 B，sha256=19252a6103c531c7…
+- import stdout=C:\\Users\\wang\\Documents\\ChatGPT\\cad制图skills+网站\\qa\\.work\\run\\dual-engine\\qa-one-room.dxf: 4…；stderr=(空)
+- describe stdout={ "name": "qa-roundtrip", "unit": "mm", "layers": [ { "id": "layer_1", "name": "Layer 1" }, { "id": …；stderr=(空)
+- validate stdout=OK；stderr=(空)
+- check stdout=[]；stderr=(空)
+- dxf stdout=(空)；stderr=(空)
+
+### LOOP-04 [PASS] apply 必须先 new 空文档（回归主理人实测的 EXIT=1 教训）
+
+- 检查方式：真实调用(opencalque CLI)
+- new EXIT=0；首次 apply(空文档) EXIT=0（stdout=Applied 23 operations）
+- 再次 apply(已有内容) EXIT=1（stdout=）
+- fresh.opencalque=5558 B
+- 说明：第二次 apply 的 EXIT=1 是上游已知行为（Layer "furniture" already exists），属测试输入约束，不是产品缺陷
 
 ## 3. 命令与真实退出码
 
 | # | 用途 | EXIT | 耗时(ms) | 命令 |
 |---|---|---|---|---|
-| 1 | 工程师验收脚本 npm test 等价命令 | 0 | 23827 | `node "scripts\acceptance.mjs"` |
-| 2 | QA 独立行为探针 | 0 | 791 | `node "C:\Users\wang\Documents\ChatGPT\cad制图skills+网站\qa\lib\probe-runtime.mjs" "C:\Users\wang\Documents\ChatGPT\cad制图skills+网站\app" "C:\Users\wang\Documents\ChatGPT\cad制图skills+网站\qa\.work\run\probe"` |
-| 3 | 交付包 ZIP 全文检索 | 0 | 361 | `"C:/Users/wang/AppData/Local/Temp/reno-repo-audit/cad/_venv_acp/Scripts/python.exe" "C:\Users\wang\Documents\ChatGPT\cad制图skills+网站\qa\lib\zip_scan.py" "C:\Users\wang\Documents\ChatGPT\cad制图skills+网站\app\.runtime\accepta` |
-| 4 | ezdxf 审计产品交付 plan.dxf | 0 | 1171 | `"C:/Users/wang/AppData/Local/Temp/reno-repo-audit/cad/_venv_acp/Scripts/python.exe" "C:\Users\wang\Documents\ChatGPT\cad制图skills+网站\qa\dxf_audit.py" "C:\Users\wang\Documents\ChatGPT\cad制图skills+网站\app\.runtime\acceptance` |
-| 5 | 交付包清单 | 0 | 331 | `"C:/Users/wang/AppData/Local/Temp/reno-repo-audit/cad/_venv_acp/Scripts/python.exe" "C:\Users\wang\Documents\ChatGPT\cad制图skills+网站\qa\lib\zip_scan.py" "C:\Users\wang\Documents\ChatGPT\cad制图skills+网站\app\.runtime\accepta` |
-| 6 | 交付包 UI 禁用词扫描 | 0 | 315 | `"C:/Users/wang/AppData/Local/Temp/reno-repo-audit/cad/_venv_acp/Scripts/python.exe" "C:\Users\wang\Documents\ChatGPT\cad制图skills+网站\qa\lib\zip_scan.py" "C:\Users\wang\Documents\ChatGPT\cad制图skills+网站\app\.runtime\accepta` |
+| 1 | 工程师验收脚本 npm test 等价命令 | 0 | 52955 | `node "scripts\acceptance.mjs"` |
+| 2 | QA 独立行为探针 | 0 | 1314 | `node "C:\Users\wang\Documents\ChatGPT\cad制图skills+网站\qa\lib\probe-runtime.mjs" "C:\Users\wang\Documents\ChatGPT\cad制图skills+网站\app" "C:\Users\wang\Documents\ChatGPT\cad制图skills+网站\qa\.work\run\probe"` |
+| 3 | 交付包 ZIP 全文检索 | 0 | 581 | `"C:/Users/wang/AppData/Local/Temp/reno-repo-audit/cad/_venv_acp/Scripts/python.exe" "C:\Users\wang\Documents\ChatGPT\cad制图skills+网站\qa\lib\zip_scan.py" "C:\Users\wang\Documents\ChatGPT\cad制图skills+网站\app\.runtime\accepta` |
+| 4 | ezdxf 审计产品交付 plan.dxf | 0 | 2091 | `"C:/Users/wang/AppData/Local/Temp/reno-repo-audit/cad/_venv_acp/Scripts/python.exe" "C:\Users\wang\Documents\ChatGPT\cad制图skills+网站\qa\dxf_audit.py" "C:\Users\wang\Documents\ChatGPT\cad制图skills+网站\app\.runtime\acceptance` |
+| 5 | 交付包清单 | 0 | 613 | `"C:/Users/wang/AppData/Local/Temp/reno-repo-audit/cad/_venv_acp/Scripts/python.exe" "C:\Users\wang\Documents\ChatGPT\cad制图skills+网站\qa\lib\zip_scan.py" "C:\Users\wang\Documents\ChatGPT\cad制图skills+网站\app\.runtime\accepta` |
+| 6 | 交付包 UI 禁用词扫描 | 0 | 587 | `"C:/Users/wang/AppData/Local/Temp/reno-repo-audit/cad/_venv_acp/Scripts/python.exe" "C:\Users\wang\Documents\ChatGPT\cad制图skills+网站\qa\lib\zip_scan.py" "C:\Users\wang\Documents\ChatGPT\cad制图skills+网站\app\.runtime\accepta` |
+| 7 | archlang compile #1 | 0 | 3519 | `npx -y tsx "C:\Users\wang\Documents\ChatGPT\cad制图skills+网站\vendor\archlang\src\cli.ts" compile "C:\Users\wang\Documents\ChatGPT\cad制图skills+网站\vendor\archlang\examples\one-room.arch" -o "C:\Users\wang\Documents\ChatGPT\c` |
+| 8 | archlang compile #2 | 0 | 3467 | `npx -y tsx "C:\Users\wang\Documents\ChatGPT\cad制图skills+网站\vendor\archlang\src\cli.ts" compile "C:\Users\wang\Documents\ChatGPT\cad制图skills+网站\vendor\archlang\examples\one-room.arch" -o "C:\Users\wang\Documents\ChatGPT\c` |
+| 9 | ezdxf 审计上游基线 DXF | 0 | 2066 | `"C:/Users/wang/AppData/Local/Temp/reno-repo-audit/cad/_venv_acp/Scripts/python.exe" "C:\Users\wang\Documents\ChatGPT\cad制图skills+网站\qa\dxf_audit.py" "C:\Users\wang\Documents\ChatGPT\cad制图skills+网站\qa\.work\run\dual-engin` |
+| 10 | opencalque import | 0 | 4559 | `npx -y pnpm@9.14.2 --silent opencalque import "C:\Users\wang\Documents\ChatGPT\cad制图skills+网站\qa\.work\run\dual-engine\qa-roundtrip.opencalque" "C:\Users\wang\Documents\ChatGPT\cad制图skills+网站\qa\.work\run\dual-engine\qa-` |
+| 11 | opencalque describe | 0 | 4591 | `npx -y pnpm@9.14.2 --silent opencalque describe "C:\Users\wang\Documents\ChatGPT\cad制图skills+网站\qa\.work\run\dual-engine\qa-roundtrip.opencalque"` |
+| 12 | opencalque validate | 0 | 4480 | `npx -y pnpm@9.14.2 --silent opencalque validate "C:\Users\wang\Documents\ChatGPT\cad制图skills+网站\qa\.work\run\dual-engine\qa-roundtrip.opencalque"` |
+| 13 | opencalque check | 0 | 4439 | `npx -y pnpm@9.14.2 --silent opencalque check "C:\Users\wang\Documents\ChatGPT\cad制图skills+网站\qa\.work\run\dual-engine\qa-roundtrip.opencalque"` |
+| 14 | opencalque dxf | 0 | 4500 | `npx -y pnpm@9.14.2 --silent opencalque dxf "C:\Users\wang\Documents\ChatGPT\cad制图skills+网站\qa\.work\run\dual-engine\qa-roundtrip.opencalque" --out "C:\Users\wang\Documents\ChatGPT\cad制图skills+网站\qa\.work\run\dual-engine\` |
+| 15 | opencalque new | 0 | 4473 | `npx -y pnpm@9.14.2 --silent opencalque new "C:\Users\wang\Documents\ChatGPT\cad制图skills+网站\qa\.work\run\dual-engine\qa-fresh.opencalque" "QA 空文档" --force` |
+| 16 | opencalque apply(空文档) | 0 | 4581 | `npx -y pnpm@9.14.2 --silent opencalque apply "C:\Users\wang\Documents\ChatGPT\cad制图skills+网站\qa\.work\run\dual-engine\qa-fresh.opencalque" "C:\Users\wang\Documents\ChatGPT\cad制图skills+网站\vendor\opencalque\examples\studio` |
+| 17 | opencalque apply(已有内容文档·预期 EXIT=1) | 1 | 4444 | `npx -y pnpm@9.14.2 --silent opencalque apply "C:\Users\wang\Documents\ChatGPT\cad制图skills+网站\qa\.work\run\dual-engine\qa-fresh.opencalque" "C:\Users\wang\Documents\ChatGPT\cad制图skills+网站\vendor\opencalque\examples\studio` |
 
 ## 4. 【真实调用】与【测试替身 / mock】严格区分
 
@@ -356,13 +402,14 @@
 
 - 无（本轮所有适用检查项通过）
 
-### SKIP 项清单（1）
+### SKIP 项清单（0）
 
-- **LOOP-01**：SKIP (跳过)：快速模式不执行上游引擎闭环
+- 无
 
 ## 6. 测试轮次控制与智能路由判定
 
-严格按「最多 2 轮」执行，**不进入第 3 轮**：
+严格按「最多 2 轮」执行，**不进入第 3 轮**。下表是 **2026-11-07 早间（Agent Loop 接入之前）** 的历史轮次，只作追溯用；
+当前这轮的最新状态见本节末尾「最终结论」与 `qa/.work/results.json`（脚本每次运行自动重算，不沿用历史结论）。
 
 | 轮次 | 动作 | 结果 | 路由判定 |
 |---|---|---|---|
@@ -373,17 +420,13 @@
 
 ### 智能路由明细（Decision Rule）
 
-| FAIL 项 | 断言是否符合 PRD/设计 | 实际输出 | 判定 | 归属 |
-|---|---|---|---|---|
-| IDEM-06 自动重试 | 符合：PRD 4.4 规则 4「禁止自动重试、禁止在循环中重新提交」 | `httpAdapter.mjs` 存在 1 次连接层 for 循环重试 | 断言正确、实现不符 → **源码 Bug** | Engineer（或 PM 书面豁免） |
-| CAD-04 缺 PDF | 符合：PRD F7/P0-11「DXF（+ SVG/PDF 预览）」、验收项⑤ | 交付包 17 项无 `plan.pdf`，`delivery.mjs` 清单也不含 PDF | 断言正确、实现不符 → **源码 Bug** | Engineer（补依赖或 PM 显式降级） |
-| UI-01 禁用词 | 符合：PRD G1/P0-01「UI 不暴露 Skill/JSON」、验收项⑥ | 用户可见文案 3 处命中 | 断言正确、实现不符 → **源码 Bug**；根因含 PRD 3.5 原文用词冲突 | Engineer + PM 统一措辞 |
+**本轮无 FAIL**：IDEM-06 / CAD-04 / UI-01 三项历史缺陷当前均为 PASS（证据见 §2 逐项结果），无路由动作。
 
 ### 最终结论
 
-- **总体结论：有条件通过 / 未完全通过**。适用项通过率 100.0%（32/32），存在 0 项 FAIL，退出码 1。
-- **权限边界、幂等防重复扣费（实质）、真实状态机、密钥脱敏、DXF 有效性、双引擎闭环 6 大类核心能力全部真实验证通过**；3 项 FAIL 均不构成阻断性安全缺陷，属可修复的合规/文案/交付物缺口。
-- **不得宣称「全部验收通过」**：无客户 API Key、无建筑 CAD、本产品自身 GUI 冒烟未验证、nsis/portable 安装包未产出，均为待联调/待验证项。
+- **总体结论：全部通过**。适用项通过率 100.0%（36/36），FAIL 0 / SKIP 0，退出码 0。
+- 权限边界、幂等防重复扣费、真实状态机、密钥脱敏、DXF 有效性、双引擎闭环、界面文案与关键交互（含 Agent Loop 对话改布局）均按真实执行结果通过。
+- **仍不得宣称「客户环境全部就绪」**：无客户 API Key（模型/生图走测试替身）、无建筑 CAD 图纸联调、nsis/portable 安装包未产出，均属待联调/待交付项。
 - 工程师修复后，重跑 `node qa/acceptance.mjs` 即可自动回归（脚本动态发现产物、支持重复运行），无需修改 QA 脚本。
 
 ## 7. 复现方式
@@ -702,3 +745,386 @@ node qa/acceptance.mjs --fast     # 静态与产物检查，跳过引擎闭环
 node qa/lib/ui-probe.mjs          # 界面 6 路由 DOM 取证
 node qa/lib/ui-scenario.mjs       # 建真项目驱动校准/工作台/结果页
 ```
+
+---
+
+## 交付说明（主理人齐活林，2026-11-07 17:15）—— 不是 QA 判定
+
+**D4 已闭合**：QA 提案「你已定『保存这次校准』」。我改判为**回归 PRD 口径**，按钮文案已还原为「确认并继续」（完成后显示「校准已完成」）。
+理由：该按钮成功后确实会 `onComplete` 推进到下一步 / 跳转工作台，叫「继续」是准确的；改规格反而要为一句更松的文案动 PRD。**文档与代码现已一致，无需改规格。**
+
+**更正我自己上一版的错误结论**：我曾在 `qa/REPORT.md` 写过「扫描器 `.js` 盲区，脚本未修」。**这是错的**——QA 已在提交 `a6d3214` 里修完，并改成登记制 + 双向等量断言。我当时没核对提交内容就下了结论，已更正 `docs/INCREMENT-DESIGN.md §11`。
+
+**D1 的证据归属要说清**：QA 只验到界面层（勾满 4 项 + 填尺寸 → 按钮可用）。**后端契约的端到端是主理人探针实测的**，可复现：
+
+```
+node app/.runtime/probe-d1.mjs
+→ newProject 0 / submitRequirements blocked=true pending=6
+→ applyCalibration(无底图) blocked=false pending=0
+→ scaleSource=user_provided_dimensions  mmPerPixel=1
+→ confirmAndBuild 0（成功）
+```
+
+**本轮仍未修的一条**（不是 `.js` 那个）：UI-01 的扫描文件集只覆盖 `core / config / project / renderer`，**不含 `packaging / skill / mcp / orchestrator`**。当前靠 ZIP 文本扫描兜底，属"扫不到靠兜底"，下轮补。
+
+---
+
+## 10. Agent Loop 接入验收（2026-11-07）
+
+**范围**：上游 opencalque Agent Loop 接进产品后新增的「工作台对话改布局」链路——
+`app/src/agent/runner.ts`（子进程执行体）、`app/src/agent/service.mjs`（`AgentService`）、
+`coreHost.mjs` 的 `agentSend` / `getChatHistory`、`confirm.js` 的第 5 个受控动作、`chat.js` 的对话卡片。
+
+**判定：有条件通过（PASS with 2 defects）**。8 项验收全部有真实执行证据；两侧安全红线（密钥只走 stdin、替身不可界面触发）实测成立；
+发现 2 条真缺陷（假版本、替身上下文），**均非阻断**，交回工程师，本报告不做"改完再验"的猜测。
+
+**独立性问题声明**：本轮不使用工程师留下的 `app/.runtime/probe-agent/*` 结论与项目目录；
+所有端到端证据由 QA 自建临时项目（`app/.runtime/qa-probe/*.mjs`）跑出，项目/版本目录在探针结束时删除，不污染工程师产物。
+
+### 10.1 逐项结果
+
+| # | 检查项 | 结果 | 关键证据 |
+|---|---|---|---|
+| 1 | `vendor/` `qa/` `app/scripts/` 零改动 | **PASS** | 见 10.2 |
+| 2 | stub 端到端真改图纸 | **PASS**（18/18）+ 2 条缺陷见 10.6 | 见 10.3 |
+| 3 | 无 Key 时不许伪造 | **PASS** | 7/7 |
+| 4 | testDouble 不可被界面触发 | **PASS** | 4/4 |
+| 5 | 密钥不外泄 | **PASS** | 11/11（含 WMI 实测命令行） |
+| 6 | 界面 6 页 + 对话卡片 | **PASS** | 6/6 截图 + 真实路径 12/12 + 替身标记 3/3 |
+| 7 | 禁用词红线 | **PASS**（0 条界面缺陷，6 条命中逐条归类见 10.7） | 见 10.7 |
+| 8 | 回归三项 | **PASS** | 见 10.8 |
+
+### 10.2 第 1 项：`vendor/ qa/ app/scripts/` 零改动
+
+```
+$ git status --short vendor/ qa/ app/scripts/
+（无输出）
+$ git diff --stat HEAD -- vendor/ qa/ app/scripts/
+（无输出）
+$ git status --short --untracked-files=all vendor/ qa/ app/scripts/
+（无输出）
+```
+
+同时核对工程师改动落点与自述一致：`M README.md`、`M app/src/desktop/coreHost.mjs`、
+`M app/src/renderer/core/confirm.js`、`M app/src/renderer/pages/chat.js`、`M app/src/renderer/styles.css`、`?? app/src/agent/`。
+`vendor/opencalque` 与 `app/scripts/*` 在全部探针/回归运行后仍为空diff。
+
+> 归属说明：事后 `qa/acceptance.mjs` 与 `qa/.work/results.json` 出现改动，是 **QA 本轮自己**修 PERM-07 / SECRET-04 造成的（10.9），
+> 不是工程师动的。第 1 项的判定时点在改动之前，证据如上。
+
+### 10.3 第 2 项：stub 端到端真改图纸（自建项目）
+
+探针 `app/.runtime/qa-probe/item2-stub.mjs`：用**真实 `ProjectStore`** 造项目与 v001，拷一份真实图纸，
+`sha256` 前后对比，跑 `service.runTurn({stub:true})`。
+
+```
+旧版本 v001 sha256 = 47a69a1c28eb7dc4 bytes = 5150
+PASS A  旧版本 drawing.opencalque 字节不变 :: 47a69a1c28eb -> 47a69a1c28eb
+PASS B  生成了新版本目录 :: versions=v001,v002
+PASS C1 新版本图纸字节与旧版本不同 :: newSha=d04a444d8b91
+PASS C2 不是简单复制旧文件
+PASS C3 节点数因工具调用增加 :: 17 -> 18
+PASS C4 新图纸里有 stub 新增的参考线节点 :: type=line a={"x":0,"y":0} b={"x":1500,"y":0}
+PASS C5 旧图纸没有该节点
+PASS D1 chat.ndjson 存在且恰好两条 :: lines=2
+PASS D2 第一条是用户原话 / D3 第二条助手回复且 changed=true / D4 带 testDouble 标记
+PASS E1 chat-work 工作副本已清理 / F1 旧版本目录未被写入 chat.ndjson
+PASS G1 新版本生成变更说明 drawing-change.md
+PASS H1 返回 versionId 指向新版本 / H2 changed=true testDouble=true / H3 回复非空
+SUMMARY: 18/18 PASS
+```
+
+**「是真改还是内存里改一次」的判定依据**：不是看 `changed`，而是看**新版本目录里的文件内容**——
+节点数 17→18、新增节点 `type=line / name=对话测试参考线 / a=(0,0) b=(1500,0)`、旧版本 sha256 未变。
+另用 `item2b-changed-flag.ts`（tsx 直跑 vendor core）单独确认 `serializeDocument(parseDocument(raw)) === raw`（字节级幂等），
+所以"新版本图纸字节不同"确实等于"内容被改了"，不存在序列化噪声导致的假阳性。
+
+**两轮接续**（`item2c-two-turns.mjs`，9 条断言 8 过）：v001→v002→v003，chat.ndjson 2 条→4 条，
+旧版本记录未被搬走，v001 图纸两轮后 sha256 仍不变。唯一未过的一条见 10.6 的 D-2（替身快照不带消息）。
+
+### 10.4 第 3/4/5 项：无 Key 不伪造 / 替身不可界面触发 / 密钥不外泄
+
+探针 `app/.runtime/qa-probe/item3-5.mjs`，22/22 PASS：
+
+```
+=== 无 Key ===
+PASS 3.1 抛错而不是返回成功 :: code=E_NO_MODEL_CONFIG
+PASS 3.3 错误文案是中文且可执行 :: 还没有配置文本模型，请到模型设置填写接口地址 / 密钥 / 模型名。
+PASS 3.4 没有生成新版本 :: v001
+PASS 3.5 没有写 chat.ndjson   PASS 3.6 旧图纸一个字节没动   PASS 3.7 没留下 chat-work
+=== 密钥不外泄（5a 端口不通 / 5b 服务端把 Authorization 原样回显） ===
+服务端真实回显了 = 401 invalid api key: Bearer sk-QA-CANARY-9f3a2b7c1d5e
+PASS 5b.2 服务端回显密钥也被剔除 :: API 密钥被拒绝。请在偏好设置中检查。
+PASS 5c  .runtime 下没有任何文件含密钥明文 :: 干净
+PASS 5c2 项目目录内没有密钥明文（含 chat.ndjson / chat-history.json）:: 干净
+=== testDouble 不可被界面触发 ===
+PASS 4a.1 agentSend 分支不转发 stub（源码级）:: 无 stub 字段
+PASS 4b.1 渲染层带 stub:true，主进程只传三个字段 :: {"projectId":"prj_…","versionId":"v001","text":"把沙发挪到窗边"}
+PASS 4c.1 界面要求 stub，实际仍走真实路径并报无模型配置 :: code=1 errorCode=E_NO_MODEL_CONFIG
+```
+
+**密钥只走 stdin（实测，不看代码）**：`item5-cmdline.mjs` 起一个故意挂 8 秒的假模型，在子进程存活窗口用
+`Get-CimInstance Win32_Process` 抓命令行：
+
+```
+抓到 runner.ts 子进程命令行 = true
+  > ...\node.exe ...\vendor\opencalque\node_modules\tsx\dist\cli.mjs ...\app\src\agent\runner.ts
+命令行里出现密钥明文 = false
+结论：密钥只在 stdin，命令行干净
+```
+
+补充扫描（全量 `app/.runtime`，排除 `settings.json / secrets.json / safe-storage.json`）：
+只命中 2 处，均为**探针脚本自身的测试常量**（`probe-agent/guards.mjs` 的 `sk-should-not-be-used-in…`、QA 自己探针的 canary），
+12 个 `chat.ndjson` / `chat-history.json` 中 `apiKey | Authorization | Bearer` 命中数 **0**。
+
+### 10.5 第 6 项：界面 6 页 + 对话卡片
+
+`cd app && node scripts/capture-ui.mjs` → `6/6 张截图`，报告 `app/.runtime/ui-capture-report.json`：
+
+| 截图 | 结论（逐张看过） |
+|---|---|
+| `home.png` | 首页/最近项目列表正常，8 个项目条目、状态徽标齐全 |
+| `settings.png` | 两组模型配置齐全，密钥显示为掩码 `已保存：****0001`，无明文 |
+| `wizard.png` | 5 步向导、字段完整，按钮态正常 |
+| `calibration.png` | 左底图区 + 右尺寸/核对清单，无溢出 |
+| `chat.png` | **对话卡片**：消息空态提示、输入框、发送按钮、计费提示齐全；**无「测试替身」标记** |
+| `results.png` | 版本列表空态与「回首页」按钮正常 |
+
+**「测试替身标记只在 stub 时出现」的实证（两条反证都做了）**：
+
+1. 真实路径（本地假端点顶替模型服务，端口取自本机 `settings.json` 的 `textModel` 配置）——
+   探针 `item6-ui-real.mjs`，真 Electron + 真桥接 + 真 Agent Loop，12/12 PASS：
+   `助手回复=已经把沙发往窗边挪了，并加了一条 0.9 米参考线` / `当前版本 v001→v002` / `假端点收不到替身`
+   / `替代标记 = false` / 新版本图纸里确有 `QA验收参考线` / chat 两条且都不带 `testDouble`。
+   截图 `app/.runtime/ui-shots/qa-chat-real.png`（消息区、输入框、发送按钮、任务面板均正常，无重叠/截断）。
+2. 替身路径——把两条 `testDouble:true` 的记录注入某一版 `chat.ndjson` 后重开界面（`item6-stub-flag.mjs`，3/3 PASS）：
+   `.chat-flag` 恰好出现 2 次、文案为「测试替身回复，未连接真实模型」，2 条真实轮次无标记。
+   截图 `app/.runtime/ui-shots/qa-chat-stub-flag.png`。
+   → 结论：该标记是**按记录逐条渲染**的真实能力，不是写死的装饰；真实路径下不出现。
+
+### 10.6 缺陷清单（本轮新发现，均未自行改产品代码）
+
+**D-1【归属：Engineer／严重度：中】语义空改动也会生成新版本（假版本）**
+`runner.ts:295` 的判定是 `if (ops.length > 0) changed = true`——按"有没有 ops"而不是"图纸有没有变"。
+端到端复现（`item2d-fake-version.mjs`，本地假模型发一个 `update_node`「把 name 改成它现在的名字」）：
+
+```
+版本目录 = v001, v002
+changed = true ｜versionId = v002
+原图纸 sha = 47a69a1c28eb7dc4
+新版本 sha = 47a69a1c28eb7dc4
+图纸字节相同 = true
+新版本目录内容 = chat-history.json, chat.ndjson, drawing-change.md, drawing.opencalque, human-edits, image
+```
+
+即：图纸一个字节没变，却落了一个新版本，`drawing-change.md` 写着"本次改动"，
+`chat.js` 还会 `toast('图纸已按你的话调整，已写入新版本','ok')`。这正好命中"假版本"怀疑项。
+建议修法（二选一，都不大）：① `host.apply()` 里 apply 前先取 `serializeDocument(doc)` 文本，apply 后比对，相同则不置 `changed`；
+② `service.mjs` 落版本前比对 `workDrawing` 与原 `drawing.opencalque` 的 sha256，相同则不出新版本、返回 `changed:false`。
+QA 侧已有可复用的复现探针，改完可直接回归。
+
+**D-2【归属：Engineer／严重度：低（但影响自检覆盖）】替身 Provider 的会话快照不累积消息**
+`runner.ts` 的 `createStubProvider().snapshot()` 返回的是 `createSession` 入参里的历史，`send()` 过程从不追加消息，实测：
+
+```
+第一轮替身快照 = {"messages":[],"unanswered":[]}
+第二轮替身快照 messages 数 = 0
+```
+
+真实 Provider 正常（同一项目真实路径快照 `messages=6`）。后果：**替身模式永远"没有上文"**，
+用替身跑回归时"多轮上下文接续"这条永远测不出来（真出回归也不会报警）。不影响真实用户路径，故列低。
+
+### 10.7 第 7 项：禁用词红线（逐条归类，不是"有/没有"）
+
+自写扫描器（`app/src` 全量 `.js/.mjs/.cjs/.ts/.html/.css`，区分注释 / 字符串字面量 / 含中文的界面串）：
+
+```
+总命中行 = 80 ｜涉及文件 = 21
+归属统计 = {"注释":26, "代码/标识符/英文串":48, "用户可见中文串":6}
+```
+
+6 条"含中文字符串字面量"的命中，逐条判定：
+
+| 位置 | 命中 | 判定 |
+|---|---|---|
+| `mcp/mcpClient.mjs:55` `MCP Server 已关闭` | MCP | **非界面缺陷**：只被 `pipeline.verifyMcp()` 调用，而 `verifyMcp` 只有 `qa/acceptance.mjs` 用，无桌面工具暴露（`grep verifyMcp` 仅 1 处定义、0 处产品调用） |
+| `mcp/mcpClient.mjs:86` `MCP Client 未启动` | MCP | 同上 |
+| `mcp/mcpClient.mjs:92` `MCP 请求超时：…` | MCP | 同上 |
+| `orchestrator/pipeline.mjs:653` `尚未生成工作文档，无法验证 MCP` | MCP | 同上（`verifyMcp` 内） |
+| `packaging/delivery.mjs:117` `版本清单：${JSON.stringify(manifest)}` | JSON | **非禁用词违规**（可见文本是 JSON 内容，不含 "JSON" 字样）；但把机器转储塞进用户可读的 `版本记录.txt`，建议改成人读清单（观察项，不计缺陷） |
+| `skill/skillLoader.mjs:124` `# 已加载的工作流说明（Skill）` | Skill | **非界面可见**：拼进系统提示词，不渲染到界面；建议顺手去掉英文术语（观察项） |
+
+其余 74 条全部是注释（如"不暴露 MCP / YAML / 终端字样"的设计说明）、标识符（`SkillLoader`、`createOpenCalqueMcpClient`）或
+`JSON.parse/stringify` 调用。**渲染层 `app/src/renderer` 全量扫描：MCP/Skill/YAML/终端/Agent Runtime/JSON 命中 0 条。**
+
+交付包独立复核（解开 `交付包-v001.zip` 扫 9 个 `.txt/.md/.json/.svg` 条目）：禁用词命中 **0**。
+
+### 10.8 第 8 项：回归三项
+
+| 命令 | 退出码 | 结果 |
+|---|---|---|
+| `node qa/acceptance.mjs --fast`（修脚本前） | 2 | 33 项：PASS 31 / FAIL 0 / **SKIP 2**（SECRET-04、LOOP-01） |
+| `node qa/acceptance.mjs --fast`（修脚本后） | 2 | 33 项：PASS 32 / FAIL 0 / **SKIP 1**（仅 LOOP-01，`--fast` 主动跳过） |
+| `cd app && node scripts/smoke-desktop.mjs` | 0 | `结论=PASS`；11 个工具调用逐项 code 正确（未确认受控动作 code=1、越权命令 code=1） |
+| `node app/scripts/acceptance.mjs` | 0 | `IS_PASS: YES`，32/32 通过，失败 0 |
+| `node qa/acceptance.mjs`（完整，修脚本后） | **0** | 36 项：**PASS 36 / FAIL 0 / SKIP 0**，`路由判定：NoOne（全部通过）` |
+
+**SECRET-04 那个 SKIP 到底有害无害——明确结论：有害，不是"与本次无关"。**
+它不是"只是少读了一个缓存文件"，而是**真实 DPAPI 加解密往返从未被执行过**：
+
+```
+$ ls app/.runtime/engine-paths.json
+No such file or directory          ← 缓存文件确实不存在
+$ node -e "import('./app/src/core/enginePaths.mjs').then(m=>console.log(m.findElectronSync()))"
+C:/…/app/node_modules/electron/dist/electron.exe   ← 产品自己找得到 electron
+```
+
+即：产品侧 electron 发现能力正常（`capture-ui` / `smoke-desktop` 都真起了 Electron，本次界面单项也全靠它），
+**但验收脚本只认缓存文件，缓存不在就 SKIP**，于是"密钥真实 DPAPI 加解密"这条安全项长期是空白。
+已按 10.9 加文件系统兜底，兜底后真实跑通：
+
+```
+[PASS] SECRET-04 Electron safeStorage 真实加解密往返（非模拟）
+   命令=spawn(electron.exe, [qa/lib/safe-storage-probe.cjs, …])，EXIT=0
+   env 已移除 ELECTRON_RUN_AS_NODE / NODE_OPTIONS
+   isEncryptionAvailable=true，roundtripOK=true
+   密文 57 B，hex 头=76313032e672bae6f2bb89c8，明文泄漏(base64/latin1)=false/false
+   backend=n/a: getSelectedStorageBackend is not a function，electron=44.7.0，node=24.21.0
+```
+
+（`backend=n/a` 是 Electron 44 已移除该 API，属探针读取兼容问题，不影响 `isEncryptionAvailable` / 往返结论。）
+
+### 10.9 QA 侧改动（只动自己的文件，未碰产品代码）
+
+**① PERM-07：硬编码「4 项」→ 与主进程清单双向集合相等**
+原实现把清单写死成 `confirmAndBuild / confirmImageSubmission / packageAndFinish / redo` 四项 `.every()` 判断。
+`coreHost` 已扩到 5 项（新增 `agentSend`），**硬编码 4 项在 5 项代码上照样 PASS**——这就是语义漂移：
+脚本说 4 项、代码是 5 项、报告却显示"4 项齐备=true"。改为：从 `coreHost.mjs` 的 `CONFIRM_REQUIRED = new Set([...])`
+动态读出真实清单，再与 `confirm.js` 的 `Object.freeze([...])` 做**双向集合相等**（数量 + 逐项包含），任一方向不一致即 FAIL。
+改完重跑：
+
+```
+[PASS] PERM-07
+   需确认清单（coreHost.mjs）=5 项〔confirmAndBuild, confirmImageSubmission, packageAndFinish, redo, agentSend〕
+   需确认清单（confirm.js）=5 项〔…同上…〕；双向集合相等=true
+   pages/**.js 中 `confirmed:` 命中=0 → 必须为 0
+```
+
+**② SECRET-04：缓存缺失时的 electron 兜底定位**（+ `findElectronCandidate()`，仍不 import `app/src` 实现，保持黑盒边界）
+候选：`app/node_modules/electron/dist/electron.exe`（含 mac 路径与 `ELECTRON_OVERRIDE_DIST_PATH`）。
+SKIP 文案同步改为"缓存与兜底路径都定位不到"，避免下次再出现"看着像环境问题其实是覆盖盲区"。
+
+**③ 修掉报告结论的"陈旧硬编码"（本轮发现，会让报告自相矛盾）**
+`§6 最终结论` 与「智能路由明细」原来**无条件写死**第 2 轮的结论与三行 FAIL（IDEM-06 / CAD-04 / UI-01），
+只把通过率做成变量。结果：36/36 全通过的那次运行，报告里仍写着
+「有条件通过 / 未完全通过 …… 存在 0 项 FAIL，退出码 1」「3 项 FAIL 均不构成阻断」，与自己的数据表、退出码直接冲突。
+**这是报告级缺陷，会误导决策**，已改为：① 三行历史 FAIL 只在对应检查项**当前仍为 FAIL** 时输出，否则打印"本轮无 FAIL"；
+② 最终结论按 `fail / skip` 动态三档（全部通过 / 有条件通过（仅 SKIP）/ 未完全通过），退出码跟着算；
+③ 第 1–2 轮表格明确标注为"Agent Loop 接入之前的历史轮次，只作追溯"。
+
+> 注意：`qa/REPORT.md` 每次运行都会被脚本整篇重写，人工章节必须写在 `qa/report-appendix.md`（本文件）里，
+> 否则下一次 `--fast` 重跑就抹掉。本轮已按此约定落盘。
+
+### 10.10 复现命令（本轮全部证据）
+
+```bash
+cd app
+node .runtime/qa-probe/item2-stub.mjs          # 第 2 项：stub 端到端 18/18
+node .runtime/qa-probe/item2c-two-turns.mjs    # 第 2 项补充：两轮接续 8/9（D-2）
+node ../vendor/opencalque/node_modules/tsx/dist/cli.mjs .runtime/qa-probe/item2b-changed-flag.ts  # 序列化幂等
+node .runtime/qa-probe/item2d-fake-version.mjs # D-1 假版本复现
+node .runtime/qa-probe/item3-5.mjs             # 第 3/4/5 项 22/22
+node .runtime/qa-probe/item5-cmdline.mjs       # 密钥不进命令行（WMI 实测）
+node scripts/capture-ui.mjs                    # 第 6 项：6 页截图
+node .runtime/qa-probe/item6-ui-real.mjs       # 第 6 项：真实路径 12/12（需 11804 端口空闲）
+node .runtime/qa-probe/item6-stub-flag.mjs prj_4e2833217447   # 第 6 项：替身标记 3/3
+cd .. && node qa/acceptance.mjs --fast && node app/scripts/acceptance.mjs
+cd app && node scripts/smoke-desktop.mjs
+```
+
+### 10.12 D-1/D-2 复验（第二次）
+
+> 复验人：QA 严过关｜方式：仍自建临时项目 + 本地假模型顶替模型服务，不采信工程师自述。
+> 复验探针：`app/.runtime/qa-probe/reverify-d1-d2.mjs`（接口级，18/18）、`reverify-ui-wording.mjs`（界面级，11/11）。
+> 关键提醒（工程师踩过的坑，我也按此执行）：**`update_node` 不是工具名**，必须包在 `apply_operations` 的 `operations` 里发给模型；
+> 直接把它当工具名发只会得到「助手尝试了此处无法执行的操作」，结论会失真。
+
+**结论：D-1 已修复（PASS）；D-2 已修复（PASS）；新话术双向正确（PASS）。无新增产品缺陷。**
+
+#### 10.12.1 D-1 假版本：连续两次空操作不建版本
+
+```
+=== D-1 假版本：连续两次「同名改名」（空操作）===
+第 1 次 changed = false ｜versionId = v001
+第 2 次 changed = false ｜versionId = v001
+模型实际调用的工具序列 = read_document → apply_operations → text → read_document → apply_operations → text
+PASS D1-1  两次空操作 done.changed 均为 false :: false/false
+PASS D1-1b 版本目录数量不增加（仍是 v001） :: v001
+PASS D1-2  v001 目录里没有 drawing-change.md
+PASS D1-2b 图纸 sha256 未变 :: 8b0e5d845acd
+PASS D1-2c 对话记录仍落在当前版本（4 条：两轮各 user+assistant） :: lines=4
+PASS D1-2d 记录里每条 changed 都是 false :: [false,false]
+```
+
+工具序列证明模型**确实调了 `apply_operations`**（不是没发 ops 的假阴性）：两轮都是 `read_document → apply_operations → text`。
+
+#### 10.12.2 D-1 反向：真改一次必须建版本
+
+同一项目紧接着让模型把那面墙往右移 500mm（`update_node` 改 `a`/`b` 两个点）：
+
+```
+真改动 changed = true ｜versionId = v002
+版本目录 = v001, v002
+新旧 sha = 8b0e5d845acd -> af8691129b80
+PASS D1-3  真改动 changed === true
+PASS D1-3b 建了新版本 v002
+PASS D1-3c 新旧图纸 sha256 不同
+PASS D1-3d 新版本有 drawing-change.md
+PASS D1-3e v001 图纸仍未被改动（sha256 与初始一致）
+PASS D1-3f changeNote 记录了员工要求与回复
+```
+
+修复实现核对（`runner.ts`）：`baseline = serializeDocument(载入时 doc)`，`contentChanged() = serializeDocument(doc) !== baseline`，
+`done.changed` 改用 `contentChanged()`；`apply()` 里 `after !== before` 才 `writeDrawing`（空操作连文件都不碰）；
+`service.mjs` 侧 `changed=false` 不进 `newVersion()` 分支。
+
+#### 10.12.3 D-2 替身上下文累积
+
+```
+第一轮 messages 数 = 6 ｜角色 = user,assistant,tool,assistant,tool,assistant
+第二轮 messages 数 = 12 ｜角色 = user,assistant,tool,assistant,tool,assistant,user,assistant,tool,assistant,tool,assistant
+PASS D2-1 第一轮快照不再是空数组
+PASS D2-2 两轮后 messages 累积（6 -> 12）
+PASS D2-3 两轮后为 12 条
+PASS D2-4 角色只含 user/assistant/tool
+PASS D2-6 顺序正确（assistant 带 tool_calls 后紧跟 tool）
+```
+
+与工程师自述的「12 条、顺序 user/assistant/tool」一致，但这条是我自己跑出来的，不是照抄。
+
+#### 10.12.4 新话术：只有「没改动」时才是「模型没有改动图纸」
+
+不看代码，真 Electron + 真桥接 + 真 Agent Loop 跑两次对比（`reverify-ui-wording.mjs`，11/11 PASS）：
+
+| 轮次 | 模型实际动作 | toast 文案 | 版本数 | 消息区 meta |
+|---|---|---|---|---|
+| 第 1 次（真改动，移墙 +500） | `apply_operations` 改 `a`/`b` | `图纸已按你的话调整，已写入新版本` | v001→**v002** | 1 条：`本次改动已写入新版本，旧版本完整保留` |
+| 第 2 次（空操作，同名改名） | `apply_operations` 改同名 | `模型没有改动图纸，本次没有新建版本` | 仍 2 个，**未增加** | 最后一条助手气泡**无**该 meta；全页 meta 仍只有 1 条 |
+
+截图：`app/.runtime/ui-shots/qa-chat-nochange.png`（两轮对话 + 底部 toast「模型没有改动图纸，本次没有新建版本」，第 1 条的 meta 仍正确显示、第 2 条没有）。
+`coreHost.mjs:250-252` 的 `changeNote` 同一判据（`turn.changed ? 已写入新版本 : 模型没有改动图纸，本次没有新建版本。`），与界面 toast 一致。
+
+> 探针自身踩坑记录（属 QA 脚本 bug，非产品缺陷，已修）：① 假模型第一版按「全部历史 tool 消息」计数，第二轮起误判已读过图、干脆不发 ops，
+> 导致「真改动」被误判为 changed=false；改为只数**本轮**（最后一条 user 之后）的 tool 消息后正常。② toast 存活 3.2s，第二轮读到的是上一轮残留；
+> 改为发送前清空 toast。③ `.chat-meta` 是按消息渲染的，第二轮只有 1 条（属于第一轮），断言改为「最后一条助手气泡无该 meta + 全页恰好 1 条」。
+
+#### 10.12.5 回归（第二次复验）
+
+| 命令 | 退出码 | 结果 |
+|---|---|---|
+| `node qa/acceptance.mjs`（完整） | **0** | **36 项：PASS 36 / FAIL 0 / SKIP 0**，路由 NoOne |
+| `cd app && node scripts/smoke-desktop.mjs` | 0 | `结论=PASS`（11 项工具调用 code 全对，未确认/越权均 code=1） |
+| `cd app && node scripts/capture-ui.mjs` | 0 | 6/6 张截图；`chat.png` 重看正常：消息空态提示、输入框、发送按钮、计费提示齐全，**无替身标记**、无重叠/截断 |
+
+**最终判定：D-1 / D-2 复验通过，本轮无新增缺陷。** 上一轮遗留的两条（D-1、D-2）已闭合；
+§10.7 的三条观察项（`版本记录.txt` 原始 JSON 转储、skillLoader 提示词含 "(Skill)"、mcpClient 内部错误含 MCP）仍未处理，仍为**观察项，不是阻断项**。

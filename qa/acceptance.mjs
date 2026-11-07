@@ -307,28 +307,44 @@ function checkPermissionStatic(A) {
   // 判据（可执行、不靠文档自觉）：
   //   a) pages/**.js 中不得出现 `confirmed:`（权限确认位）；`confirmedBy:` 是校准记录字段，不在此列；
   //   b) 渲染层必须存在结构性包装 confirmTool(…)，让页面拿不到构造 confirmed 的机会；
-  //   c) 该包装必须校验工具名 ∈ 4 项需确认清单，防止把只读工具也包成"要确认"或漏掉付费动作。
+  //   c) 该包装必须校验工具名 ∈ 主进程的需确认清单，防止把只读工具也包成"要确认"或漏掉付费动作。
+  //      2026-11-07 修正：原实现把清单硬编码成 4 项（confirmAndBuild / confirmImageSubmission /
+  //      packageAndFinish / redo），而 coreHost 已扩到 5 项（新增 agentSend）。硬编码 4 项在 5 项代码上
+  //      仍然 PASS，形成「脚本说 4 项、代码是 5 项」的语义漂移。现在改为从 coreHost.mjs 的
+  //      CONFIRM_REQUIRED 读出真实清单，与 confirm.js 的清单做**双向集合相等**比对，两边同时防漂移。
   const pagesDir = path.join(APP_DIR, 'src', 'renderer', 'pages');
   const confirmFile = path.join(APP_DIR, 'src', 'renderer', 'core', 'confirm.js');
+  const coreHostFile = path.join(APP_DIR, 'src', 'desktop', 'coreHost.mjs');
   const pagesFiles = exists(pagesDir) ? walk(pagesDir, ['.js']) : [];
   // \bconfirmed\s*: 精确匹配权限位，排除 confirmedBy:（校准记录里的"由谁确认"）
   const flagHits = countMatches(pagesFiles, /\bconfirmed\s*:/);
   const confirmSrc = exists(confirmFile) ? stripComments(readText(confirmFile)) : '';
+  const coreHostSrc = exists(coreHostFile) ? stripComments(readText(coreHostFile)) : '';
   const hasWrapper = /export\s+(async\s+)?function\s+confirmTool\s*\(/.test(confirmSrc);
   const wrapperChecksName = /CONFIRM_REQUIRED_TOOLS|CONFIRM_REQUIRED/.test(confirmSrc);
-  const wrapperHasFourTools = ['confirmAndBuild', 'confirmImageSubmission', 'packageAndFinish', 'redo']
-    .every((name) => confirmSrc.includes(`'${name}'`));
-  const permOk = flagHits.total === 0 && hasWrapper && wrapperChecksName && wrapperHasFourTools;
+  /** 从源码里读出一个字符串集合字面量。 @param {string} src @param {RegExp} re @returns {string[]} */
+  const namesOf = (src, re) => {
+    const hit = re.exec(src);
+    return hit ? [...hit[1].matchAll(/'([A-Za-z0-9_]+)'/g)].map((m) => m[1]) : [];
+  };
+  const hostNames = namesOf(coreHostSrc, /CONFIRM_REQUIRED\s*=\s*new Set\(\s*\[([^\]]*)\]/s);
+  const uiNames = namesOf(confirmSrc, /CONFIRM_REQUIRED\s*=\s*Object\.freeze\(\s*\[([^\]]*)\]/s);
+  const sameSet = hostNames.length > 0 && hostNames.length === uiNames.length
+    && hostNames.every((name) => uiNames.includes(name));
+  const wrapperHasCoreTools = hostNames.length > 0 && hostNames.every((name) => confirmSrc.includes(`'${name}'`));
+  const permOk = flagHits.total === 0 && hasWrapper && wrapperChecksName && sameSet && wrapperHasCoreTools;
   record('PERM-07', '①权限', '确认位不可由页面构造（confirmed 只能来自 confirmTool 包装）',
     '静态源码审查', permOk ? 'PASS' : 'FAIL',
     [
       `pages/**.js 中 \`confirmed:\` 命中=${flagHits.total}（${flagHits.hits.join(', ') || '无'}）→ 必须为 0`,
-      `confirm.js 存在 confirmTool 包装=${hasWrapper}；校验工具名∈4 项=${wrapperChecksName}；4 项齐备=${wrapperHasFourTools}`,
+      `confirm.js 存在 confirmTool 包装=${hasWrapper}；校验工具名∈清单=${wrapperChecksName}；清单项全部出现在包装里=${wrapperHasCoreTools}`,
+      `需确认清单（coreHost.mjs）=${hostNames.length} 项〔${hostNames.join(', ')}〕`,
+      `需确认清单（confirm.js）=${uiNames.length} 项〔${uiNames.join(', ')}〕；双向集合相等=${sameSet}`,
       `扫描页面文件=${pagesFiles.length} 个（.js，含渲染层）`,
       `不误伤说明：\`confirmedBy: '量房员工'\`（calibration.js 校准记录字段）不计入本项`,
     ],
     permOk ? undefined
-      : 'QA 说明：本条为 2026-11-07 第三轮新增的可执行契约（架构侧已定：页面通过 confirmTool(name,input,gateOpts) 走确认，拿不到构造 confirmed 的机会）。当前 FAIL 属**已知在改项**（Engineer 正在实现 confirmTool 包装），不是新回归；实现后无需改本脚本即自动转 PASS。');
+      : 'QA 说明：本条为可执行契约（页面通过 confirmTool(name,input,gateOpts) 走确认，拿不到构造 confirmed 的机会），且清单必须与主进程 CONFIRM_REQUIRED 完全一致；不一致即视为漂移缺陷。');
 }
 
 function checkPermissionBehavior(probe) {
@@ -678,10 +694,34 @@ async function checkSecrets(A, py, testKeys) {
     ]);
 }
 
+/**
+ * electron.exe 兜底定位（`.runtime/engine-paths.json` 缓存缺失时使用）。
+ *
+ * 2026-11-07 修正：原实现只读缓存文件，缓存不在就把 SECRET-04 判 SKIP。
+ * 实测缓存确实不存在，但 electron 就在 `app/node_modules/electron/dist/electron.exe`，
+ * 于是「真实 DPAPI 加解密往返」从来没被执行过 —— 这个 SKIP 掩盖了盲区，不是无害。
+ * 这里按产品同样的落点做文件系统兜底（仍不 import app/src 实现，保持黑盒边界）；
+ * 拿到的候选路径由 safe-storage-probe.cjs 自己证明是不是真的 electron。
+ * @returns {string|null}
+ */
+function findElectronCandidate() {
+  const candidates = [
+    path.join(APP_DIR, 'node_modules', 'electron', 'dist', 'electron.exe'),
+    path.join(APP_DIR, 'node_modules', 'electron', 'dist', 'Electron.app', 'Contents', 'MacOS', 'Electron'),
+    path.join(ROOT, 'node_modules', 'electron', 'dist', 'electron.exe'),
+  ];
+  if (process.env.ELECTRON_OVERRIDE_DIST_PATH) {
+    candidates.unshift(path.join(process.env.ELECTRON_OVERRIDE_DIST_PATH, 'electron.exe'));
+  }
+  for (const candidate of candidates) if (exists(candidate)) return candidate;
+  return null;
+}
+
 async function checkSafeStorageReal(electronPath) {
   if (!electronPath || !exists(electronPath)) {
     record('SECRET-04', '④脱敏', 'Electron safeStorage 真实加解密往返（非模拟）', '真实调用', 'SKIP',
-      [`electron.exe=${electronPath || '(未找到)'}`], 'SKIP (环境)：未定位到 electron.exe');
+      [`electron.exe=${electronPath || '(未找到：缓存文件与 app/node_modules 兜底都没有)'}`],
+      'SKIP (环境)：缓存文件与兜底路径都定位不到 electron.exe');
     return;
   }
   const req = path.join(OUT, 'safe-storage.request.json');
@@ -1000,7 +1040,7 @@ async function main() {
   const py = process.env.RENO_QA_PYTHON
     || 'C:/Users/wang/AppData/Local/Temp/reno-repo-audit/cad/_venv_acp/Scripts/python.exe';
   const enginePaths = readJson(path.join(APP_DIR, '.runtime', 'engine-paths.json'), {});
-  const electronPath = process.env.RENO_ELECTRON_PATH || enginePaths.electronPath || null;
+  const electronPath = process.env.RENO_ELECTRON_PATH || enginePaths.electronPath || findElectronCandidate();
 
   checkEnvironment(py);
 
@@ -1185,7 +1225,8 @@ async function writeReport(r) {
   lines.push('');
   lines.push('## 6. 测试轮次控制与智能路由判定');
   lines.push('');
-  lines.push('严格按「最多 2 轮」执行，**不进入第 3 轮**：');
+  lines.push('严格按「最多 2 轮」执行，**不进入第 3 轮**。下表是 **2026-11-07 早间（Agent Loop 接入之前）** 的历史轮次，只作追溯用；');
+  lines.push('当前这轮的最新状态见本节末尾「最终结论」与 `qa/.work/results.json`（脚本每次运行自动重算，不沿用历史结论）。');
   lines.push('');
   lines.push('| 轮次 | 动作 | 结果 | 路由判定 |');
   lines.push('|---|---|---|---|');
@@ -1196,17 +1237,36 @@ async function writeReport(r) {
   lines.push('');
   lines.push('### 智能路由明细（Decision Rule）');
   lines.push('');
-  lines.push('| FAIL 项 | 断言是否符合 PRD/设计 | 实际输出 | 判定 | 归属 |');
-  lines.push('|---|---|---|---|---|');
-  lines.push('| IDEM-06 自动重试 | 符合：PRD 4.4 规则 4「禁止自动重试、禁止在循环中重新提交」 | `httpAdapter.mjs` 存在 1 次连接层 for 循环重试 | 断言正确、实现不符 → **源码 Bug** | Engineer（或 PM 书面豁免） |');
-  lines.push('| CAD-04 缺 PDF | 符合：PRD F7/P0-11「DXF（+ SVG/PDF 预览）」、验收项⑤ | 交付包 17 项无 `plan.pdf`，`delivery.mjs` 清单也不含 PDF | 断言正确、实现不符 → **源码 Bug** | Engineer（补依赖或 PM 显式降级） |');
-  lines.push('| UI-01 禁用词 | 符合：PRD G1/P0-01「UI 不暴露 Skill/JSON」、验收项⑥ | 用户可见文案 3 处命中 | 断言正确、实现不符 → **源码 Bug**；根因含 PRD 3.5 原文用词冲突 | Engineer + PM 统一措辞 |');
+  // 历史 FAIL 明细只在对应检查项**当前仍为 FAIL** 时才列出来。
+  // 2026-11-07 修正：原实现无条件输出 IDEM-06 / CAD-04 / UI-01 三行，导致 36/36 全通过的运行
+  // 仍然在报告里写着「3 项 FAIL」——报告与自己的数据表、退出码互相矛盾，属于会误导决策的报告缺陷。
+  const staleRows = [
+    { id: 'IDEM-06', row: '| IDEM-06 自动重试 | 符合：PRD 4.4 规则 4「禁止自动重试、禁止在循环中重新提交」 | `httpAdapter.mjs` 曾存在 1 次连接层 for 循环重试 | 断言正确、实现不符 → **源码 Bug** | Engineer（或 PM 书面豁免） |' },
+    { id: 'CAD-04', row: '| CAD-04 缺 PDF | 符合：PRD F7/P0-11「DXF（+ SVG/PDF 预览）」、验收项⑤ | 交付包曾缺 `plan.pdf` | 断言正确、实现不符 → **源码 Bug** | Engineer（补依赖或 PM 显式降级） |' },
+    { id: 'UI-01', row: '| UI-01 禁用词 | 符合：PRD G1/P0-01「UI 不暴露 Skill/JSON」、验收项⑥ | 用户可见文案曾命中 3 处 | 断言正确、实现不符 → **源码 Bug** | Engineer + PM 统一措辞 |' },
+  ];
+  const stillFailing = staleRows.filter((item) => r.checks.some((c) => c.id === item.id && c.status === 'FAIL'));
+  if (stillFailing.length > 0) {
+    lines.push('| FAIL 项 | 断言是否符合 PRD/设计 | 实际输出 | 判定 | 归属 |');
+    lines.push('|---|---|---|---|---|');
+    for (const item of stillFailing) lines.push(item.row);
+  } else {
+    lines.push('**本轮无 FAIL**：IDEM-06 / CAD-04 / UI-01 三项历史缺陷当前均为 PASS（证据见 §2 逐项结果），无路由动作。');
+  }
   lines.push('');
   lines.push('### 最终结论');
   lines.push('');
-  lines.push(`- **总体结论：有条件通过 / 未完全通过**。适用项通过率 ${s.passRate}（${s.pass}/${s.applicable}），存在 ${s.fail} 项 FAIL，退出码 1。`);
-  lines.push('- **权限边界、幂等防重复扣费（实质）、真实状态机、密钥脱敏、DXF 有效性、双引擎闭环 6 大类核心能力全部真实验证通过**；3 项 FAIL 均不构成阻断性安全缺陷，属可修复的合规/文案/交付物缺口。');
-  lines.push('- **不得宣称「全部验收通过」**：无客户 API Key、无建筑 CAD、本产品自身 GUI 冒烟未验证、nsis/portable 安装包未产出，均为待联调/待验证项。');
+  if (s.fail === 0 && s.skip === 0) {
+    lines.push(`- **总体结论：全部通过**。适用项通过率 ${s.passRate}（${s.pass}/${s.applicable}），FAIL 0 / SKIP 0，退出码 0。`);
+    lines.push('- 权限边界、幂等防重复扣费、真实状态机、密钥脱敏、DXF 有效性、双引擎闭环、界面文案与关键交互（含 Agent Loop 对话改布局）均按真实执行结果通过。');
+  } else if (s.fail === 0) {
+    lines.push(`- **总体结论：有条件通过（存在 SKIP，未完整验收）**。适用项通过率 ${s.passRate}（${s.pass}/${s.applicable}），FAIL 0 / SKIP ${s.skip}，退出码 2。`);
+    lines.push('- 通过项均为真实执行结果；SKIP 项未执行，不得计入通过，也不得宣称「全部验收通过」。');
+  } else {
+    lines.push(`- **总体结论：未完全通过**。适用项通过率 ${s.passRate}（${s.pass}/${s.applicable}），存在 ${s.fail} 项 FAIL，退出码 1。`);
+    lines.push('- 失败项归属与处置见上方「智能路由明细」；修复后重跑本脚本即可回归。');
+  }
+  lines.push('- **仍不得宣称「客户环境全部就绪」**：无客户 API Key（模型/生图走测试替身）、无建筑 CAD 图纸联调、nsis/portable 安装包未产出，均属待联调/待交付项。');
   lines.push('- 工程师修复后，重跑 `node qa/acceptance.mjs` 即可自动回归（脚本动态发现产物、支持重复运行），无需修改 QA 脚本。');
   lines.push('');
   lines.push('## 7. 复现方式');

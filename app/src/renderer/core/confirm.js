@@ -85,17 +85,22 @@ export function clearRemembered() {
   remembered.clear();
 }
 
-/** 只有这四个动作需要预执行确认；其它名字一律拒绝，避免把包装函数当万能通道。 */
+/**
+ * 只有这五个动作需要预执行确认；其它名字一律拒绝，避免把包装函数当万能通道。
+ * `agentSend`（对话改布局）是第五个：它会把图纸内容发给文本模型并可能写入新版本。
+ */
 export const CONFIRM_REQUIRED = Object.freeze([
-  'confirmAndBuild', 'confirmImageSubmission', 'packageAndFinish', 'redo',
+  'confirmAndBuild', 'confirmImageSubmission', 'packageAndFinish', 'redo', 'agentSend',
 ]);
 
 /**
  * 一次性完成「弹窗 → 调工具」：页面拿不到构造 confirmed 的机会。
  * 取消时返回 `cancelled:true`，不向本地核心发任何请求。
+ * `gateOpts.onApproved` 可选：用户点了「仅本次允许」之后、请求发出之前回调一次，
+ * 页面用它把「正在处理…」的等待态显示出来（不涉及任何结果判定）。
  * @param {string} name 受控动作名（必须在 CONFIRM_REQUIRED 内）
  * @param {Object} input 业务参数（不含 confirmed）
- * @param {Object} gateOpts 弹窗文案（title / allowScope / forbidden / chargeNote …）
+ * @param {Object} gateOpts 弹窗文案（title / allowScope / forbidden / chargeNote / onApproved …）
  * @param {(name:string,input:Object)=>Promise<Object>} callFn 工具调用函数
  * @returns {Promise<{ok:boolean, code:number, data:any, message:string, cancelled?:boolean}>}
  */
@@ -106,6 +111,9 @@ export async function confirmTool(name, input, gateOpts, callFn) {
   const approved = await confirmGate({ ...(gateOpts || {}), tool: name });
   if (!approved) {
     return { ok: false, code: 1, data: null, message: '已取消，没有执行任何操作', cancelled: true };
+  }
+  if (typeof gateOpts?.onApproved === 'function') {
+    try { gateOpts.onApproved(); } catch { /* 等待态显示失败不影响请求本身 */ }
   }
   return callFn(name, { ...(input || {}), confirmed: true });
 }

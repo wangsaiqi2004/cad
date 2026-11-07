@@ -1,8 +1,9 @@
 /**
- * P-5 项目工作台：真实任务状态、阻塞提示、效果图提交、重做与出包。
+ * P-5 项目工作台：真实任务状态、阻塞提示、效果图提交、重做、出包，以及**对话改布局**。
  *
  * 状态一律以 getTaskStatus 的返回为准；等待用户操作时显示「等待你确认」，
- * 不拿百分比糊弄人。
+ * 不拿百分比糊弄人。对话区只说「正在读取图纸并思考…」，同样不用百分比。
+ * 对话能力本身来自上游 opencalque 的 Agent Loop（见 src/agent/service.mjs），本页只做界面。
  * @module renderer/pages/chat
  */
 
@@ -38,18 +39,50 @@ export function mount(ctx) {
   const stepCard = el('div.card');
   const sideCard = el('div.card');
 
+  // —— 对话改布局：消息区 + 输入区（复用上游 Agent Loop，本页只管界面）——
+  const chatLog = el('div.chat-log');
+  const chatStatus = el('div.chat-status');
+  const chatInput = el('textarea.chat-input', {
+    rows: '3',
+    placeholder: '用一句话说清楚要怎么改，例如：把主卧的门改到靠窗那一侧，衣柜进深改成 600。',
+  });
+  const chatSendBtn = el('button.btn.btn-primary', { text: '发送', onclick: () => void sendTurn() });
+  const chatCard = el('div.card.chat-card', null, [
+    el('div.card-title', null, [
+      el('h3', { text: '对话改布局' }),
+      el('span.hint', { text: '直接说怎么改，助手会读这一版图纸并动手调整' }),
+    ]),
+    chatLog,
+    el('div.chat-compose', null, [
+      chatInput,
+      el('div.chat-actions', null, [
+        el('span.hint', { text: '发送前会先让你确认：本次会把这一版图纸内容与你的要求，发送给已配置的文本模型。' }),
+        chatSendBtn,
+      ]),
+    ]),
+    chatStatus,
+  ]);
+
   fill(view, [
     el('div.page-head', null, [
       el('div', null, [stateTitle, stateText]),
       headBadge,
     ]),
     blockBox,
+    chatCard,
     el('div.grid-2', null, [stepCard, sideCard]),
     logBox,
   ]);
 
   let timer = 0;
   let lastVersion = '';
+
+  /** 对话区的本地状态：以落盘的对话记录为准，失败时临时插一条不落盘的说明。 */
+  let chatMessages = [];
+  let chatLoadedVersion = '';
+  let sending = false;
+
+  renderMessages();
 
   /** 拉一次状态并渲染。 */
   async function refresh() {
@@ -109,6 +142,8 @@ export function mount(ctx) {
       (data.log || []).slice(-40).map((entry) => el('div', { text: formatLog(entry) }))) )]);
 
     renderSide(state);
+    // 对话记录跟着版本走：进页面或换了版本时读一次。
+    if (chatLoadedVersion !== (store.versionId || '')) void loadHistory();
     if ((data.versionId || store.versionId) && lastVersion !== store.versionId) lastVersion = store.versionId;
   }
 
@@ -155,6 +190,125 @@ export function mount(ctx) {
         ? notice({ kind: 'warn', title: '还不能生成效果图', lines: ['先把户型校准做完，方案才有尺寸依据。'] })
         : null,
     ].filter(Boolean));
+  }
+
+  /** 把一条消息画成气泡。@param {Object} message */
+  function bubbleFor(message) {
+    const mine = message.role === 'user';
+    const bubble = el('div.chat-bubble', { text: message.text || '（没有文字内容）' });
+    if (message.error) bubble.classList.add('chat-bubble-bad');
+    if (message.pending) bubble.classList.add('chat-bubble-pending');
+    const box = el('div.chat-msg', { class: mine ? 'chat-mine' : 'chat-theirs' }, [
+      el('div.chat-who', { text: mine ? '我' : '助手' }),
+      bubble,
+    ]);
+    if (message.testDouble) box.append(el('div.chat-flag', { text: '测试替身回复，未连接真实模型' }));
+    if (message.changed) box.append(el('div.chat-meta', { text: '本次改动已写入新版本，旧版本完整保留' }));
+    if (message.error) box.append(el('div.chat-meta', { text: '这一条没有改动图纸' }));
+    return box;
+  }
+
+  /** 重画消息区。 */
+  function renderMessages() {
+    if (chatMessages.length === 0) {
+      fill(chatLog, [el('div.chat-empty', {
+        text: '还没有对话。可以直接说「把客厅的沙发挪到窗边」，或者问「这一版画了哪些墙」。',
+      })]);
+      return;
+    }
+    fill(chatLog, chatMessages.map(bubbleFor));
+    chatLog.scrollTop = chatLog.scrollHeight;
+  }
+
+  /** 读这一版已落盘的对话记录（换版本后自然切换）。 */
+  async function loadHistory() {
+    chatLoadedVersion = store.versionId || '';
+    if (!store.projectId || !store.versionId) {
+      chatMessages = [];
+      renderMessages();
+      return;
+    }
+    const result = await call('getChatHistory', {});
+    if (!result.ok) {
+      chatStatus.textContent = `读不到对话记录：${result.message}`;
+      return;
+    }
+    chatMessages = (result.data?.messages || []).map((item) => ({
+      role: item.role === 'user' ? 'user' : 'assistant',
+      text: String(item.text || ''),
+      testDouble: item.testDouble === true,
+      changed: item.changed === true,
+    }));
+    chatStatus.textContent = '';
+    renderMessages();
+  }
+
+  /** 等待态：只说明在做什么，不显示百分比。 @param {boolean} waiting */
+  function setWaiting(waiting) {
+    sending = waiting;
+    chatSendBtn.disabled = waiting;
+    chatInput.disabled = waiting;
+    chatStatus.textContent = waiting ? '正在读取图纸并思考…' : '';
+    if (waiting) {
+      chatInput.value = '';
+      chatMessages = [...chatMessages, { role: 'assistant', text: '正在读取图纸并思考…', pending: true }];
+      renderMessages();
+    }
+  }
+
+  /** 发一句话，让助手改这一版图纸。确认弹窗走 agentSend（第 5 个受控动作）。 */
+  async function sendTurn() {
+    if (sending) return;
+    const text = String(chatInput.value || '').trim();
+    if (!text) { toast('先写一句要改什么，再发送', 'warn'); return; }
+    if (!store.projectId) { toast('还没有打开项目，请先到首页打开一个项目', 'warn'); return; }
+    if (!store.versionId) { toast('这一版还没有图纸，请先提交需求并生成方案', 'warn'); return; }
+
+    let approved = false;
+    const result = await confirmTool('agentSend', { text }, {
+      title: '确认把这一版图纸发给文本模型？',
+      subtitle: `版本：${store.versionId}　项目：${store.projectName || '当前项目'}`,
+      allowScope: [
+        '把这一版图纸的内容与你这句要求，发送给你在「模型设置」里配置的文本模型',
+        '助手会直接调整这一版的工作文档；确认有改动时写入一个新版本',
+        '保存这次对话的文字记录（不含任何密钥）',
+      ],
+      forbidden: ['不删除、不覆盖旧版本', '不访问项目目录以外的文件', '不把密钥写进对话记录或图纸文件'],
+      chargeNote: '本次对话会把图纸内容与你的要求发送给你配置的文本模型，按公司账户计费。',
+      onApproved: () => { approved = true; setWaiting(true); },
+    }, call);
+
+    if (result.cancelled) {
+      if (approved) setWaiting(false);
+      toast('已取消，没有发出任何请求', 'info');
+      return;
+    }
+    // 请求已经结束：收起等待态（不管成功还是失败）。
+    setWaiting(false);
+
+    if (!result.ok) {
+      // 真实原因原样显示，绝不显示成功。
+      chatMessages = [
+        ...chatMessages.filter((message) => !message.pending),
+        { role: 'user', text },
+        { role: 'assistant', text: result.message, error: true },
+      ];
+      renderMessages();
+      toast(result.message, 'bad');
+      return;
+    }
+
+    const data = result.data || {};
+    if (data.versionId) patch({ versionId: data.versionId });
+    await loadHistory();
+    if (data.testDouble === true) {
+      toast('测试替身回复，未连接真实模型', 'warn');
+    } else if (data.changed === true) {
+      toast('图纸已按你的话调整，已写入新版本', 'ok');
+    } else {
+      toast('模型没有改动图纸，本次没有新建版本', 'info');
+    }
+    await refresh();
   }
 
   /** 效果图：先取提交提示，再确认，再提交。 */

@@ -53,6 +53,43 @@ P-5 项目工作台、P-6 结果与版本、P-7 权限确认弹窗（任何写�
 形态下拿不到响应，保存密钥这一步会失败。因此本轮**正式交付形态是「工作区 + 启动器」**，
 打包目录改名留档为 `app/dist/实验性打包_未通过全链路`，不要发给员工。
 
+### 对话改布局（复用上游 Agent Loop）
+
+项目工作台（P-5）除了四个固定按钮，还有一块**对话框**：员工用一句话说怎么改，助手自己读图纸、改图纸。
+这不是另写的对话机器人，而是把上游 `opencalque` 现成的 Agent Loop 接进产品：
+
+| 复用件 | 位置 | 作用 |
+| --- | --- | --- |
+| Agent Loop | `vendor/opencalque/apps/web/src/ai/agent.ts` | `runRequest` 负责「发请求 → 执行工具 → 再回一轮」，最多 16 步 |
+| Provider | `vendor/opencalque/apps/web/src/ai/compatible.ts` | `compatibleProvider` 走 chat-completions 协议，**接口地址 / 密钥 / 模型名由客户自己填** |
+| 会话 | 同上 `types.ts` 的 `snapshot` / `createSession({history})` | 会话快照存 `<版本目录>/chat-history.json`，下一轮接着上文，不含密钥与完整系统提示 |
+| 绘图工具 | `vendor/opencalque/packages/core/src/tools.ts` | `apply_operations`、`read_document`、`describe_drawing`、`view_image`、`view_drawing`、`measure_drawing`、`check_drawing` |
+| 图纸读写 | `vendor/opencalque/packages/core/src/{read,ops,document}.ts` | `parseDocument` / `applyOps` / `serializeDocument`，改的就是 `drawing.opencalque` |
+
+产品侧只加了两个文件（薄层，不含对话逻辑）：
+
+- `app/src/agent/runner.ts`：**单次请求的执行体**，由主进程以独立子进程运行（本机 tsx 直跑）。
+  它实现 `AgentHost`（`state()` / `apply(ops)` / `registry`），把工具对图纸的改动**立即写回**工作副本，
+  事件以 NDJSON 一行一条回给主进程（`text` / `activity` / `done`）。
+- `app/src/agent/service.mjs`：主进程侧服务。定位当前版本的图纸 → 拼模型配置（`secretStore` + 模型设置里的文本组）
+  → 起子进程 → 逐行折事件 → 落版本与对话记录。
+
+**怎么用**：先把「模型设置 → 文本模型」三项填好（接口地址、密钥、模型名），回到项目工作台，在对话框里说需求，
+点「发送」。**没有配置文本模型时会明确报错，不会假装成功，也不会偷偷换成测试替身。**
+
+**安全与版本**：
+
+- 「发送」是第 5 个受控动作（`agentSend`），弹窗会写明「本次对话会把图纸内容与你的要求发送给你配置的文本模型，按公司账户计费」。
+- 改动先落在 `<版本目录>/chat-work/` 的工作副本上；**确认有改动才写新版本目录**，旧版本的图纸与交付包一个字节都不动。
+- 对话记录写 `<版本目录>/chat.ndjson`（每行 `{role,text,at}`），不含密钥、不含完整系统提示。
+- 密钥只经 stdin 传给子进程，**不进命令行参数**；错误文本对外前做一次明文剔除。
+- 测试替身（`stub:true`）只用于本机自检，且**配置了真实密钥时一律拒绝**走替身。
+
+**边界（如实说明）**：助手改的是工作文档（`drawing.opencalque`），不是交付用 `plan.dxf`；
+对话修改后若要出交付包，需要在结果页确认当前版本是否已包含所需成果（图纸改动写在新版本目录）。
+`view_drawing`（把图纸画成图片给模型看）当前不可用，因为没有桌面端 SVG 渲染桥，工具清单里已排除，
+模型改用 `read_document` / `describe_drawing` / `measure_drawing` 读图纸。
+
 ---
 
 ## 1. 已定稿选型（不得改动）
